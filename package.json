@@ -1,7 +1,7 @@
 {
   "name": "agent-config-sync",
   "version": "0.1.0",
-  "description": "Sync MCP servers and agent configuration across coding agents from a single manifest.",
+  "description": "Cross-agent configuration manager for MCP servers and agent assets. Directly edits native config files—no manifest, no sync step.",
   "type": "module",
   "bin": {
     "agent-config-sync": "./dist/cli.js",
@@ -21,7 +21,7 @@
     "dev": "tsx src/cli.ts",
     "prepack": "npm run clean && npm run build",
     "check": "npm run clean && npm run build",
-    "test:smoke": "node dist/cli.js render --target claude --manifest ./test-fixtures/example-manifest.yaml"
+    "test:smoke": "node dist/cli.js --version && node dist/cli.js catalog mcp list"
   },
   "keywords": [
     "mcp",

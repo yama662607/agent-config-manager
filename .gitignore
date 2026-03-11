@@ -1,0 +1,8 @@
+node_modules
+dist
+.DS_Store
+
+# Agent config files (managed by acsync, project-specific)
+.mcp.json
+.codex/
+.gemini/

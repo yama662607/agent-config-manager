@@ -397,8 +397,17 @@ function parseFlag(argv: string[], longName: string, shortName?: string): boolea
 // ============================================================================
 
 async function getPackageVersion(): Promise<{ version: string }> {
-  const pkg = await import('../package.json', { assert: { type: 'json' } });
-  return pkg.default;
+  // Read package.json dynamically to support global installation
+  const { readFile } = await import('node:fs/promises');
+  const { dirname, join } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+
+  const pkgPath = join(__dirname, '..', 'package.json');
+  const content = await readFile(pkgPath, 'utf8');
+  return JSON.parse(content);
 }
 
 // ============================================================================

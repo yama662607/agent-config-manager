@@ -25,20 +25,35 @@ export async function catalogMcpList(): Promise<void> {
 
   console.log(`MCP Catalog (${entries.length} entries):\n`);
 
-  console.log('┌──────────────────────────────┬─────────────────────┬──────────────────────────────────────┐');
-  console.log('│ ID                           │ Display Name        │ Description                            │');
-  console.log('├──────────────────────────────┼─────────────────────┼──────────────────────────────────────┤');
+  const ID_WIDTH = 45;
+  const NAME_WIDTH = 19;
+  const DESC_WIDTH = 30;
+
+  const borderH = '┌' + '─'.repeat(ID_WIDTH + 2) + '┬' + '─'.repeat(NAME_WIDTH + 2) + '┬' + '─'.repeat(DESC_WIDTH + 2) + '┐';
+  const borderM = '├' + '─'.repeat(ID_WIDTH + 2) + '┼' + '─'.repeat(NAME_WIDTH + 2) + '┼' + '─'.repeat(DESC_WIDTH + 2) + '┤';
+  const borderF = '└' + '─'.repeat(ID_WIDTH + 2) + '┴' + '─'.repeat(NAME_WIDTH + 2) + '┴' + '─'.repeat(DESC_WIDTH + 2) + '┘';
+
+  console.log(borderH);
+  console.log('│ ' + padRight('ID', ID_WIDTH) + ' │ ' + padRight('Display Name', NAME_WIDTH) + ' │ ' + padRight('Description', DESC_WIDTH) + ' │');
+  console.log(borderM);
 
   for (const entry of entries) {
-    const id = padRight(entry.id.slice(0, 28), 28);
-    const name = padRight(entry.displayName.slice(0, 19), 19);
-    const desc = padRight(entry.description.slice(0, 38), 38);
-    console.log(`│ ${id} │ ${name} │ ${desc} │`);
+    const id = truncate(entry.id, ID_WIDTH);
+    const name = padRight(entry.displayName, NAME_WIDTH);
+    const desc = truncate(entry.description, DESC_WIDTH);
+    console.log('│ ' + padRight(id, ID_WIDTH) + ' │ ' + name + ' │ ' + padRight(desc, DESC_WIDTH) + ' │');
   }
 
-  console.log('└──────────────────────────────┴─────────────────────┴──────────────────────────────────────┘');
+  console.log(borderF);
   console.log();
   console.log('Run `acsync catalog mcp show <id>` for details.');
+}
+
+function truncate(str: string, maxLen: number): string {
+  if (str.length > maxLen) {
+    return str.slice(0, maxLen - 1) + '…';
+  }
+  return str;
 }
 
 function padRight(str: string, len: number): string {

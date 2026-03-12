@@ -74,22 +74,47 @@ function printMcpStatus(status: McpWorkspaceStatus, verbose: boolean): void {
     }
   } else {
     // Compact table output
-    console.log('┌─────────────────────────┬─────────┬───────────┬─────────┐');
-    console.log('│ Name                    │ Enabled │ Targets   │ Source  │');
-    console.log('├─────────────────────────┼─────────┼───────────┼─────────┤');
+    const NAME_WIDTH = 30;
+    const ENABLED_WIDTH = 7;
+    const TARGETS_WIDTH = 15;
+    const SOURCE_WIDTH = 7;
+
+    const borderH = '┌' + '─'.repeat(NAME_WIDTH + 2) + '┬' + '─'.repeat(ENABLED_WIDTH + 2) + '┬' + '─'.repeat(TARGETS_WIDTH + 2) + '┬' + '─'.repeat(SOURCE_WIDTH + 2) + '┐';
+    const borderM = '├' + '─'.repeat(NAME_WIDTH + 2) + '┼' + '─'.repeat(ENABLED_WIDTH + 2) + '┼' + '─'.repeat(TARGETS_WIDTH + 2) + '┼' + '─'.repeat(SOURCE_WIDTH + 2) + '┤';
+    const borderF = '└' + '─'.repeat(NAME_WIDTH + 2) + '┴' + '─'.repeat(ENABLED_WIDTH + 2) + '┴' + '─'.repeat(TARGETS_WIDTH + 2) + '┴' + '─'.repeat(SOURCE_WIDTH + 2) + '┘';
+
+    console.log(borderH);
+    console.log('│ ' + padRight('Name', NAME_WIDTH) + ' │ ' + padRight('Enabled', ENABLED_WIDTH) + ' │ ' + padRight('Targets', TARGETS_WIDTH) + ' │ ' + padRight('Source', SOURCE_WIDTH) + ' │');
+    console.log(borderM);
 
     for (const server of status.servers) {
-      const name = padRight(server.name.slice(0, 23), 23);
+      const name = truncate(server.name, NAME_WIDTH);
       const enabled = server.enabled ? '✓' : '✗';
-      const targets = padRight(server.targets.join(', ') || '(none)', 9);
-      const source = padRight(server.source, 7);
-      console.log(`│ ${name} │ ${enabled}       │ ${targets} │ ${source} │`);
+      const targets = truncate(server.targets.join(', ') || '(none)', TARGETS_WIDTH);
+      const source = padRight(server.source, SOURCE_WIDTH);
+
+      console.log('│ ' + padRight(name, NAME_WIDTH) + ' │ ' + center(enabled, ENABLED_WIDTH) + ' │ ' + padRight(targets, TARGETS_WIDTH) + ' │ ' + source + ' │');
     }
 
-    console.log('└─────────────────────────┴─────────┴───────────┴─────────┘');
+    console.log(borderF);
     console.log();
     console.log('Run `acsync mcp <name>` for details, `acsync mcp add` to add new servers.\n');
   }
+}
+
+function truncate(str: string, maxLen: number): string {
+  if (str.length > maxLen) {
+    return str.slice(0, maxLen - 1) + '…';
+  }
+  return str;
+}
+
+function center(str: string, width: number): string {
+  const len = str.length;
+  if (len >= width) return str;
+  const left = Math.floor((width - len) / 2);
+  const right = width - len - left;
+  return ' '.repeat(left) + str + ' '.repeat(right);
 }
 
 function padRight(str: string, len: number): string {

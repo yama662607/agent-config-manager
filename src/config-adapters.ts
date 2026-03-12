@@ -199,30 +199,45 @@ async function addMcpServer(
   recipe: McpRecipe
 ): Promise<void> {
   switch (target) {
-    case 'claude':
-      (config as ClaudeMcpConfig).mcpServers[serverName] = {
-        command: recipe.command,
-        args: recipe.args,
-        ...(recipe.env ? { env: recipe.env } : {}),
-      };
+    case 'claude': {
+      const server: ClaudeMcpServer = {};
+      if (recipe.url) {
+        server.httpUrl = recipe.url;
+      } else if (recipe.command) {
+        server.command = recipe.command;
+        if (recipe.args) server.args = recipe.args;
+      }
+      if (recipe.env) server.env = recipe.env;
+      (config as ClaudeMcpConfig).mcpServers[serverName] = server;
       break;
+    }
 
-    case 'codex':
-      (config as CodexConfig).mcp_servers![serverName] = {
-        command: recipe.command,
-        args: recipe.args,
-        enabled: true,
-        ...(recipe.env ? { env: recipe.env } : {}),
-      };
+    case 'codex': {
+      const server: CodexMcpServer = { enabled: true };
+      if (recipe.url) {
+        server.httpUrl = recipe.url;
+      } else if (recipe.command) {
+        server.command = recipe.command;
+        if (recipe.args) server.args = recipe.args;
+      }
+      if (recipe.cwd) server.cwd = recipe.cwd;
+      if (recipe.env) server.env = recipe.env;
+      (config as CodexConfig).mcp_servers![serverName] = server;
       break;
+    }
 
-    case 'gemini':
-      (config as GeminiSettings).mcpServers![serverName] = {
-        command: recipe.command,
-        args: recipe.args,
-        enabled: true,
-      };
+    case 'gemini': {
+      const server: GeminiMcpServer = { enabled: true };
+      if (recipe.url) {
+        server.url = recipe.url;
+      } else if (recipe.command) {
+        server.command = recipe.command;
+        if (recipe.args) server.args = recipe.args;
+      }
+      if (recipe.cwd) server.cwd = recipe.cwd;
+      (config as GeminiSettings).mcpServers![serverName] = server;
       break;
+    }
   }
 }
 
@@ -300,13 +315,19 @@ export async function getMcpServers(
       const config = result.config as ClaudeMcpConfig;
       const servers: Record<string, { enabled: boolean; recipe: McpRecipe }> = {};
       for (const [name, server] of Object.entries(config.mcpServers)) {
+        const recipe: McpRecipe = {};
+        if (server.httpUrl) {
+          recipe.url = server.httpUrl;
+          recipe.transport = 'http';
+        } else if (server.command) {
+          recipe.command = server.command;
+          recipe.args = server.args ?? [];
+          recipe.transport = 'stdio';
+        }
+        if (server.env) recipe.env = server.env;
         servers[name] = {
           enabled: true,
-          recipe: {
-            command: server.command,
-            args: server.args ?? [],
-            env: server.env,
-          },
+          recipe,
         };
       }
       return servers;
@@ -317,13 +338,20 @@ export async function getMcpServers(
       const servers: Record<string, { enabled: boolean; recipe?: McpRecipe }> = {};
       if (config.mcp_servers) {
         for (const [name, server] of Object.entries(config.mcp_servers)) {
+          const recipe: McpRecipe = {};
+          if (server.httpUrl) {
+            recipe.url = server.httpUrl;
+            recipe.transport = 'http';
+          } else if (server.command) {
+            recipe.command = server.command;
+            recipe.args = server.args ?? [];
+            recipe.transport = 'stdio';
+          }
+          if (server.cwd) recipe.cwd = server.cwd;
+          if (server.env) recipe.env = server.env;
           servers[name] = {
             enabled: server.enabled !== false,
-            recipe: server.enabled !== false ? {
-              command: server.command,
-              args: server.args ?? [],
-              env: server.env,
-            } : undefined,
+            recipe: server.enabled !== false ? recipe : undefined,
           };
         }
       }
@@ -335,12 +363,19 @@ export async function getMcpServers(
       const servers: Record<string, { enabled: boolean; recipe?: McpRecipe }> = {};
       if (config.mcpServers) {
         for (const [name, server] of Object.entries(config.mcpServers)) {
+          const recipe: McpRecipe = {};
+          if (server.url) {
+            recipe.url = server.url;
+            recipe.transport = 'http';
+          } else if (server.command) {
+            recipe.command = server.command;
+            recipe.args = server.args ?? [];
+            recipe.transport = 'stdio';
+          }
+          if (server.cwd) recipe.cwd = server.cwd;
           servers[name] = {
             enabled: server.enabled !== false,
-            recipe: server.enabled !== false && server.command ? {
-              command: server.command,
-              args: server.args ?? [],
-            } : undefined,
+            recipe: server.enabled !== false && (server.url || server.command) ? recipe : undefined,
           };
         }
       }

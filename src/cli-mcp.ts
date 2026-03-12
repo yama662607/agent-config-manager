@@ -135,16 +135,21 @@ export interface McpAddOptions {
  * Add an MCP server to the current project.
  */
 export async function mcpAdd(options: McpAddOptions): Promise<void> {
-  const { normalizeMcpPackage } = await import('./catalog.js');
+  const { normalizeMcpPackage, getMcp } = await import('./catalog.js');
 
-  // Normalize package to recipe
-  const entry = normalizeMcpPackage(options.packageId);
+  // Check if entry exists in catalog first
+  let entry = await getMcp(options.packageId);
 
-  // Add to catalog if not exists and --no-register is false
-  if (!options.noRegister) {
-    const { addMcp } = await import('./catalog.js');
-    await addMcp(entry);
-    console.log(`Added to catalog: ${entry.id}`);
+  // If not in catalog, normalize and optionally add
+  if (!entry) {
+    entry = normalizeMcpPackage(options.packageId);
+
+    // Add to catalog if --no-register is false
+    if (!options.noRegister) {
+      const { addMcp } = await import('./catalog.js');
+      await addMcp(entry);
+      console.log(`Added to catalog: ${entry.id}`);
+    }
   }
 
   // Add to each target

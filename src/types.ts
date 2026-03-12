@@ -38,8 +38,17 @@ export const CATALOG_VERSION: string = '1.0';
 
 /** MCP server recipe */
 export interface McpRecipe {
-  command: string;
-  args: string[];
+  /** Transport type: stdio (command) or http (url) */
+  transport?: TransportType;
+  /** Command to execute (stdio transport) */
+  command?: string;
+  /** Arguments for command (stdio transport) */
+  args?: string[];
+  /** HTTP/SSE URL (http/sse transport) */
+  url?: string;
+  /** Working directory for command execution */
+  cwd?: string;
+  /** Environment variables for command */
   env?: Record<string, string>;
 }
 
@@ -70,8 +79,9 @@ export interface ClaudeMcpConfig {
 }
 
 export interface ClaudeMcpServer {
-  command: string;
+  command?: string;
   args?: string[];
+  httpUrl?: string;
   env?: Record<string, string>;
 }
 
@@ -81,8 +91,10 @@ export interface CodexConfig {
 }
 
 export interface CodexMcpServer {
-  command: string;
+  command?: string;
   args?: string[];
+  httpUrl?: string;
+  cwd?: string;
   env?: Record<string, string>;
   enabled?: boolean;
 }
@@ -95,7 +107,8 @@ export interface GeminiSettings {
 export interface GeminiMcpServer {
   command?: string;
   args?: string[];
-  url?: string;
+  url?: string;  // HTTP/SSE URL
+  cwd?: string;
   enabled?: boolean;
 }
 

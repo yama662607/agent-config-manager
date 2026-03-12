@@ -59,9 +59,20 @@ SUBCOMMANDS:
   add <pkg>   Add a new MCP entry to catalog
   remove <id> Remove an MCP entry from catalog
 
+OPTIONS (add):
+  --url <url>           HTTP/SSE URL for the MCP server
+  --command <cmd>       Command to execute (stdio transport)
+  --args <json>         Arguments for command (JSON array)
+  --cwd <path>          Working directory for command
+  --display-name <name> Display name for the entry
+  --description <desc>  Description for the entry
+  --env <json>          Environment variables (JSON object)
+
 EXAMPLES:
   acsync catalog mcp list
   acsync catalog mcp add @modelcontextprotocol/server-github
+  acsync catalog mcp add deepwiki --url "https://mcp.deepwiki.com/mcp"
+  acsync catalog mcp add my-mcp --command "npm" --args '["start"]' --cwd "/path/to/mcp"
   acsync catalog mcp show @modelcontextprotocol/server-github
   acsync catalog mcp remove @modelcontextprotocol/server-github
 `;
@@ -202,12 +213,7 @@ async function handleCatalog(argv: string[]): Promise<void> {
       break;
 
     case 'add':
-      if (args.length === 0) {
-        process.stderr.write('Usage: acsync catalog mcp add <package-id>\n');
-        process.exitCode = 1;
-        return;
-      }
-      await catalogMcpAdd({ packageId: args[0] });
+      await handleCatalogMcpAdd(args);
       break;
 
     case 'remove':
@@ -224,6 +230,28 @@ async function handleCatalog(argv: string[]): Promise<void> {
       process.stderr.write(CATALOG_HELP);
       process.exitCode = 1;
   }
+}
+
+async function handleCatalogMcpAdd(argv: string[]): Promise<void> {
+  if (argv.length === 0) {
+    process.stderr.write('Usage: acsync catalog mcp add <package-id> [options]\n');
+    process.exitCode = 1;
+    return;
+  }
+
+  const packageId = argv[0];
+  const options = parseCatalogMcpAddOptions(argv.slice(1));
+
+  await catalogMcpAdd({
+    packageId,
+    displayName: options.displayName,
+    description: options.description,
+    command: options.command,
+    args: options.args,
+    url: options.url,
+    cwd: options.cwd,
+    env: options.env,
+  });
 }
 
 async function handleMcp(argv: string[]): Promise<void> {
@@ -365,6 +393,56 @@ function parseMcpOptions(argv: string[], subcommand?: string): McpOptions {
         if (!options.packageId && subcommand !== 'status') {
           options.packageId = arg;
         }
+        break;
+    }
+    i++;
+  }
+
+  return options;
+}
+
+interface CatalogMcpAddOptions {
+  displayName?: string;
+  description?: string;
+  command?: string;
+  args?: string[];
+  url?: string;
+  cwd?: string;
+  env?: Record<string, string>;
+}
+
+function parseCatalogMcpAddOptions(argv: string[]): CatalogMcpAddOptions {
+  const options: CatalogMcpAddOptions = {};
+
+  let i = 0;
+  while (i < argv.length) {
+    const arg = argv[i];
+
+    switch (arg) {
+      case '--display-name':
+        options.displayName = argv[++i];
+        break;
+      case '--description':
+        options.description = argv[++i];
+        break;
+      case '--command':
+        options.command = argv[++i];
+        break;
+      case '--args':
+        options.args = JSON.parse(argv[++i]);
+        break;
+      case '--url':
+        options.url = argv[++i];
+        break;
+      case '--cwd':
+        options.cwd = argv[++i];
+        break;
+      case '--env':
+        options.env = JSON.parse(argv[++i]);
+        break;
+      default:
+        process.stderr.write(`Unknown option: ${arg}\n`);
+        process.exitCode = 1;
         break;
     }
     i++;

@@ -81,8 +81,23 @@ export async function catalogMcpShow(id: string): Promise<void> {
   console.log(`  Display Name: ${entry.displayName}`);
   console.log(`  Description: ${entry.description}`);
   console.log(`  Recipe:`);
-  console.log(`    Command: ${entry.recipe.command}`);
-  console.log(`    Args: ${JSON.stringify(entry.recipe.args)}`);
+
+  if (entry.recipe.url) {
+    console.log(`    Transport: http`);
+    console.log(`    URL: ${entry.recipe.url}`);
+  } else if (entry.recipe.command) {
+    console.log(`    Transport: stdio`);
+    console.log(`    Command: ${entry.recipe.command}`);
+    if (entry.recipe.args && entry.recipe.args.length > 0) {
+      console.log(`    Args: ${JSON.stringify(entry.recipe.args)}`);
+    }
+    if (entry.recipe.cwd) {
+      console.log(`    CWD: ${entry.recipe.cwd}`);
+    }
+  } else {
+    console.log(`    Transport: (none)`);
+  }
+
   if (entry.recipe.env && Object.keys(entry.recipe.env).length > 0) {
     console.log(`    Env: ${JSON.stringify(entry.recipe.env)}`);
   }
@@ -103,6 +118,8 @@ export interface CatalogMcpAddOptions {
   description?: string;
   command?: string;
   args?: string[];
+  url?: string;
+  cwd?: string;
   env?: Record<string, string>;
 }
 
@@ -119,17 +136,26 @@ export async function catalogMcpAdd(options: CatalogMcpAddOptions): Promise<void
     return;
   }
 
+  // Build recipe
+  const recipe: { command?: string; args?: string[]; url?: string; cwd?: string; env?: Record<string, string> } = {};
+
+  if (options.url) {
+    recipe.url = options.url;
+  } else if (options.command) {
+    recipe.command = options.command;
+    recipe.args = options.args ?? [];
+    recipe.cwd = options.cwd;
+  }
+
+  if (options.env) {
+    recipe.env = options.env;
+  }
+
   // Build entry
   const entry = normalizeMcpPackage(options.packageId, {
     displayName: options.displayName,
     description: options.description,
-    ...(options.command && {
-      recipe: {
-        command: options.command,
-        args: options.args ?? [],
-        env: options.env ?? {},
-      },
-    }),
+    ...(Object.keys(recipe).length > 0 ? { recipe } : {}),
   });
 
   await addMcp(entry);

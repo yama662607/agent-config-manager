@@ -169,15 +169,24 @@ export async function removeMcp(id: string): Promise<boolean> {
 export function normalizeMcpPackage(packageId: string, catalogEntry?: Partial<McpCatalogEntry>): McpCatalogEntry {
   const now = new Date().toISOString();
 
+  // Build recipe from catalog entry or use default npx recipe
+  const recipe: McpRecipe = catalogEntry?.recipe ?? {};
+  if (!recipe.url && !recipe.command) {
+    // Default: use npx for npm packages
+    recipe.command = 'npx';
+    recipe.args = ['-y', packageId];
+    recipe.transport = 'stdio';
+  } else if (recipe.url && !recipe.transport) {
+    recipe.transport = 'http';
+  } else if (!recipe.transport) {
+    recipe.transport = 'stdio';
+  }
+
   return {
     id: packageId,
     displayName: catalogEntry?.displayName ?? extractDisplayName(packageId),
     description: catalogEntry?.description ?? `MCP server: ${packageId}`,
-    recipe: catalogEntry?.recipe ?? {
-      command: 'npx',
-      args: ['-y', packageId],
-      env: {},
-    },
+    recipe,
     addedAt: catalogEntry?.addedAt ?? now,
     tags: catalogEntry?.tags ?? [],
   };

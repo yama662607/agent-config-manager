@@ -7,6 +7,10 @@ import {
   catalogMcpShow,
   catalogMcpAdd,
   catalogMcpRemove,
+  catalogSkillList,
+  catalogSkillShow,
+  catalogSkillAdd,
+  catalogSkillRemove,
 } from './cli-catalog.js';
 import {
   mcpStatus,
@@ -19,6 +23,17 @@ import {
   type McpEnableOptions,
   type McpDisableOptions,
 } from './cli-mcp.js';
+import {
+  skillStatus,
+  skillAdd,
+  skillRemove,
+  skillEnable,
+  skillDisable,
+  type SkillAddOptions,
+  type SkillRemoveOptions,
+  type SkillEnableOptions,
+  type SkillDisableOptions,
+} from './cli-skill.js';
 import { validate, doctor } from './cli-diagnostics.js';
 
 // ============================================================================
@@ -31,8 +46,9 @@ USAGE:
   acsync [COMMAND]
 
 COMMANDS:
-  catalog     Manage reusable MCP definitions
+  catalog     Manage reusable MCP and skill definitions
   mcp         Manage MCP servers for the current project
+  skill       Manage skills for the current project
   validate    Validate current project configuration
   doctor      Run diagnostics and health checks
 
@@ -44,6 +60,7 @@ EXAMPLES:
   acsync mcp status              Show MCP status for current project
   acsync mcp add github --targets codex   Add GitHub MCP to Codex
   acsync catalog mcp list        List all MCPs in local catalog
+  acsync skill add frontend-design --targets claude   Add a skill
 
 For more information, run: acsync <command> --help
 `;
@@ -98,6 +115,28 @@ EXAMPLES:
   acsync mcp add @modelcontextprotocol/server-github --targets codex
   acsync mcp disable github --targets claude
   acsync mcp remove github
+`;
+
+const SKILL_HELP = `acsync skill - Manage skills for the current project
+
+USAGE:
+  acsync skill [subcommand] [options]
+
+SUBCOMMANDS:
+  status                  Show skill status (default)
+  add <name>              Add a skill to the project
+  remove <name>           Remove a skill from the project
+  enable <name>           Enable a disabled skill (no-op for skills)
+  disable <name>          Disable a skill (equivalent to remove)
+
+OPTIONS:
+  --targets <list>    Comma-separated target list (e.g., codex,claude)
+  --[no-]register      Auto-register to catalog (default: yes)
+
+EXAMPLES:
+  acsync skill
+  acsync skill add frontend-design --targets claude
+  acsync skill remove frontend-design
 `;
 
 const VALIDATE_HELP = `acsync validate - Validate current project configuration
@@ -157,6 +196,10 @@ async function main(): Promise<void> {
       await handleMcp(argv.slice(1));
       break;
 
+    case 'skill':
+      await handleSkill(argv.slice(1));
+      break;
+
     case 'validate':
       await handleValidate(argv.slice(1));
       break;
@@ -186,15 +229,32 @@ async function handleCatalog(argv: string[]): Promise<void> {
   const subcommand = argv[1];
   const args = argv.slice(2);
 
-  if (resource !== 'mcp') {
+  if (resource !== 'mcp' && resource !== 'skill') {
     process.stderr.write(`Unknown catalog resource: ${resource}\n`);
-    process.stderr.write('Use "acsync catalog mcp" for MCP management.\n');
+    process.stderr.write('Use "acsync catalog mcp" or "acsync catalog skill" for management.\n');
     process.exitCode = 1;
     return;
   }
 
   if (subcommand === '--help' || subcommand === '-h') {
     process.stdout.write(CATALOG_HELP);
+    return;
+  }
+
+  switch (resource) {
+    case 'mcp':
+      await handleCatalogMcp(subcommand, args);
+      break;
+    case 'skill':
+      await handleCatalogSkill(subcommand, args);
+      break;
+  }
+}
+
+async function handleCatalogMcp(subcommand: string | undefined, args: string[]): Promise<void> {
+  if (!subcommand) {
+    process.stderr.write('Usage: acsync catalog mcp <subcommand>\n');
+    process.exitCode = 1;
     return;
   }
 
@@ -251,6 +311,65 @@ async function handleCatalogMcpAdd(argv: string[]): Promise<void> {
     url: options.url,
     cwd: options.cwd,
     env: options.env,
+  });
+}
+
+async function handleCatalogSkill(subcommand: string | undefined, args: string[]): Promise<void> {
+  if (!subcommand) {
+    process.stderr.write('Usage: acsync catalog skill <subcommand>\n');
+    process.exitCode = 1;
+    return;
+  }
+
+  switch (subcommand) {
+    case 'list':
+      await (await import('./cli-catalog.js')).catalogSkillList();
+      break;
+
+    case 'show':
+      if (args.length === 0) {
+        process.stderr.write('Usage: acsync catalog skill show <id>\n');
+        process.exitCode = 1;
+        return;
+      }
+      await (await import('./cli-catalog.js')).catalogSkillShow(args[0]);
+      break;
+
+    case 'add':
+      await handleCatalogSkillAdd(args);
+      break;
+
+    case 'remove':
+      if (args.length === 0) {
+        process.stderr.write('Usage: acsync catalog skill remove <id>\n');
+        process.exitCode = 1;
+        return;
+      }
+      await (await import('./cli-catalog.js')).catalogSkillRemove(args[0]);
+      break;
+
+    default:
+      process.stderr.write(`Unknown subcommand: ${subcommand}\n`);
+      process.stderr.write(CATALOG_HELP);
+      process.exitCode = 1;
+  }
+}
+
+async function handleCatalogSkillAdd(argv: string[]): Promise<void> {
+  if (argv.length === 0) {
+    process.stderr.write('Usage: acsync catalog skill add <skill-id> [options]\n');
+    process.exitCode = 1;
+    return;
+  }
+
+  const skillId = argv[0];
+  const options = parseCatalogSkillAddOptions(argv.slice(1));
+
+  await (await import('./cli-catalog.js')).catalogSkillAdd({
+    skillId,
+    file: options.file,
+    displayName: options.displayName,
+    description: options.description,
   });
 }
 
@@ -329,6 +448,85 @@ async function handleMcp(argv: string[]): Promise<void> {
     default:
       process.stderr.write(`Unknown subcommand: ${subcommand}\n`);
       process.stderr.write(MCP_HELP);
+      process.exitCode = 1;
+  }
+}
+
+async function handleSkill(argv: string[]): Promise<void> {
+  if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h') {
+    process.stdout.write(SKILL_HELP);
+    return;
+  }
+
+  // Check if verbose flag is present
+  const verbose = parseFlag(argv, 'verbose', 'v');
+
+  // Remove verbose from argv for further parsing
+  const filteredArgs = argv.filter((arg) => arg !== '--verbose' && arg !== '-v');
+
+  const subcommand = filteredArgs[0];
+
+  // Default to status if no subcommand or status
+  if (!subcommand || subcommand === 'status') {
+    await skillStatus(verbose);
+    return;
+  }
+
+  const options = parseSkillOptions(filteredArgs.slice(1), subcommand);
+
+  switch (subcommand) {
+    case 'add':
+      if (options.skillId === undefined) {
+        process.stderr.write('Usage: acsync skill add <name> [options]\n');
+        process.exitCode = 1;
+        return;
+      }
+      await skillAdd({
+        skillId: options.skillId!,
+        targets: options.targets,
+        noRegister: options.noRegister,
+      });
+      break;
+
+    case 'remove':
+      if (options.skillId === undefined) {
+        process.stderr.write('Usage: acsync skill remove <name> [options]\n');
+        process.exitCode = 1;
+        return;
+      }
+      await skillRemove({
+        skillName: options.skillId!,
+        targets: options.targets,
+      });
+      break;
+
+    case 'enable':
+      if (options.skillId === undefined) {
+        process.stderr.write('Usage: acsync skill enable <name> [options]\n');
+        process.exitCode = 1;
+        return;
+      }
+      await skillEnable({
+        skillName: options.skillId!,
+        targets: options.targets,
+      });
+      break;
+
+    case 'disable':
+      if (options.skillId === undefined) {
+        process.stderr.write('Usage: acsync skill disable <name> [options]\n');
+        process.exitCode = 1;
+        return;
+      }
+      await skillDisable({
+        skillName: options.skillId!,
+        targets: options.targets,
+      });
+      break;
+
+    default:
+      process.stderr.write(`Unknown subcommand: ${subcommand}\n`);
+      process.stderr.write(SKILL_HELP);
       process.exitCode = 1;
   }
 }
@@ -451,6 +649,40 @@ function parseCatalogMcpAddOptions(argv: string[]): CatalogMcpAddOptions {
   return options;
 }
 
+interface CatalogSkillAddOptions {
+  file?: string;
+  displayName?: string;
+  description?: string;
+}
+
+function parseCatalogSkillAddOptions(argv: string[]): CatalogSkillAddOptions {
+  const options: CatalogSkillAddOptions = {};
+
+  let i = 0;
+  while (i < argv.length) {
+    const arg = argv[i];
+
+    switch (arg) {
+      case '--file':
+        options.file = argv[++i];
+        break;
+      case '--display-name':
+        options.displayName = argv[++i];
+        break;
+      case '--description':
+        options.description = argv[++i];
+        break;
+      default:
+        process.stderr.write(`Unknown option: ${arg}\n`);
+        process.exitCode = 1;
+        break;
+    }
+    i++;
+  }
+
+  return options;
+}
+
 function parseTargets(input: string): TargetName[] {
   const validTargets: TargetName[] = ['claude', 'codex', 'gemini'];
   const targets = input.split(',').map((t) => t.trim().toLowerCase() as TargetName);
@@ -464,6 +696,50 @@ function parseTargets(input: string): TargetName[] {
   }
 
   return targets;
+}
+
+interface SkillOptions {
+  skillId?: string;
+  targets: TargetName[];
+  noRegister: boolean;
+  verbose?: boolean;
+}
+
+function parseSkillOptions(argv: string[], subcommand?: string): SkillOptions {
+  const options: SkillOptions = {
+    targets: ['claude', 'codex'], // Default targets
+    noRegister: false,
+  };
+
+  let i = 0;
+  while (i < argv.length) {
+    const arg = argv[i];
+
+    switch (arg) {
+      case '--targets':
+        options.targets = parseTargets(argv[++i]);
+        break;
+      case '--no-register':
+        options.noRegister = true;
+        break;
+      case '--register':
+        options.noRegister = false;
+        break;
+      case '--verbose':
+      case '-v':
+        options.verbose = true;
+        break;
+      default:
+        // Treat as skill name (except for status subcommand which doesn't need it)
+        if (!options.skillId && subcommand !== 'status') {
+          options.skillId = arg;
+        }
+        break;
+    }
+    i++;
+  }
+
+  return options;
 }
 
 function parseFlag(argv: string[], longName: string, shortName?: string): boolean {

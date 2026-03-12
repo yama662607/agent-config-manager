@@ -13,6 +13,13 @@ const TARGET_CONFIG_PATHS: Record<TargetName, string> = {
   gemini: path.join('.gemini', 'settings.json'),
 };
 
+/** Skills directory paths for each target relative to project root */
+const TARGET_SKILLS_PATHS: Record<TargetName, string> = {
+  claude: path.join('.claude', 'skills'),
+  codex: path.join('.codex', 'skills'),
+  gemini: path.join('.gemini', 'antigravity', 'skills'),
+};
+
 // ============================================================================
 // Project Discovery
 // ============================================================================
@@ -129,3 +136,15 @@ async function resolveNativeConfigPaths(projectRoot: string): Promise<Map<Target
 export function getRelativeConfigPath(projectRoot: string, target: TargetName): string {
   return TARGET_CONFIG_PATHS[target];
 }
+
+/**
+ * Get the relative path from project root to the skills directory.
+ */
+export function getSkillsPath(projectRoot: string, target: TargetName): string {
+  return path.join(projectRoot, TARGET_SKILLS_PATHS[target]);
+}
+
+/**
+ * Get the skills directory paths constant.
+ */
+export { TARGET_SKILLS_PATHS };

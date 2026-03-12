@@ -5,6 +5,8 @@ import type {
   CatalogFile,
   McpCatalogEntry,
   McpRecipe,
+  SkillCatalogEntry,
+  SkillRecipe,
 } from './types.js';
 import { CATALOG_VERSION } from './types.js';
 
@@ -81,6 +83,7 @@ export async function initCatalog(): Promise<void> {
     $schema: `./${CATALOG_SCHEMA_FILE}`,
     version: CATALOG_VERSION,
     mcps: {},
+    skills: {},
   };
 
   await writeCatalogAtomic(emptyCatalog);
@@ -107,6 +110,11 @@ export async function loadCatalog(): Promise<CatalogFile> {
     throw new Error(
       `Unsupported catalog version: ${parsed.version}. Expected: ${CATALOG_VERSION}`
     );
+  }
+
+  // Ensure skills field exists (for backward compatibility)
+  if (!parsed.skills) {
+    parsed.skills = {};
   }
 
   return parsed;
@@ -211,4 +219,126 @@ function extractDisplayName(packageId: string): string {
     .split('-')
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
+}
+
+// ============================================================================
+// Skill Catalog Operations
+// ============================================================================
+
+/**
+ * List all skill entries in the catalog.
+ */
+export async function listSkills(): Promise<SkillCatalogEntry[]> {
+  const catalog = await loadCatalog();
+  return Object.values(catalog.skills);
+}
+
+/**
+ * Get a specific skill entry by ID.
+ */
+export async function getSkill(id: string): Promise<SkillCatalogEntry | null> {
+  const catalog = await loadCatalog();
+  return catalog.skills[id] ?? null;
+}
+
+/**
+ * Add or update a skill entry in the catalog.
+ */
+export async function addSkill(entry: SkillCatalogEntry): Promise<void> {
+  const catalog = await loadCatalog();
+  catalog.skills[entry.id] = entry;
+  await writeCatalogAtomic(catalog);
+}
+
+/**
+ * Remove a skill entry from the catalog.
+ */
+export async function removeSkill(id: string): Promise<boolean> {
+  const catalog = await loadCatalog();
+
+  if (!catalog.skills[id]) {
+    return false;
+  }
+
+  delete catalog.skills[id];
+  await writeCatalogAtomic(catalog);
+  return true;
+}
+
+/**
+ * Normalize a skill identifier into a catalog entry.
+ */
+export function normalizeSkillPackage(
+  packageId: string,
+  content: string,
+  catalogEntry?: Partial<SkillCatalogEntry>
+): SkillCatalogEntry {
+  const now = new Date().toISOString();
+
+  // Parse YAML frontmatter to extract name and description
+  const recipe: SkillRecipe = parseSkillFrontmatter(content);
+
+  return {
+    id: packageId,
+    displayName: catalogEntry?.displayName ?? recipe.name,
+    description: catalogEntry?.description ?? recipe.description,
+    recipe: {
+      ...recipe,
+      content,
+    },
+    addedAt: catalogEntry?.addedAt ?? now,
+    tags: catalogEntry?.tags ?? [],
+  };
+}
+
+/**
+ * Parse YAML frontmatter from skill content.
+ */
+function parseSkillFrontmatter(content: string): SkillRecipe {
+  const frontmatterRegex = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/;
+  const match = content.match(frontmatterRegex);
+
+  if (!match) {
+    // No frontmatter found, return basic recipe
+    return {
+      name: 'unknown',
+      description: 'No description',
+      content,
+    };
+  }
+
+  const yamlText = match[1];
+  const body = match[2];
+  const recipe: SkillRecipe = {
+    name: 'unknown',
+    description: '',
+    content,
+  };
+
+  // Parse YAML frontmatter
+  const lines = yamlText.split('\n');
+  for (const line of lines) {
+    const colonIndex = line.indexOf(':');
+    if (colonIndex === -1) continue;
+
+    const key = line.slice(0, colonIndex).trim();
+    const value = line.slice(colonIndex + 1).trim();
+
+    switch (key) {
+      case 'name':
+        recipe.name = value.replace(/^["']|["']$/g, '');
+        break;
+      case 'description':
+        recipe.description = value.replace(/^["']|["']$/g, '');
+        break;
+      case 'license':
+        recipe.license = value.replace(/^["']|["']$/g, '');
+        break;
+      case 'metadata':
+        // Skip metadata for now (would need YAML parser)
+        break;
+    }
+  }
+
+  return recipe;
 }

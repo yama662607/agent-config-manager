@@ -67,6 +67,35 @@ export interface CatalogFile {
   $schema?: string;
   version: string;
   mcps: Record<string, McpCatalogEntry>;
+  skills: Record<string, SkillCatalogEntry>;
+}
+
+// ============================================================================
+// Skill Types
+// ============================================================================
+
+/** Skill file content (SKILL.md) */
+export interface SkillRecipe {
+  /** Skill name (from YAML frontmatter) */
+  name: string;
+  /** Skill description (from YAML frontmatter) */
+  description: string;
+  /** Full skill content including YAML frontmatter and Markdown body */
+  content: string;
+  /** Optional license information */
+  license?: string;
+  /** Optional metadata */
+  metadata?: Record<string, unknown>;
+}
+
+/** Skill entry in the catalog */
+export interface SkillCatalogEntry {
+  id: string;
+  displayName: string;
+  description: string;
+  recipe: SkillRecipe;
+  addedAt: string; // ISO 8601 timestamp
+  tags?: string[];
 }
 
 // ============================================================================
@@ -128,6 +157,22 @@ export interface McpServerStatus {
 export interface McpWorkspaceStatus {
   projectRoot: string;
   servers: McpServerStatus[];
+  totalCount: number;
+  enabledCount: number;
+}
+
+/** Status of a single skill in the project */
+export interface SkillStatus {
+  name: string;
+  enabled: boolean;
+  targets: TargetName[];
+  source: 'catalog' | 'inline';
+}
+
+/** Overall skill status for the project */
+export interface SkillWorkspaceStatus {
+  projectRoot: string;
+  skills: SkillStatus[];
   totalCount: number;
   enabledCount: number;
 }

@@ -1,11 +1,13 @@
-// Import enquirer's MultiSelect via require to extend it
-// @ts-ignore - enquirer uses CommonJS exports
-const MultiSelectBase = require('enquirer/lib/prompts/multiselect.js');
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 /**
  * Custom MultiSelect prompt with emacs-style Ctrl+n/p navigation.
  * Extends enquirer's MultiSelect to support both arrow keys and Ctrl+n/p.
  */
+// @ts-ignore - enquirer uses CommonJS exports
+const MultiSelectBase = require('enquirer/lib/prompts/multiselect.js');
+
 export class CustomMultiSelect extends MultiSelectBase {
   constructor(options: any) {
     super(options);

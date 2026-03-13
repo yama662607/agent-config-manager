@@ -1,3 +1,6 @@
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+
 // @ts-ignore - enquirer uses CommonJS exports
 const AutoComplete = require('enquirer/lib/prompts/autocomplete.js');
 import { listMcps } from '../catalog.js';

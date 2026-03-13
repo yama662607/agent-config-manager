@@ -1,4 +1,3 @@
-// @ts-ignore - enquirer uses CommonJS exports
 import enquirer from 'enquirer';
 import { CustomMultiSelect } from './custom-multiselect.js';
 import type { TargetName } from '../types.js';

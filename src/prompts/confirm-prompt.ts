@@ -45,7 +45,15 @@ export async function promptConfirm(
   const prompt = new Confirm({
     name: 'confirm',
     message: 'Add these items to your project?',
-    initial: true
+    initial: true,
+    // Override key actions: Ctrl+n → down, Ctrl+p → up (emacs-style)
+    // Note: Confirm only has Yes/No, but this adds consistency
+    actions: {
+      ctrl: {
+        n: 'down',
+        p: 'up'
+      }
+    }
   });
 
   try {

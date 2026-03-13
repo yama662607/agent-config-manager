@@ -33,6 +33,13 @@ export async function promptMcps(): Promise<string[]> {
     multiple: true,
     choices: choices,
     limit: 10,
+    // Override key actions: Ctrl+n → down, Ctrl+p → up (emacs-style)
+    actions: {
+      ctrl: {
+        n: 'down',
+        p: 'up'
+      }
+    },
     suggest: (input: string, choices: any[]) => {
       // Simple fuzzy search - matches if input is substring of name or message
       const lowerInput = input.toLowerCase();

@@ -46,6 +46,7 @@ USAGE:
   acsync [COMMAND]
 
 COMMANDS:
+  init        Interactive setup for the current project
   catalog     Manage reusable MCP and skill definitions in your personal catalog
   mcp         Manage MCP servers for the current project
   skill       Manage skills for the current project
@@ -66,6 +67,7 @@ ABOUT CATALOG:
   Use "acsync catalog" to manage the catalog, then add items to projects.
 
 EXAMPLES:
+  acsync init                         Interactive setup for current project
   acsync mcp                           Show MCP status for current project
   acsync skill                         Show skill status for current project
   acsync catalog mcp list              List all MCPs in your personal catalog
@@ -295,6 +297,10 @@ async function main(): Promise<void> {
   const command = argv[0];
 
   switch (command) {
+    case 'init':
+      await handleInit(argv.slice(1));
+      break;
+
     case 'catalog':
       await handleCatalog(argv.slice(1));
       break;
@@ -718,6 +724,69 @@ async function handleDoctor(argv: string[]): Promise<void> {
 
   const fix = parseFlag(argv, 'fix');
   await doctor({ fix });
+}
+
+// ============================================================================
+// Init Command
+// ============================================================================
+
+const INIT_HELP = `acsync init - Interactive setup for the current project
+
+USAGE:
+  acsync init [options]
+
+OPTIONS:
+  --targets <list>    Pre-select targets (e.g., claude,codex)
+
+DESCRIPTION:
+  Interactive setup wizard for configuring your project.
+  Guides you through selecting MCP servers and skills from your catalog.
+
+EXAMPLES:
+  acsync init                        # Full interactive setup
+  acsync init --targets claude       # Skip target selection
+`;
+
+async function handleInit(argv: string[]): Promise<void> {
+  if (argv.includes('--help') || argv.includes('-h')) {
+    process.stdout.write(INIT_HELP);
+    return;
+  }
+
+  const options = parseInitOptions(argv);
+  await init(options);
+}
+
+interface InitOptions {
+  targets?: TargetName[];
+}
+
+function parseInitOptions(argv: string[]): InitOptions {
+  const options: InitOptions = {};
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    switch (arg) {
+      case '--targets':
+        options.targets = argv[++i].split(',').map(t => t.trim()) as TargetName[];
+        break;
+      default:
+        process.stderr.write(`Unknown option: ${arg}\n`);
+        process.stderr.write(INIT_HELP);
+        process.exitCode = 1;
+        break;
+    }
+  }
+
+  return options;
+}
+
+async function init(options: InitOptions): Promise<void> {
+  console.log('🚀 acsync init - Interactive Project Setup\n');
+
+  // Import the interactive init module
+  const { runInteractiveInit } = await import('./cli-init.js');
+  await runInteractiveInit(options);
 }
 
 // ============================================================================

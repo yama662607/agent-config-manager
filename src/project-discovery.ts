@@ -27,100 +27,22 @@ const TARGET_SKILLS_PATHS: Record<TargetName, string> = {
 
 /**
  * Discover the active project from the current working directory.
- *
- * Priority:
- * 1. Nearest ancestor that is a Git repository root (excluding home directory)
- * 2. Nearest ancestor containing any supported native config file
- * 3. Fail with clear error
+ * Uses the current directory as the project root.
  */
 export async function discoverProject(cwd: string = process.cwd()): Promise<ProjectDiscovery> {
-  const gitRoot = await findGitRoot(cwd);
-  const projectRoot = gitRoot ?? (await findNativeConfigRoot(cwd));
+  const currentDir = path.resolve(cwd);
+  const homeDir = os.homedir();
 
-  if (!projectRoot) {
+  // Prevent using home directory as project root
+  if (currentDir === homeDir || currentDir === path.dirname(homeDir)) {
     throw new Error(
-      'Not inside a managed project. ' +
-      'Navigate to a Git repository or a directory with native agent config files.'
+      'Cannot use home directory as project root. ' +
+      'Navigate to a project directory first.'
     );
   }
 
-  const targets = await resolveNativeConfigPaths(projectRoot);
-  return { root: projectRoot, targets };
-}
-
-/**
- * Find the nearest Git repository root by traversing upwards.
- * Excludes home directory to prevent false positives.
- */
-async function findGitRoot(cwd: string): Promise<string | null> {
-  let current = path.resolve(cwd);
-  const homeDir = os.homedir();
-
-  while (true) {
-    // Check if we've reached or passed the home directory
-    const normalizedCurrent = path.normalize(current);
-    const normalizedHome = path.normalize(homeDir);
-
-    // Skip if we're at or above home directory
-    if (normalizedCurrent === normalizedHome || normalizedCurrent === path.dirname(normalizedHome)) {
-      return null;
-    }
-
-    const gitDir = path.join(current, '.git');
-    try {
-      const stat = await fs.stat(gitDir);
-      if (stat.isDirectory() || stat.isFile()) {
-        // .git exists (directory for normal repos, file for worktrees)
-        return current;
-      }
-    } catch {
-      // .git doesn't exist, continue
-    }
-
-    const parent = path.dirname(current);
-    if (parent === current) {
-      // Reached root
-      return null;
-    }
-    current = parent;
-  }
-}
-
-/**
- * Find the nearest ancestor containing any supported native config file.
- * Excludes home directory.
- */
-async function findNativeConfigRoot(cwd: string): Promise<string | null> {
-  let current = path.resolve(cwd);
-  const homeDir = os.homedir();
-
-  while (true) {
-    // Check if we've reached or passed the home directory
-    const normalizedCurrent = path.normalize(current);
-    const normalizedHome = path.normalize(homeDir);
-
-    // Skip if we're at or above home directory
-    if (normalizedCurrent === normalizedHome || normalizedCurrent === path.dirname(normalizedHome)) {
-      return null;
-    }
-
-    for (const targetPath of Object.values(TARGET_CONFIG_PATHS)) {
-      const fullPath = path.join(current, targetPath);
-      try {
-        await fs.access(fullPath);
-        return current;
-      } catch {
-        // File doesn't exist, try next
-      }
-    }
-
-    const parent = path.dirname(current);
-    if (parent === current) {
-      // Reached root
-      return null;
-    }
-    current = parent;
-  }
+  const targets = await resolveNativeConfigPaths(currentDir);
+  return { root: currentDir, targets };
 }
 
 /**

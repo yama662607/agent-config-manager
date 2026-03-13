@@ -1,6 +1,6 @@
 {
   "name": "agent-config-sync",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "description": "Cross-agent configuration manager for MCP servers and skills. Directly edits native config files—no manifest, no sync step.",
   "type": "module",
   "bin": {

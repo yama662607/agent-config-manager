@@ -14,6 +14,84 @@ import type {
 } from './types.js';
 
 // ============================================================================
+// Validation
+// ============================================================================
+
+/** Valid MCP server name pattern */
+const SERVER_NAME_PATTERN = /^[a-zA-Z0-9._-]+$/;
+
+/** Valid command pattern: basename only, no path separators */
+const COMMAND_PATTERN = /^[a-zA-Z0-9._-]+$/;
+
+/**
+ * Validate MCP server name.
+ */
+function validateServerName(serverName: string): void {
+  if (!serverName || serverName.length === 0 || serverName.length > 100) {
+    throw new Error('Server name must be 1-100 characters');
+  }
+
+  if (!SERVER_NAME_PATTERN.test(serverName)) {
+    throw new Error('Server name must contain only alphanumeric characters, hyphens, underscores, and dots');
+  }
+
+  if (serverName.includes('..') || serverName.includes('/') || serverName.includes('\\')) {
+    throw new Error('Server name cannot contain path traversal characters');
+  }
+}
+
+/**
+ * Validate MCP command to prevent command injection.
+ * Only allows simple command names without paths or shell metacharacters.
+ */
+function validateCommand(command: string): void {
+  if (!command || command.length === 0 || command.length > 200) {
+    throw new Error('Command must be 1-200 characters');
+  }
+
+  // Check for shell metacharacters
+  const dangerousChars = /[;&|`$()<>]/;
+  if (dangerousChars.test(command)) {
+    throw new Error('Command cannot contain shell metacharacters');
+  }
+
+  // For commands with paths, allow common safe prefixes
+  if (command.includes('/') || command.includes('\\')) {
+    // Only allow specific safe paths
+    const allowedPaths = [
+      /^npx$/,
+      /^npm$/,
+      /^node$/,
+      /^python$/,
+      /^python3$/,
+      /^\.\/[a-zA-Z0-9._-]+$/,  // Current directory relative
+      /^\.\.\/[a-zA-Z0-9._-]+$/, // Parent directory relative (risky but needed)
+    ];
+
+    const isAllowed = allowedPaths.some(pattern => pattern.test(command));
+    if (!isAllowed) {
+      throw new Error('Command path not allowed. Use npx, npm, node, or relative paths like ./command');
+    }
+  }
+}
+
+/**
+ * Validate MCP arguments.
+ */
+function validateArgs(args: string[]): void {
+  for (const arg of args) {
+    if (arg.length > 500) {
+      throw new Error('Argument too long');
+    }
+
+    // Check for shell metacharacters that could escape the argument
+    if (/[;&|`$()]/.test(arg)) {
+      throw new Error('Arguments cannot contain shell metacharacters');
+    }
+  }
+}
+
+// ============================================================================
 // Config Reading
 // ============================================================================
 
@@ -112,6 +190,28 @@ export async function addMcpToConfig(
   serverName: string,
   recipe: McpRecipe
 ): Promise<void> {
+  // Validate server name
+  validateServerName(serverName);
+
+  // Validate recipe content
+  if (recipe.command) {
+    validateCommand(recipe.command);
+  }
+  if (recipe.args && recipe.args.length > 0) {
+    validateArgs(recipe.args);
+  }
+  if (recipe.url) {
+    // Basic URL validation - ensure it starts with http:// or https://
+    try {
+      const url = new URL(recipe.url);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        throw new Error('URL must use http or https protocol');
+      }
+    } catch {
+      throw new Error('Invalid URL format');
+    }
+  }
+
   const result = await readNativeConfig(target, configPath);
 
   let config: any;
@@ -139,6 +239,8 @@ export async function removeMcpFromConfig(
   configPath: string,
   serverName: string
 ): Promise<void> {
+  validateServerName(serverName);
+
   const result = await readNativeConfig(target, configPath);
 
   if (!result.config) {
@@ -158,6 +260,8 @@ export async function enableMcpInConfig(
   configPath: string,
   serverName: string
 ): Promise<void> {
+  validateServerName(serverName);
+
   const result = await readNativeConfig(target, configPath);
 
   if (!result.config) {
@@ -177,6 +281,8 @@ export async function disableMcpInConfig(
   configPath: string,
   serverName: string
 ): Promise<void> {
+  validateServerName(serverName);
+
   const result = await readNativeConfig(target, configPath);
 
   if (!result.config) {

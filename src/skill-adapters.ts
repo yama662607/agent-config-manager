@@ -3,6 +3,48 @@ import path from 'node:path';
 import type { TargetName, SkillRecipe } from './types.js';
 
 // ============================================================================
+// Constants
+// ============================================================================
+
+/** Maximum size for skill files (1MB) */
+const MAX_SKILL_SIZE = 1024 * 1024;
+
+/** Valid skill name pattern: alphanumeric, hyphens, underscores, dots */
+const SKILL_NAME_PATTERN = /^[a-zA-Z0-9._-]+$/;
+
+// ============================================================================
+// Validation
+// ============================================================================
+
+/**
+ * Validate a skill name to prevent path traversal and injection.
+ */
+export function validateSkillName(skillName: string): void {
+  if (!skillName || skillName.length === 0) {
+    throw new Error('Skill name cannot be empty');
+  }
+
+  if (skillName.length > 100) {
+    throw new Error('Skill name too long (max 100 characters)');
+  }
+
+  if (!SKILL_NAME_PATTERN.test(skillName)) {
+    throw new Error('Skill name must contain only alphanumeric characters, hyphens, underscores, and dots');
+  }
+
+  // Prevent path traversal
+  if (skillName.includes('..') || skillName.includes('/') || skillName.includes('\\')) {
+    throw new Error('Skill name cannot contain path traversal characters');
+  }
+
+  // Prevent leading/trailing dots and dashes (security issues)
+  if (skillName.startsWith('.') || skillName.startsWith('-') ||
+      skillName.endsWith('.') || skillName.endsWith('-')) {
+    throw new Error('Skill name cannot start or end with a dot or dash');
+  }
+}
+
+// ============================================================================
 // Skill Path Resolution
 // ============================================================================
 
@@ -51,11 +93,19 @@ export async function readSkill(
   target: TargetName,
   skillName: string
 ): Promise<{ exists: boolean; content: string | null }> {
+  validateSkillName(skillName);
+
   const skillPath = getSkillFilePath(projectRoot, target, skillName);
 
   try {
     await fs.access(skillPath);
     const content = await fs.readFile(skillPath, 'utf8');
+
+    // Check content size
+    if (content.length > MAX_SKILL_SIZE) {
+      throw new Error('Skill file too large');
+    }
+
     return { exists: true, content };
   } catch {
     return { exists: false, content: null };
@@ -71,6 +121,13 @@ export async function writeSkill(
   skillName: string,
   content: string
 ): Promise<void> {
+  validateSkillName(skillName);
+
+  // Check content size before writing
+  if (content.length > MAX_SKILL_SIZE) {
+    throw new Error(`Skill content too large (${content.length} bytes, max ${MAX_SKILL_SIZE})`);
+  }
+
   const skillDir = getSkillDir(projectRoot, target, skillName);
   const skillPath = getSkillFilePath(projectRoot, target, skillName);
 
@@ -91,6 +148,8 @@ export async function removeSkill(
   target: TargetName,
   skillName: string
 ): Promise<boolean> {
+  validateSkillName(skillName);
+
   const skillDir = getSkillDir(projectRoot, target, skillName);
 
   try {
@@ -152,6 +211,15 @@ export async function getSkills(
     if (!entry.isDirectory()) continue;
 
     const skillName = entry.name;
+
+    // Validate skill name to skip invalid entries
+    try {
+      validateSkillName(skillName);
+    } catch {
+      // Skip invalid skill names
+      continue;
+    }
+
     const skillPath = path.join(skillsDir, skillName, 'SKILL.md');
 
     try {

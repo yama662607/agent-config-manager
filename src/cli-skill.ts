@@ -1,6 +1,17 @@
 import type { SkillWorkspaceStatus, TargetName } from './types.js';
 import { discoverProject } from './project-discovery.js';
-import { getSkills } from './skill-adapters.js';
+import { getSkills, validateSkillName } from './skill-adapters.js';
+
+// ============================================================================
+// Validation Helpers
+// ============================================================================
+
+/**
+ * Sanitize skill ID for use in content.
+ */
+function sanitizeSkillId(skillId: string): string {
+  return skillId.replace(/[^\w.-]/g, '').slice(0, 50);
+}
 
 // ============================================================================
 // Status Command
@@ -137,6 +148,15 @@ export interface SkillAddOptions {
 export async function skillAdd(options: SkillAddOptions): Promise<void> {
   const { normalizeSkillPackage, getSkill, addSkill } = await import('./catalog.js');
 
+  // Validate skill ID
+  try {
+    validateSkillName(options.skillId);
+  } catch (error) {
+    console.error(`Invalid skill name: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+    return;
+  }
+
   // Check if entry exists in catalog first
   let entry = await getSkill(options.skillId);
 
@@ -144,14 +164,15 @@ export async function skillAdd(options: SkillAddOptions): Promise<void> {
   if (!entry) {
     // For now, we'll create a basic entry from the skill ID
     // In a full implementation, this would read from a local file or URL
+    const sanitizedId = sanitizeSkillId(options.skillId);
     const defaultContent = `---
-name: ${options.skillId}
-description: Skill: ${options.skillId}
+name: ${sanitizedId}
+description: Skill: ${sanitizedId}
 ---
 
-# ${options.skillId}
+# ${sanitizedId}
 
-Skill content for ${options.skillId}.
+Skill content for ${sanitizedId}.
 `;
     entry = normalizeSkillPackage(options.skillId, defaultContent);
 
@@ -193,10 +214,18 @@ export async function skillInstallFromGitHub(options: SkillInstallFromGitHubOpti
   const { normalizeSkillPackage, addSkill, getSkill } = await import('./catalog.js');
 
   console.log(`Installing skill from GitHub...`);
-  console.log(`  URL: ${options.githubUrl}`);
 
   // Download and parse skill
   const { name, content } = await installFromGitHub(options.githubUrl, options.skillName);
+
+  // Validate the parsed skill name
+  try {
+    validateSkillName(name);
+  } catch (error) {
+    console.error(`Invalid skill name from GitHub: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+    return;
+  }
 
   console.log(`  Skill name: ${name}`);
 
@@ -242,6 +271,15 @@ export interface SkillRemoveOptions {
  * Remove a skill from the current project.
  */
 export async function skillRemove(options: SkillRemoveOptions): Promise<void> {
+  // Validate skill name
+  try {
+    validateSkillName(options.skillName);
+  } catch (error) {
+    console.error(`Invalid skill name: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+    return;
+  }
+
   const discovery = await discoverProject();
   const { removeSkillFromConfig } = await import('./skill-adapters.js');
 

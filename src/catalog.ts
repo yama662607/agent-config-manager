@@ -17,6 +17,9 @@ import { CATALOG_VERSION } from './types.js';
 /** Catalog directory name in user's home directory */
 const CATALOG_DIR = '.acsync';
 
+/** Maximum catalog file size (10MB) */
+const MAX_CATALOG_SIZE = 10 * 1024 * 1024;
+
 /** Catalog filename */
 const CATALOG_FILE = 'catalog.json';
 
@@ -103,6 +106,12 @@ export async function loadCatalog(): Promise<CatalogFile> {
   }
 
   const raw = await fs.readFile(catalogPath, 'utf8');
+
+  // Check file size
+  if (raw.length > MAX_CATALOG_SIZE) {
+    throw new Error('Catalog file too large. Please clean up the catalog.');
+  }
+
   const parsed = JSON.parse(raw) as CatalogFile;
 
   // Validate version
@@ -295,7 +304,7 @@ export function normalizeSkillPackage(
  * Parse YAML frontmatter from skill content.
  */
 function parseSkillFrontmatter(content: string): SkillRecipe {
-  const frontmatterRegex = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/;
+  const frontmatterRegex = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/;
   const match = content.match(frontmatterRegex);
 
   if (!match) {
@@ -315,30 +324,74 @@ function parseSkillFrontmatter(content: string): SkillRecipe {
     content,
   };
 
-  // Parse YAML frontmatter
-  const lines = yamlText.split('\n');
+  // Parse YAML frontmatter with improved handling
+  const lines = yamlText.split(/\r?\n/);
+  let inMultiline = false;
+  let multilineKey = '';
+  let multilineValues: string[] = [];
+
   for (const line of lines) {
+    // Skip empty lines and comments
+    if (!line.trim() || line.trim().startsWith('#')) {
+      continue;
+    }
+
+    // Handle multiline values
+    if (inMultiline) {
+      if (line.startsWith('  ') || line.startsWith('\t')) {
+        multilineValues.push(line.trim());
+        continue;
+      } else {
+        inMultiline = false;
+        // Store the accumulated multiline value
+        if (multilineKey === 'description') {
+          recipe.description = multilineValues.join(' ').replace(/^["']|["']$/g, '');
+        }
+        multilineValues = [];
+        multilineKey = '';
+      }
+    }
+
     const colonIndex = line.indexOf(':');
     if (colonIndex === -1) continue;
 
     const key = line.slice(0, colonIndex).trim();
     const value = line.slice(colonIndex + 1).trim();
 
+    // Handle empty values (start of multiline)
+    if (!value && (key === 'description' || key === 'name')) {
+      inMultiline = true;
+      multilineKey = key;
+      continue;
+    }
+
+    // Sanitize values: remove quotes and limit length
+    const sanitizedValue = value.replace(/^["']|["']$/g, '').slice(0, 500);
+
     switch (key) {
       case 'name':
-        recipe.name = value.replace(/^["']|["']$/g, '');
+        recipe.name = sanitizedValue || 'unknown';
         break;
       case 'description':
-        recipe.description = value.replace(/^["']|["']$/g, '');
+        recipe.description = sanitizedValue || '';
         break;
       case 'license':
-        recipe.license = value.replace(/^["']|["']$/g, '');
+        recipe.license = sanitizedValue;
         break;
       case 'metadata':
         // Skip metadata for now (would need YAML parser)
         break;
     }
   }
+
+  // Handle trailing multiline value
+  if (inMultiline && multilineKey === 'description' && multilineValues.length > 0) {
+    recipe.description = multilineValues.join(' ').replace(/^["']|["']$/g, '');
+  }
+
+  // Sanitize name to prevent injection
+  recipe.name = recipe.name.replace(/[^\w\s-]/g, '').trim().slice(0, 100) || 'unknown';
+  recipe.description = recipe.description.slice(0, 500);
 
   return recipe;
 }

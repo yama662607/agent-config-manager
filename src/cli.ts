@@ -46,7 +46,7 @@ USAGE:
   acsync [COMMAND]
 
 COMMANDS:
-  catalog     Manage reusable MCP and skill definitions
+  catalog     Manage reusable MCP and skill definitions in your personal catalog
   mcp         Manage MCP servers for the current project
   skill       Manage skills for the current project
   validate    Validate current project configuration
@@ -56,11 +56,22 @@ OPTIONS:
   -h, --help    Show this help message
   -V, --version Show version information
 
+TARGETS:
+  claude     Claude Code (.mcp.json, .claude/skills/)
+  codex      Codex (.codex/config.toml, .codex/skills/)
+  gemini     Gemini CLI (.gemini/settings.json, .gemini/antigravity/skills/)
+
+ABOUT CATALOG:
+  Your personal catalog (~/.acsync/) stores reusable MCP and skill definitions.
+  Use "acsync catalog" to manage the catalog, then add items to projects.
+
 EXAMPLES:
-  acsync mcp status              Show MCP status for current project
-  acsync mcp add github --targets codex   Add GitHub MCP to Codex
-  acsync catalog mcp list        List all MCPs in local catalog
-  acsync skill add frontend-design --targets claude   Add a skill
+  acsync mcp                           Show MCP status for current project
+  acsync skill                         Show skill status for current project
+  acsync catalog mcp list              List all MCPs in your personal catalog
+  acsync mcp add github --targets claude   Add GitHub MCP to Claude Code
+  acsync skill add frontend-design --targets claude   Add skill from catalog
+  acsync skill install <github-url> --targets claude,codex   Install from GitHub
 
 For more information, run: acsync <command> --help
 `;
@@ -69,6 +80,10 @@ const CATALOG_HELP = `acsync catalog - Manage reusable MCP and skill definitions
 
 USAGE:
   acsync catalog <kind> <subcommand>
+
+ABOUT CATALOG:
+  Your personal catalog (~/.acsync/catalog.json) stores reusable MCP servers
+  and skills. Once added to the catalog, you can easily add them to any project.
 
 KINDS:
   mcp         Manage MCP definitions
@@ -83,11 +98,11 @@ MCP SUBCOMMANDS:
 SKILL SUBCOMMANDS:
   list              List all skill entries in catalog
   show <id>         Show details of a specific skill entry
-  add <file>        Add a new skill entry to catalog from file
-  import <path>    Import a skill from a local directory
-  install <id>     Install a skill from skills.directory registry
-  search <query>   Search the skills.directory registry
-  remove <id>       Remove a skill entry from catalog
+  add <name>        Add a new skill entry to catalog from file
+  import <path>     Import a skill from a local directory
+  install <id>      Install a skill from skills.directory registry
+  search <query>    Search the skills.directory registry
+  remove <id>        Remove a skill entry from catalog
 
 OPTIONS (mcp add):
   --url <url>           HTTP/SSE URL for the MCP server
@@ -102,16 +117,26 @@ OPTIONS (skill install):
   --force              Force reinstall if already exists
 
 OPTIONS (skill import):
-  --name <name>        Override skill name
-  --display-name <name> Display name for the entry
-  --description <desc>  Description for the entry
+  --name <name>             Override skill name
+  --display-name <name>     Display name for the entry
+  --description <desc>       Description for the entry
 
 EXAMPLES:
+  # Catalog operations
   acsync catalog mcp list
+  acsync catalog mcp show @modelcontextprotocol/server-github
+  acsync catalog mcp add @modelcontextprotocol/server-filesystem
+
+  # Skill catalog operations
+  acsync catalog skill list
   acsync catalog skill install frontend-design
   acsync catalog skill search typescript
   acsync catalog skill import ~/.claude/skills/frontend-design
-  acsync catalog skill add my-skill --file ./skills/my-skill/SKILL.md
+  acsync catalog skill add my-skill --file ./my-skill/SKILL.md
+
+  # After adding to catalog, use with project commands:
+  acsync mcp add @modelcontextprotocol/server-github --targets claude
+  acsync skill add frontend-design --targets claude,codex
 `;
 
 const MCP_HELP = `acsync mcp - Manage MCP servers for the current project
@@ -121,20 +146,41 @@ USAGE:
 
 SUBCOMMANDS:
   status                  Show MCP status (default)
-  add <package>           Add an MCP to the project
+  add <package>           Add an MCP to the project (from catalog or npm)
   remove <server>         Remove an MCP from the project
   enable <server>         Enable a disabled MCP
   disable <server>        Disable an MCP
 
 OPTIONS:
-  --targets <list>    Comma-separated target list (e.g., codex,claude)
+  --targets <list>    Comma-separated target list (default: claude,codex,gemini)
   --[no-]register      Auto-register to catalog (default: yes)
 
+TARGETS:
+  claude     Claude Code (.mcp.json)
+  codex      Codex (.codex/config.toml)
+  gemini     Gemini CLI (.gemini/settings.json)
+
 EXAMPLES:
+  # Show status
   acsync mcp
-  acsync mcp add @modelcontextprotocol/server-github --targets codex
+  acsync mcp status
+
+  # Add from npm package (auto-registers to catalog)
+  acsync mcp add @modelcontextprotocol/server-github --targets claude
+  acsync mcp add @modelcontextprotocol/server-filesystem --targets claude,codex
+
+  # Add with custom configuration
+  acsync mcp add custom-mcp --url "https://mcp.example.com" --targets claude
+  acsync mcp add local-mcp --command "node" --args '["server.js"]' --targets claude
+
+  # Enable/disable/remove
   acsync mcp disable github --targets claude
+  acsync mcp enable github --targets codex
   acsync mcp remove github
+
+  # Work with catalog
+  acsync catalog mcp list              # List catalog entries
+  acsync catalog mcp add <package>     # Add to catalog first
 `;
 
 const SKILL_HELP = `acsync skill - Manage skills for the current project
@@ -144,26 +190,52 @@ USAGE:
 
 SUBCOMMANDS:
   status                  Show skill status (default)
-  add <name>              Add a skill to the project (from catalog)
-  install <github-url>  Install a skill from a GitHub URL
+  add <name>              Add a skill to the project from your catalog
+  install <github-url>   Install a skill directly from GitHub URL
   remove <name>           Remove a skill from the project
-  enable <name>           Enable a disabled skill (no-op for skills)
+  enable <name>           Enable a skill (skills are always enabled if present)
   disable <name>          Disable a skill (equivalent to remove)
 
 OPTIONS:
-  --targets <list>    Comma-separated target list (e.g., codex,claude)
+  --targets <list>    Comma-separated target list (default: claude,codex,gemini)
   --[no-]register      Auto-register to catalog (default: yes)
 
-INSTALL OPTIONS:
-  --name <name>         Override skill name
-  --no-catalog          Don't add to catalog, only install to project
+INSTALL OPTIONS (for GitHub install):
+  --name <name>             Override skill name from GitHub
+  --no-catalog              Don't add to catalog, only install to project
+
+TARGETS:
+  claude     Claude Code (.claude/skills/)
+  codex      Codex (.codex/skills/)
+  gemini     Gemini CLI (.gemini/antigravity/skills/)
+
+COMMAND DIFFERENCES:
+  add <name>              Add from your catalog (must exist in catalog first)
+  install <github-url>   Install directly from GitHub (adds to catalog + project)
 
 EXAMPLES:
+  # Show status
   acsync skill
+  acsync skill status
+
+  # Add from catalog (requires catalog entry)
   acsync skill add frontend-design --targets claude
-  acsync skill install https://github.com/anthropics/skills --name frontend-design
-  acsync skill install https://github.com/anthropics/skills --targets claude,codex
+  acsync skill add skill-creator --targets claude,codex
+
+  # Install directly from GitHub (adds to catalog + project)
+  acsync skill install https://github.com/anthropics/skills/tree/main/skill-creator
+  acsync skill install https://github.com/user/repo --name my-skill --targets claude
+
+  # Install without adding to catalog
+  acsync skill install <github-url> --no-catalog --targets claude
+
+  # Remove from project
   acsync skill remove frontend-design
+
+  # Work with catalog
+  acsync catalog skill list              # List catalog entries
+  acsync catalog skill import <path>     # Import local skill to catalog
+  acsync catalog skill search <query>    # Search skills.directory registry
 `;
 
 const VALIDATE_HELP = `acsync validate - Validate current project configuration
@@ -174,9 +246,13 @@ USAGE:
 OPTIONS:
   --strict      Fail on warnings as well as errors
 
+DESCRIPTION:
+  Validates MCP and skill configurations across all target agents.
+  Checks for missing files, invalid configurations, and common issues.
+
 EXAMPLES:
-  acsync validate
-  acsync validate --strict
+  acsync validate              # Show warnings but don't fail
+  acsync validate --strict     # Fail on any warnings or errors
 `;
 
 const DOCTOR_HELP = `acsync doctor - Run diagnostics and health checks
@@ -187,9 +263,13 @@ USAGE:
 OPTIONS:
   --fix         Attempt to auto-fix issues
 
+DESCRIPTION:
+  Runs comprehensive diagnostics on your acsync setup and project configurations.
+  Checks catalog integrity, config file validity, and common issues.
+
 EXAMPLES:
-  acsync doctor
-  acsync doctor --fix
+  acsync doctor                  # Diagnose issues without fixing
+  acsync doctor --fix            # Attempt to auto-fix found issues
 `;
 
 // ============================================================================

@@ -1,6 +1,6 @@
 # agent-config-sync
 
-`acsync` is a cross-agent configuration manager for MCP servers and other agent assets. Unlike manifest-based tools, `acsync` directly edits native config files in your project—no intermediate manifest, no "sync" step.
+`acsync` is a cross-agent configuration manager for MCP servers and skills. Unlike manifest-based tools, `acsync` directly edits native config files in your project—no intermediate manifest, no "sync" step.
 
 ## Design Principles
 
@@ -20,14 +20,16 @@ npm install -g agent-config-sync
 # Add an MCP server to your project
 acsync mcp add @modelcontextprotocol/server-github --targets claude
 
+# Add a skill from GitHub
+acsync skill install https://github.com/anthropics/skills/tree/main/skill-creator
+
 # See what's configured
 acsync mcp
+acsync skill
 
 # List catalog entries
 acsync catalog mcp list
-
-# Diagnose issues
-acsync doctor
+acsync catalog skill list
 ```
 
 ## Commands
@@ -51,6 +53,24 @@ acsync mcp disable github --targets claude
 acsync mcp enable github --targets codex
 ```
 
+### `acsync skill`
+
+Manage skills for the current project.
+
+```bash
+# Show status (default)
+acsync skill
+
+# Add a skill from catalog
+acsync skill add skill-creator --targets claude,codex
+
+# Install a skill from GitHub
+acsync skill install https://github.com/anthropics/skills/tree/main/frontend-design
+
+# Remove a skill
+acsync skill remove frontend-design
+```
+
 ### `acsync catalog mcp`
 
 Manage reusable MCP definitions in your local catalog (`~/.acsync/`).
@@ -67,6 +87,33 @@ acsync catalog mcp add @modelcontextprotocol/server-github
 
 # Remove from catalog
 acsync catalog mcp remove @modelcontextprotocol/server-github
+```
+
+### `acsync catalog skill`
+
+Manage reusable skill definitions in your local catalog.
+
+```bash
+# List all catalog entries
+acsync catalog skill list
+
+# Show details
+acsync catalog skill show skill-creator
+
+# Add to catalog from file
+acsync catalog skill add my-skill --file ./skills/my-skill/SKILL.md
+
+# Import from local directory
+acsync catalog skill import ~/.claude/skills/frontend-design
+
+# Install from GitHub
+acsync skill install https://github.com/anthropics/skills --name frontend-design
+
+# Search skills.directory registry
+acsync catalog skill search typescript
+
+# Remove from catalog
+acsync catalog skill remove skill-creator
 ```
 
 ### `acsync validate`
@@ -89,34 +136,30 @@ acsync doctor --fix # Attempt auto-fix
 
 ## Supported Targets
 
-| Target | Config File | Status |
-|--------|-------------|--------|
-| Claude Code | `.mcp.json` | ✓ Supported |
-| Codex | `.codex/config.toml` | ✓ Supported |
-| Gemini CLI | `.gemini/settings.json` | ✓ Supported |
+| Target | Config File | MCP | Skills |
+|--------|-------------|-----|--------|
+| Claude Code | `.mcp.json` | ✓ | ✓ |
+| Codex | `.codex/config.toml` | ✓ | ✓ |
+| Gemini CLI | `.gemini/settings.json` | ✓ | ✓ |
 
 ## Architecture
 
 ```
 ~/.acsync/                    # User-level catalog
-├── catalog.json              # Reusable MCP definitions
+├── catalog.json              # Reusable MCP and skill definitions
 ├── catalog-schema.json       # Schema versioning
 └── catalog.lock              # Concurrent access safety
 
 my-project/                   # Your project
 ├── .git/
 ├── .mcp.json                 # Claude Code MCP config (edited directly)
+├── .claude/skills/           # Claude Code skills
+│   └── <name>/SKILL.md
 ├── .codex/config.toml        # Codex config (edited directly)
+├── .codex/skills/            # Codex skills
+│   └── <name>/SKILL.md
 └── .gemini/settings.json     # Gemini CLI config (edited directly)
 ```
-
-## Migration from Manifest-Based Workflow
-
-If you were using the old manifest-based `acsync`:
-
-1. **No automatic migration** — the old workflow is completely different
-2. **Native configs are now the source of truth** — edit them directly or via `acsync mcp`
-3. **No manifest file** — `acsync` reads/writes native configs directly
 
 ## Benefits
 
@@ -124,12 +167,7 @@ If you were using the old manifest-based `acsync`:
 - **Easy to explain** — "edits `.mcp.json`" vs "generates from manifest"
 - **Tool-agnostic** — remove `acsync` and your project still works
 - **CI-friendly** — `acsync validate` for checking, no drift detection needed
-
-## Phase 2 (Future)
-
-- Skill management
-- Additional targets
-- Import from external registries
+- **Cross-agent** — manage MCP and skills across Claude Code, Codex, and Gemini CLI
 
 ## License
 

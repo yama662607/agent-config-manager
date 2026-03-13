@@ -1,7 +1,7 @@
 {
   "name": "agent-config-sync",
   "version": "0.1.0",
-  "description": "Cross-agent configuration manager for MCP servers and agent assets. Directly edits native config files—no manifest, no sync step.",
+  "description": "Cross-agent configuration manager for MCP servers and skills. Directly edits native config files—no manifest, no sync step.",
   "type": "module",
   "bin": {
     "agent-config-sync": "./dist/cli.js",
@@ -28,15 +28,30 @@
   },
   "keywords": [
     "mcp",
+    "model-context-protocol",
+    "skills",
     "codex",
     "claude-code",
+    "claude",
+    "gemini-cli",
+    "gemini",
     "cli",
     "config-sync",
-    "skills",
-    "agents"
+    "agents",
+    "agent-tools",
+    "skill-management",
+    "developer-tools"
   ],
   "author": "Daisuke Yamashiki",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yama662607/agent-config-sync.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yama662607/agent-config-sync/issues"
+  },
+  "homepage": "https://github.com/yama662607/agent-config-sync#readme",
   "dependencies": {
     "@iarna/toml": "^2.2.5",
     "yaml": "^2.8.1"

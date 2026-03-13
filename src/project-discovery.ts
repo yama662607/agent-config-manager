@@ -21,19 +21,6 @@ const TARGET_SKILLS_PATHS: Record<TargetName, string> = {
   gemini: path.join('.gemini', 'antigravity', 'skills'),
 };
 
-/** Project marker files that indicate a real project directory */
-const PROJECT_MARKERS = [
-  'package.json',
-  'tsconfig.json',
-  'Cargo.toml',
-  'go.mod',
-  'pyproject.toml',
-  'Gemfile',
-  'composer.json',
-  '.gitignore',
-  'README.md',
-];
-
 // ============================================================================
 // Project Discovery
 // ============================================================================
@@ -70,19 +57,21 @@ async function findGitRoot(cwd: string): Promise<string | null> {
   const homeDir = os.homedir();
 
   while (true) {
-    // Skip home directory
-    if (current === homeDir || current === path.dirname(homeDir)) {
+    // Check if we've reached or passed the home directory
+    const normalizedCurrent = path.normalize(current);
+    const normalizedHome = path.normalize(homeDir);
+
+    // Skip if we're at or above home directory
+    if (normalizedCurrent === normalizedHome || normalizedCurrent === path.dirname(normalizedHome)) {
       return null;
     }
 
     const gitDir = path.join(current, '.git');
     try {
       const stat = await fs.stat(gitDir);
-      if (stat.isDirectory()) {
-        // Verify this looks like a real project (has project markers)
-        if (await hasProjectMarkers(current)) {
-          return current;
-        }
+      if (stat.isDirectory() || stat.isFile()) {
+        // .git exists (directory for normal repos, file for worktrees)
+        return current;
       }
     } catch {
       // .git doesn't exist, continue
@@ -98,21 +87,6 @@ async function findGitRoot(cwd: string): Promise<string | null> {
 }
 
 /**
- * Check if directory contains project marker files.
- */
-async function hasProjectMarkers(dir: string): Promise<boolean> {
-  for (const marker of PROJECT_MARKERS) {
-    try {
-      await fs.access(path.join(dir, marker));
-      return true;
-    } catch {
-      // Marker doesn't exist
-    }
-  }
-  return false;
-}
-
-/**
  * Find the nearest ancestor containing any supported native config file.
  * Excludes home directory.
  */
@@ -121,8 +95,12 @@ async function findNativeConfigRoot(cwd: string): Promise<string | null> {
   const homeDir = os.homedir();
 
   while (true) {
-    // Skip home directory
-    if (current === homeDir || current === path.dirname(homeDir)) {
+    // Check if we've reached or passed the home directory
+    const normalizedCurrent = path.normalize(current);
+    const normalizedHome = path.normalize(homeDir);
+
+    // Skip if we're at or above home directory
+    if (normalizedCurrent === normalizedHome || normalizedCurrent === path.dirname(normalizedHome)) {
       return null;
     }
 

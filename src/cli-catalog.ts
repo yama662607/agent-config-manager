@@ -304,6 +304,18 @@ function formatNumber(num: number): string {
 // Import Command (import from local path)
 // ============================================================================
 
+/** Maximum size for skill files (1MB) */
+const MAX_SKILL_FILE_SIZE = 1024 * 1024;
+
+/**
+ * Validate that a path doesn't escape the allowed base directory.
+ */
+function validatePath(resolvedPath: string, allowedBase: string): void {
+  if (!resolvedPath.startsWith(allowedBase)) {
+    throw new Error('Path must be within the allowed directory');
+  }
+}
+
 export interface CatalogSkillImportOptions {
   path: string;
   skillId?: string;
@@ -320,16 +332,43 @@ export async function catalogSkillImport(options: CatalogSkillImportOptions): Pr
   const { normalizeSkillPackage, addSkill, getSkill } = await import('./catalog.js');
 
   const skillPath = path.resolve(options.path);
+
+  // Security: Validate path is within allowed directories
+  const homeDir = path.join(path.resolve(process.env.HOME || '~'));
+  const currentDir = path.resolve(process.cwd());
+  const allowedBases = [homeDir, currentDir];
+
+  if (!allowedBases.some(base => {
+    try {
+      validatePath(skillPath, base);
+      return true;
+    } catch {
+      return false;
+    }
+  })) {
+    console.error(`Invalid path: Path must be within home directory or current project\n`);
+    process.exitCode = 1;
+    return;
+  }
+
   const skillMdPath = path.join(skillPath, 'SKILL.md');
 
   console.log(`Importing skill from: ${skillPath}`);
 
-  // Check if SKILL.md exists
+  // Check if SKILL.md exists and get stats
+  let stats: import('fs').Stats;
   try {
-    await fs.access(skillMdPath);
+    stats = await fs.stat(skillMdPath);
   } catch {
     console.error(`SKILL.md not found at: ${skillMdPath}\n`);
     console.log('Ensure the directory contains a SKILL.md file.');
+    process.exitCode = 1;
+    return;
+  }
+
+  // Security: Check file size
+  if (stats.size > MAX_SKILL_FILE_SIZE) {
+    console.error(`File too large: ${stats.size} bytes (max: ${MAX_SKILL_FILE_SIZE})\n`);
     process.exitCode = 1;
     return;
   }

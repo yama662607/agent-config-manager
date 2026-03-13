@@ -2,6 +2,22 @@
 // Skills Directory Registry Client
 // ============================================================================
 
+/** Maximum size for skill content (1MB) */
+const MAX_SKILL_SIZE = 1024 * 1024;
+
+/**
+ * Validate that a URL is from GitHub.
+ */
+function validateGitHubUrl(inputUrl: string): boolean {
+  try {
+    const url = new URL(inputUrl);
+    const allowedHosts = ['github.com', 'raw.githubusercontent.com', 'www.github.com'];
+    return allowedHosts.includes(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Search the skills.directory registry for skills.
  */
@@ -11,13 +27,13 @@ export async function searchSkills(query: string): Promise<RegistrySkill[]> {
   try {
     const response = await fetch(url);
     if (!response.ok) {
-      throw new Error(`Registry search failed: ${response.status}`);
+      throw new Error('Registry search failed');
     }
 
     const data = await response.json();
     return data.skills || [];
   } catch (error) {
-    console.error(`Failed to search registry: ${error}`);
+    console.error('Failed to search registry. Please try again later.');
     return [];
   }
 }
@@ -34,13 +50,13 @@ export async function getSkillInfo(skillName: string): Promise<RegistrySkillInfo
       if (response.status === 404) {
         return null;
       }
-      throw new Error(`Registry fetch failed: ${response.status}`);
+      throw new Error('Registry fetch failed');
     }
 
     const data = await response.json();
     return data;
   } catch (error) {
-    console.error(`Failed to fetch skill info: ${error}`);
+    console.error('Failed to fetch skill info. Please try again later.');
     return null;
   }
 }
@@ -49,6 +65,11 @@ export async function getSkillInfo(skillName: string): Promise<RegistrySkillInfo
  * Download a skill's SKILL.md content from GitHub.
  */
 export async function downloadSkillContent(githubUrl: string): Promise<string> {
+  // Validate URL is from GitHub
+  if (!validateGitHubUrl(githubUrl)) {
+    throw new Error('Only GitHub URLs are allowed');
+  }
+
   // Parse GitHub URL to extract raw content URL
   const rawUrl = githubUrl.replace('github.com', 'raw.githubusercontent.com')
     .replace('/blob/', '/')
@@ -57,15 +78,37 @@ export async function downloadSkillContent(githubUrl: string): Promise<string> {
   // Ensure we point to SKILL.md
   const skillUrl = rawUrl.endsWith('SKILL.md') ? rawUrl : `${rawUrl}/SKILL.md`;
 
+  // Validate final URL is still from GitHub
+  if (!validateGitHubUrl(skillUrl)) {
+    throw new Error('Invalid GitHub URL structure');
+  }
+
   try {
     const response = await fetch(skillUrl);
     if (!response.ok) {
       throw new Error(`Download failed: ${response.status}`);
     }
 
-    return await response.text();
+    // Check content length
+    const contentLength = response.headers.get('content-length');
+    if (contentLength && parseInt(contentLength, 10) > MAX_SKILL_SIZE) {
+      throw new Error('Skill file too large');
+    }
+
+    const content = await response.text();
+
+    // Double-check actual content size
+    if (content.length > MAX_SKILL_SIZE) {
+      throw new Error('Skill file too large');
+    }
+
+    return content;
   } catch (error) {
-    throw new Error(`Failed to download skill: ${error}`);
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    if (message.includes('Only GitHub') || message.includes('Invalid GitHub')) {
+      throw new Error(message);
+    }
+    throw new Error(`Failed to download skill. Check the URL and try again.`);
   }
 }
 

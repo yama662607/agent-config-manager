@@ -4,8 +4,8 @@
   "description": "Cross-agent configuration manager for MCP servers and skills. Directly edits native config files—no manifest, no sync step.",
   "type": "module",
   "bin": {
-    "agent-config-sync": "./dist/cli.js",
-    "acsync": "./dist/cli.js"
+    "agent-config-sync": "dist/cli.js",
+    "acsync": "dist/cli.js"
   },
   "files": [
     "dist",
@@ -46,7 +46,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yama662607/agent-config-sync.git"
+    "url": "git+https://github.com/yama662607/agent-config-sync.git"
   },
   "bugs": {
     "url": "https://github.com/yama662607/agent-config-sync/issues"

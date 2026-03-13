@@ -4,5 +4,7 @@ dist
 
 # Agent config files (managed by acsync, project-specific)
 .mcp.json
+.claude/skills/*
+.claude/skills/!.gitkeep
 .codex/
 .gemini/

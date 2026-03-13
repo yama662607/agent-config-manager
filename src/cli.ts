@@ -65,18 +65,31 @@ EXAMPLES:
 For more information, run: acsync <command> --help
 `;
 
-const CATALOG_HELP = `acsync catalog - Manage reusable MCP definitions
+const CATALOG_HELP = `acsync catalog - Manage reusable MCP and skill definitions
 
 USAGE:
-  acsync catalog mcp <subcommand>
+  acsync catalog <kind> <subcommand>
 
-SUBCOMMANDS:
+KINDS:
+  mcp         Manage MCP definitions
+  skill       Manage skill definitions
+
+MCP SUBCOMMANDS:
   list        List all MCP entries in catalog
   show <id>   Show details of a specific MCP entry
   add <pkg>   Add a new MCP entry to catalog
   remove <id> Remove an MCP entry from catalog
 
-OPTIONS (add):
+SKILL SUBCOMMANDS:
+  list              List all skill entries in catalog
+  show <id>         Show details of a specific skill entry
+  add <file>        Add a new skill entry to catalog from file
+  import <path>    Import a skill from a local directory
+  install <id>     Install a skill from skills.directory registry
+  search <query>   Search the skills.directory registry
+  remove <id>       Remove a skill entry from catalog
+
+OPTIONS (mcp add):
   --url <url>           HTTP/SSE URL for the MCP server
   --command <cmd>       Command to execute (stdio transport)
   --args <json>         Arguments for command (JSON array)
@@ -85,13 +98,20 @@ OPTIONS (add):
   --description <desc>  Description for the entry
   --env <json>          Environment variables (JSON object)
 
+OPTIONS (skill install):
+  --force              Force reinstall if already exists
+
+OPTIONS (skill import):
+  --name <name>        Override skill name
+  --display-name <name> Display name for the entry
+  --description <desc>  Description for the entry
+
 EXAMPLES:
   acsync catalog mcp list
-  acsync catalog mcp add @modelcontextprotocol/server-github
-  acsync catalog mcp add deepwiki --url "https://mcp.deepwiki.com/mcp"
-  acsync catalog mcp add my-mcp --command "npm" --args '["start"]' --cwd "/path/to/mcp"
-  acsync catalog mcp show @modelcontextprotocol/server-github
-  acsync catalog mcp remove @modelcontextprotocol/server-github
+  acsync catalog skill install frontend-design
+  acsync catalog skill search typescript
+  acsync catalog skill import ~/.claude/skills/frontend-design
+  acsync catalog skill add my-skill --file ./skills/my-skill/SKILL.md
 `;
 
 const MCP_HELP = `acsync mcp - Manage MCP servers for the current project
@@ -124,7 +144,8 @@ USAGE:
 
 SUBCOMMANDS:
   status                  Show skill status (default)
-  add <name>              Add a skill to the project
+  add <name>              Add a skill to the project (from catalog)
+  install <github-url>  Install a skill from a GitHub URL
   remove <name>           Remove a skill from the project
   enable <name>           Enable a disabled skill (no-op for skills)
   disable <name>          Disable a skill (equivalent to remove)
@@ -133,9 +154,15 @@ OPTIONS:
   --targets <list>    Comma-separated target list (e.g., codex,claude)
   --[no-]register      Auto-register to catalog (default: yes)
 
+INSTALL OPTIONS:
+  --name <name>         Override skill name
+  --no-catalog          Don't add to catalog, only install to project
+
 EXAMPLES:
   acsync skill
   acsync skill add frontend-design --targets claude
+  acsync skill install https://github.com/anthropics/skills --name frontend-design
+  acsync skill install https://github.com/anthropics/skills --targets claude,codex
   acsync skill remove frontend-design
 `;
 
@@ -339,6 +366,23 @@ async function handleCatalogSkill(subcommand: string | undefined, args: string[]
       await handleCatalogSkillAdd(args);
       break;
 
+    case 'install':
+      await handleCatalogSkillInstall(args);
+      break;
+
+    case 'search':
+      if (args.length === 0) {
+        process.stderr.write('Usage: acsync catalog skill search <query>\n');
+        process.exitCode = 1;
+        return;
+      }
+      await (await import('./cli-catalog.js')).catalogSkillSearch(args[0]);
+      break;
+
+    case 'import':
+      await handleCatalogSkillImport(args);
+      break;
+
     case 'remove':
       if (args.length === 0) {
         process.stderr.write('Usage: acsync catalog skill remove <id>\n');
@@ -368,6 +412,37 @@ async function handleCatalogSkillAdd(argv: string[]): Promise<void> {
   await (await import('./cli-catalog.js')).catalogSkillAdd({
     skillId,
     file: options.file,
+    displayName: options.displayName,
+    description: options.description,
+  });
+}
+
+async function handleCatalogSkillInstall(argv: string[]): Promise<void> {
+  if (argv.length === 0) {
+    process.stderr.write('Usage: acsync catalog skill install <skill-id> [--force]\n');
+    process.exitCode = 1;
+    return;
+  }
+
+  const skillId = argv[0];
+  const force = parseFlag(argv, 'force');
+
+  await (await import('./cli-catalog.js')).catalogSkillInstall({ skillId, force });
+}
+
+async function handleCatalogSkillImport(argv: string[]): Promise<void> {
+  if (argv.length === 0) {
+    process.stderr.write('Usage: acsync catalog skill import <path> [options]\n');
+    process.exitCode = 1;
+    return;
+  }
+
+  const skillPath = argv[0];
+  const options = parseCatalogSkillImportOptions(argv.slice(1));
+
+  await (await import('./cli-catalog.js')).catalogSkillImport({
+    path: skillPath,
+    skillId: options.skillId,
     displayName: options.displayName,
     description: options.description,
   });
@@ -485,6 +560,20 @@ async function handleSkill(argv: string[]): Promise<void> {
         skillId: options.skillId!,
         targets: options.targets,
         noRegister: options.noRegister,
+      });
+      break;
+
+    case 'install':
+      if (options.githubUrl === undefined) {
+        process.stderr.write('Usage: acsync skill install <github-url> [options]\n');
+        process.exitCode = 1;
+        return;
+      }
+      await (await import('./cli-skill.js')).skillInstallFromGitHub({
+        githubUrl: options.githubUrl!,
+        skillName: options.skillName,
+        targets: options.targets,
+        addToCatalog: options.addToCatalog,
       });
       break;
 
@@ -683,6 +772,40 @@ function parseCatalogSkillAddOptions(argv: string[]): CatalogSkillAddOptions {
   return options;
 }
 
+interface CatalogSkillImportOptions {
+  skillId?: string;
+  displayName?: string;
+  description?: string;
+}
+
+function parseCatalogSkillImportOptions(argv: string[]): CatalogSkillImportOptions {
+  const options: CatalogSkillImportOptions = {};
+
+  let i = 0;
+  while (i < argv.length) {
+    const arg = argv[i];
+
+    switch (arg) {
+      case '--name':
+        options.skillId = argv[++i];
+        break;
+      case '--display-name':
+        options.displayName = argv[++i];
+        break;
+      case '--description':
+        options.description = argv[++i];
+        break;
+      default:
+        process.stderr.write(`Unknown option: ${arg}\n`);
+        process.exitCode = 1;
+        break;
+    }
+    i++;
+  }
+
+  return options;
+}
+
 function parseTargets(input: string): TargetName[] {
   const validTargets: TargetName[] = ['claude', 'codex', 'gemini'];
   const targets = input.split(',').map((t) => t.trim().toLowerCase() as TargetName);
@@ -703,6 +826,10 @@ interface SkillOptions {
   targets: TargetName[];
   noRegister: boolean;
   verbose?: boolean;
+  // GitHub URL install options
+  githubUrl?: string;
+  skillName?: string;
+  addToCatalog?: boolean;
 }
 
 function parseSkillOptions(argv: string[], subcommand?: string): SkillOptions {
@@ -729,9 +856,21 @@ function parseSkillOptions(argv: string[], subcommand?: string): SkillOptions {
       case '-v':
         options.verbose = true;
         break;
+      case '--from-github':
+      case '--github':
+        options.githubUrl = argv[++i];
+        break;
+      case '--name':
+        options.skillName = argv[++i];
+        break;
+      case '--no-catalog':
+        options.addToCatalog = false;
+        break;
       default:
-        // Treat as skill name (except for status subcommand which doesn't need it)
-        if (!options.skillId && subcommand !== 'status') {
+        // Treat as skill name or GitHub URL (except for status subcommand)
+        if (subcommand === 'install' && arg.startsWith('http')) {
+          options.githubUrl = arg;
+        } else if (!options.skillId && subcommand !== 'status') {
           options.skillId = arg;
         }
         break;

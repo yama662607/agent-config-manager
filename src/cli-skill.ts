@@ -175,6 +175,61 @@ Skill content for ${options.skillId}.
 }
 
 // ============================================================================
+// Install from GitHub Command
+// ============================================================================
+
+export interface SkillInstallFromGitHubOptions {
+  githubUrl: string;
+  skillName?: string;
+  targets: TargetName[];
+  addToCatalog?: boolean;
+}
+
+/**
+ * Install a skill from a GitHub URL.
+ */
+export async function skillInstallFromGitHub(options: SkillInstallFromGitHubOptions): Promise<void> {
+  const { installFromGitHub } = await import('./registry.js');
+  const { normalizeSkillPackage, addSkill, getSkill } = await import('./catalog.js');
+
+  console.log(`Installing skill from GitHub...`);
+  console.log(`  URL: ${options.githubUrl}`);
+
+  // Download and parse skill
+  const { name, content } = await installFromGitHub(options.githubUrl, options.skillName);
+
+  console.log(`  Skill name: ${name}`);
+
+  // Add to catalog if requested
+  if (options.addToCatalog !== false) {
+    const existing = await getSkill(name);
+    if (existing && !options.skillName) {
+      console.log(`\nSkill already exists in catalog. Use --force to reinstall.`);
+      return;
+    }
+
+    const entry = normalizeSkillPackage(name, content, {
+      displayName: name,
+      description: `Skill: ${name}`,
+    });
+
+    await addSkill(entry);
+    console.log(`✓ Added to catalog: ${entry.id}`);
+  }
+
+  // Add to project
+  const discovery = await discoverProject();
+  const { addSkillToConfig } = await import('./skill-adapters.js');
+
+  for (const target of options.targets) {
+    await addSkillToConfig(discovery.root, target, name, content);
+    console.log(`✓ Added to ${target}: ${name}`);
+  }
+
+  console.log('\nRun `acsync skill` to see the updated status.');
+}
+
+// ============================================================================
 // Remove Command
 // ============================================================================
 

@@ -184,6 +184,194 @@ export async function catalogMcpRemove(id: string): Promise<void> {
 }
 
 // ============================================================================
+// Install Command (from registry)
+// ============================================================================
+
+export interface CatalogSkillInstallOptions {
+  skillId: string;
+  force?: boolean;
+}
+
+/**
+ * Install a skill from the skills.directory registry into the catalog.
+ */
+export async function catalogSkillInstall(options: CatalogSkillInstallOptions): Promise<void> {
+  const { getSkillInfo, downloadSkillContent } = await import('./registry.js');
+
+  console.log(`Fetching info for "${options.skillId}" from registry...`);
+
+  const info = await getSkillInfo(options.skillId);
+
+  if (!info) {
+    console.error(`Skill not found in registry: ${options.skillId}\n`);
+    console.log('Run `acsync catalog skill search <query>` to search the registry.');
+    process.exitCode = 1;
+    return;
+  }
+
+  // Display skill info
+  console.log(`\nFound: ${info.name}`);
+  console.log(`  Author: ${info.author}`);
+  console.log(`  Description: ${info.description}`);
+  console.log(`  Stars: ${info.stars}`);
+  console.log(`  Repo: ${info.links.repo}`);
+
+  // Download content
+  console.log(`\nDownloading skill content...`);
+  const content = await downloadSkillContent(info.links.skill_md);
+
+  // Add to catalog
+  const { normalizeSkillPackage, addSkill, getSkill } = await import('./catalog.js');
+
+  const existing = await getSkill(options.skillId);
+  if (existing && !options.force) {
+    console.error(`Skill already exists in catalog: ${options.skillId}\n`);
+    console.log('Use `acsync catalog skill install ' + options.skillId + ' --force` to reinstall.');
+    process.exitCode = 1;
+    return;
+  }
+
+  const entry = normalizeSkillPackage(info.name, content, {
+    displayName: info.name,
+    description: info.description,
+  });
+
+  await addSkill(entry);
+  console.log(`\n✓ Added to catalog: ${entry.id}`);
+  console.log('\nRun `acsync skill add ' + entry.id + '` to add it to your project.');
+}
+
+// ============================================================================
+// Search Command
+// ============================================================================
+
+/**
+ * Search the skills.directory registry for skills.
+ */
+export async function catalogSkillSearch(query: string): Promise<void> {
+  const { searchSkills } = await import('./registry.js');
+
+  console.log(`Searching registry for "${query}"...\n`);
+
+  const results = await searchSkills(query);
+
+  if (results.length === 0) {
+    console.log('No skills found.\n');
+    console.log('Try a different search term or visit https://skills.directory\n');
+    return;
+  }
+
+  console.log(`Found ${results.length} skill(s):\n`);
+
+  const NAME_WIDTH = 30;
+  const AUTHOR_WIDTH = 15;
+  const STARS_WIDTH = 8;
+
+  const borderH = '┌' + '─'.repeat(NAME_WIDTH + 2) + '┬' + '─'.repeat(AUTHOR_WIDTH + 2) + '┬' + '─'.repeat(STARS_WIDTH + 2) + '┐';
+  const borderM = '├' + '─'.repeat(NAME_WIDTH + 2) + '┼' + '─'.repeat(AUTHOR_WIDTH + 2) + '┼' + '─'.repeat(STARS_WIDTH + 2) + '┤';
+  const borderF = '└' + '─'.repeat(NAME_WIDTH + 2) + '┴' + '─'.repeat(AUTHOR_WIDTH + 2) + '┴' + '─'.repeat(STARS_WIDTH + 2) + '┘';
+
+  console.log(borderH);
+  console.log('│ ' + padRight('Name', NAME_WIDTH) + ' │ ' + padRight('Author', AUTHOR_WIDTH) + ' │ ' + padRight('Stars', STARS_WIDTH) + ' │');
+  console.log(borderM);
+
+  for (const skill of results.slice(0, 20)) {
+    const name = truncate(skill.name, NAME_WIDTH);
+    const author = truncate(skill.author, AUTHOR_WIDTH);
+    const stars = padRight('★ ' + formatNumber(skill.stars), STARS_WIDTH);
+
+    console.log('│ ' + padRight(name, NAME_WIDTH) + ' │ ' + padRight(author, AUTHOR_WIDTH) + ' │ ' + stars + ' │');
+  }
+
+  console.log(borderF);
+
+  if (results.length > 20) {
+    console.log(`\n... and ${results.length - 20} more results`);
+  }
+
+  console.log(`\nRun \`acsync catalog skill install <name>\` to install a skill.`);
+  console.log(`Visit https://skills.directory for more information.\n`);
+}
+
+function formatNumber(num: number): string {
+  if (num >= 1000) {
+    return (num / 1000).toFixed(1) + 'k';
+  }
+  return num.toString();
+}
+
+// ============================================================================
+// Import Command (import from local path)
+// ============================================================================
+
+export interface CatalogSkillImportOptions {
+  path: string;
+  skillId?: string;
+  displayName?: string;
+  description?: string;
+}
+
+/**
+ * Import a skill from a local path into the catalog.
+ */
+export async function catalogSkillImport(options: CatalogSkillImportOptions): Promise<void> {
+  const fs = await import('node:fs/promises');
+  const path = await import('node:path');
+  const { normalizeSkillPackage, addSkill, getSkill } = await import('./catalog.js');
+
+  const skillPath = path.resolve(options.path);
+  const skillMdPath = path.join(skillPath, 'SKILL.md');
+
+  console.log(`Importing skill from: ${skillPath}`);
+
+  // Check if SKILL.md exists
+  try {
+    await fs.access(skillMdPath);
+  } catch {
+    console.error(`SKILL.md not found at: ${skillMdPath}\n`);
+    console.log('Ensure the directory contains a SKILL.md file.');
+    process.exitCode = 1;
+    return;
+  }
+
+  // Read skill content
+  const content = await fs.readFile(skillMdPath, 'utf8');
+
+  // Parse skill name from content or use provided name
+  let skillId = options.skillId;
+  if (!skillId) {
+    const nameMatch = content.match(/^name:\s*(.+)$/m);
+    if (nameMatch) {
+      skillId = nameMatch[1].trim().replace(/^["']|["']$/g, '');
+    } else {
+      // Use directory name
+      skillId = path.basename(skillPath);
+    }
+  }
+
+  console.log(`  Skill name: ${skillId}`);
+
+  // Check if already exists
+  const existing = await getSkill(skillId);
+  if (existing) {
+    console.error(`Skill already exists in catalog: ${skillId}\n`);
+    console.log('Use a different name or remove the existing entry first.');
+    process.exitCode = 1;
+    return;
+  }
+
+  // Add to catalog
+  const entry = normalizeSkillPackage(skillId, content, {
+    displayName: options.displayName,
+    description: options.description,
+  });
+
+  await addSkill(entry);
+  console.log(`✓ Added to catalog: ${entry.id}`);
+  console.log('\nRun `acsync skill add ' + entry.id + '` to add it to your project.');
+}
+
+// ============================================================================
 // Skill Catalog Commands
 // ============================================================================
 

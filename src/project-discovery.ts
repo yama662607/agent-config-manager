@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 import type { ProjectDiscovery, NativeConfigPath, TargetName } from './types.js';
 
 // ============================================================================
@@ -20,6 +21,19 @@ const TARGET_SKILLS_PATHS: Record<TargetName, string> = {
   gemini: path.join('.gemini', 'antigravity', 'skills'),
 };
 
+/** Project marker files that indicate a real project directory */
+const PROJECT_MARKERS = [
+  'package.json',
+  'tsconfig.json',
+  'Cargo.toml',
+  'go.mod',
+  'pyproject.toml',
+  'Gemfile',
+  'composer.json',
+  '.gitignore',
+  'README.md',
+];
+
 // ============================================================================
 // Project Discovery
 // ============================================================================
@@ -28,7 +42,7 @@ const TARGET_SKILLS_PATHS: Record<TargetName, string> = {
  * Discover the active project from the current working directory.
  *
  * Priority:
- * 1. Nearest ancestor that is a Git repository root
+ * 1. Nearest ancestor that is a Git repository root (excluding home directory)
  * 2. Nearest ancestor containing any supported native config file
  * 3. Fail with clear error
  */
@@ -49,16 +63,26 @@ export async function discoverProject(cwd: string = process.cwd()): Promise<Proj
 
 /**
  * Find the nearest Git repository root by traversing upwards.
+ * Excludes home directory to prevent false positives.
  */
 async function findGitRoot(cwd: string): Promise<string | null> {
   let current = path.resolve(cwd);
+  const homeDir = os.homedir();
 
   while (true) {
+    // Skip home directory
+    if (current === homeDir || current === path.dirname(homeDir)) {
+      return null;
+    }
+
     const gitDir = path.join(current, '.git');
     try {
       const stat = await fs.stat(gitDir);
       if (stat.isDirectory()) {
-        return current;
+        // Verify this looks like a real project (has project markers)
+        if (await hasProjectMarkers(current)) {
+          return current;
+        }
       }
     } catch {
       // .git doesn't exist, continue
@@ -74,12 +98,34 @@ async function findGitRoot(cwd: string): Promise<string | null> {
 }
 
 /**
+ * Check if directory contains project marker files.
+ */
+async function hasProjectMarkers(dir: string): Promise<boolean> {
+  for (const marker of PROJECT_MARKERS) {
+    try {
+      await fs.access(path.join(dir, marker));
+      return true;
+    } catch {
+      // Marker doesn't exist
+    }
+  }
+  return false;
+}
+
+/**
  * Find the nearest ancestor containing any supported native config file.
+ * Excludes home directory.
  */
 async function findNativeConfigRoot(cwd: string): Promise<string | null> {
   let current = path.resolve(cwd);
+  const homeDir = os.homedir();
 
   while (true) {
+    // Skip home directory
+    if (current === homeDir || current === path.dirname(homeDir)) {
+      return null;
+    }
+
     for (const targetPath of Object.values(TARGET_CONFIG_PATHS)) {
       const fullPath = path.join(current, targetPath);
       try {

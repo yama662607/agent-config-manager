@@ -17,25 +17,26 @@ import type {
 // Validation
 // ============================================================================
 
-/** Valid MCP server name pattern */
-const SERVER_NAME_PATTERN = /^[a-zA-Z0-9._-]+$/;
+/** Valid MCP server name pattern (allows npm scoped packages like @scope/package) */
+const SERVER_NAME_PATTERN = /^(@[a-zA-Z0-9._-]+\/)?[a-zA-Z0-9._-]+$/;
 
-/** Valid command pattern: basename only, no path separators */
+/** Valid command pattern: basename only, no path separators (except npx, node, etc.) */
 const COMMAND_PATTERN = /^[a-zA-Z0-9._-]+$/;
 
 /**
  * Validate MCP server name.
+ * Allows npm scoped packages like @scope/package-name.
  */
 function validateServerName(serverName: string): void {
-  if (!serverName || serverName.length === 0 || serverName.length > 100) {
-    throw new Error('Server name must be 1-100 characters');
+  if (!serverName || serverName.length === 0 || serverName.length > 150) {
+    throw new Error('Server name must be 1-150 characters');
   }
 
   if (!SERVER_NAME_PATTERN.test(serverName)) {
-    throw new Error('Server name must contain only alphanumeric characters, hyphens, underscores, and dots');
+    throw new Error('Server name must contain only alphanumeric characters, hyphens, underscores, dots, and optional @scope/ prefix');
   }
 
-  if (serverName.includes('..') || serverName.includes('/') || serverName.includes('\\')) {
+  if (serverName.includes('..') || serverName.includes('\\')) {
     throw new Error('Server name cannot contain path traversal characters');
   }
 }

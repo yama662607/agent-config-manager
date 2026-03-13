@@ -1,6 +1,6 @@
 {
   "name": "agent-config-sync",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Cross-agent configuration manager for MCP servers and skills. Directly edits native config files—no manifest, no sync step.",
   "type": "module",
   "bin": {
@@ -54,6 +54,7 @@
   "homepage": "https://github.com/yama662607/agent-config-sync#readme",
   "dependencies": {
     "@iarna/toml": "^2.2.5",
+    "enquirer": "^2.4.1",
     "yaml": "^2.8.1"
   },
   "devDependencies": {

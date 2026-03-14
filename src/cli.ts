@@ -47,9 +47,9 @@ USAGE:
 
 COMMANDS:
   init        Interactive setup for the current project
-  catalog     Manage reusable MCP and skill definitions in your personal catalog
-  mcp         Manage MCP servers for the current project
-  skill       Manage skills for the current project
+  catalog     Browse and manage catalog (TUI mode)
+  mcp         Manage MCP servers for the current project (TUI mode)
+  skill       Manage skills for the current project (TUI mode)
   validate    Validate current project configuration
   doctor      Run diagnostics and health checks
 
@@ -64,16 +64,17 @@ TARGETS:
 
 ABOUT CATALOG:
   Your personal catalog (~/.acsync/) stores reusable MCP and skill definitions.
-  Use "acsync catalog" to manage the catalog, then add items to projects.
+  Use "acsync catalog" to browse and manage the catalog interactively.
 
 EXAMPLES:
   acsync init                         Interactive setup for current project
-  acsync mcp                           Show MCP status for current project
-  acsync skill                         Show skill status for current project
-  acsync catalog mcp list              List all MCPs in your personal catalog
+  acsync catalog                       Browse catalog in TUI mode
+  acsync mcp                           Manage MCPs in TUI mode
+  acsync skill                         Manage skills in TUI mode
+  acsync mcp status                    Show MCP status
+  acsync skill status                  Show skill status
+  acsync catalog mcp list              List all MCPs in catalog
   acsync mcp add github --targets claude   Add GitHub MCP to Claude Code
-  acsync skill add frontend-design --targets claude   Add skill from catalog
-  acsync skill install <github-url> --targets claude,codex   Install from GitHub
 
 For more information, run: acsync <command> --help
 `;
@@ -333,7 +334,15 @@ async function main(): Promise<void> {
 // ============================================================================
 
 async function handleCatalog(argv: string[]): Promise<void> {
-  if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h') {
+  if (argv.length === 0) {
+    // Launch Catalog TUI
+    const { CatalogTuiScreen } = await import('./tui/index.js');
+    const screen = new CatalogTuiScreen();
+    await screen.render({ currentScreen: 'catalog', selectedItem: null, filter: '', target: 'claude', lastAction: null });
+    return;
+  }
+
+  if (argv[0] === '--help' || argv[0] === '-h') {
     process.stdout.write(CATALOG_HELP);
     return;
   }
@@ -535,7 +544,15 @@ async function handleCatalogSkillImport(argv: string[]): Promise<void> {
 }
 
 async function handleMcp(argv: string[]): Promise<void> {
-  if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h') {
+  if (argv.length === 0) {
+    // Launch MCP TUI
+    const { McpTuiScreen } = await import('./tui/index.js');
+    const screen = new McpTuiScreen();
+    await screen.render({ currentScreen: 'mcp', selectedItem: null, filter: '', target: 'claude', lastAction: null });
+    return;
+  }
+
+  if (argv[0] === '--help' || argv[0] === '-h') {
     process.stdout.write(MCP_HELP);
     return;
   }
@@ -614,7 +631,15 @@ async function handleMcp(argv: string[]): Promise<void> {
 }
 
 async function handleSkill(argv: string[]): Promise<void> {
-  if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h') {
+  if (argv.length === 0) {
+    // Launch Skill TUI
+    const { SkillTuiScreen } = await import('./tui/index.js');
+    const screen = new SkillTuiScreen();
+    await screen.render({ currentScreen: 'skill', selectedItem: null, filter: '', target: 'claude', lastAction: null });
+    return;
+  }
+
+  if (argv[0] === '--help' || argv[0] === '-h') {
     process.stdout.write(SKILL_HELP);
     return;
   }
@@ -788,6 +813,10 @@ async function init(options: InitOptions): Promise<void> {
   const { runInteractiveInit } = await import('./cli-init.js');
   await runInteractiveInit(options);
 }
+
+// ============================================================================
+// TUI Command
+// ============================================================================
 
 // ============================================================================
 // Options Parsing

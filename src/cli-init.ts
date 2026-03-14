@@ -1,6 +1,6 @@
 import type { TargetName } from './types.js';
 import { discoverProject } from './project-discovery.js';
-import { promptTargets, promptMcps, promptSkills, promptConfirm } from './prompts/index.js';
+import { promptTargets, promptMcps, promptSkills, promptConfirm, MCP_BACK, SKILL_BACK } from './prompts/index.js';
 import { mcpAdd, type McpAddOptions } from './cli-mcp.js';
 import { skillAdd, type SkillAddOptions } from './cli-skill.js';
 
@@ -34,66 +34,107 @@ export async function runInteractiveInit(options: InitOptions): Promise<void> {
     selectedSkills: [],
   };
 
-  // Step 1: Select targets
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('Step 1: Select Target Agents');
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-  state.targets = await promptTargets(options.targets);
-  console.log(`Selected: ${state.targets.join(', ')}\n`);
+  // Main loop with back navigation support
+  let currentStep = 1;
 
-  // Step 2: Select MCPs
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('Step 2: Select MCP Servers');
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-  state.selectedMcps = await promptMcps();
+  while (currentStep <= 4) {
+    switch (currentStep) {
+      case 1: {
+        // Step 1: Select targets
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.log('Step 1: Select Target Agents');
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+        state.targets = await promptTargets(options.targets);
+        console.log(`Selected: ${state.targets.join(', ')}\n`);
+        currentStep = 2;
+        break;
+      }
 
-  // Step 3: Select skills
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('Step 3: Select Skills');
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-  state.selectedSkills = await promptSkills();
+      case 2: {
+        // Step 2: Select MCPs
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.log('Step 2: Select MCP Servers');
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+        state.selectedMcps = await promptMcps(true); // Allow back navigation
 
-  // Step 4: Confirm and apply
-  const confirmed = await promptConfirm(state.targets, state.selectedMcps, state.selectedSkills);
+        if (state.selectedMcps.includes(MCP_BACK)) {
+          // User wants to go back to target selection
+          currentStep = 1;
+          console.log('← Returning to target selection...\n');
+        } else {
+          currentStep = 3;
+        }
+        break;
+      }
 
-  if (confirmed) {
-    console.log('\nAdding items...\n');
+      case 3: {
+        // Step 3: Select skills
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.log('Step 3: Select Skills');
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+        state.selectedSkills = await promptSkills(true); // Allow back navigation
 
-    // Add MCPs
-    for (const mcpId of state.selectedMcps) {
-      const mcpOptions: McpAddOptions = {
-        packageId: mcpId,
-        targets: state.targets,
-        noRegister: false,
-      };
-      try {
-        await mcpAdd(mcpOptions);
-      } catch (error) {
-        console.error(`Failed to add MCP ${mcpId}: ${error instanceof Error ? error.message : String(error)}`);
-        process.exitCode = 1;
+        if (state.selectedSkills.includes(SKILL_BACK)) {
+          // User wants to go back to MCP selection
+          currentStep = 2;
+          console.log('← Returning to MCP selection...\n');
+        } else {
+          currentStep = 4;
+        }
+        break;
+      }
+
+      case 4: {
+        // Step 4: Confirm and apply
+        const confirmed = await promptConfirm(state.targets, state.selectedMcps, state.selectedSkills);
+
+        if (confirmed) {
+          console.log('\nAdding items...\n');
+
+          // Add MCPs
+          for (const mcpId of state.selectedMcps) {
+            const mcpOptions: McpAddOptions = {
+              packageId: mcpId,
+              targets: state.targets,
+              noRegister: false,
+            };
+            try {
+              await mcpAdd(mcpOptions);
+            } catch (error) {
+              console.error(`Failed to add MCP ${mcpId}: ${error instanceof Error ? error.message : String(error)}`);
+              process.exitCode = 1;
+            }
+          }
+
+          // Add Skills
+          for (const skillId of state.selectedSkills) {
+            const skillOptions: SkillAddOptions = {
+              skillId,
+              targets: state.targets,
+              noRegister: false,
+            };
+            try {
+              await skillAdd(skillOptions);
+            } catch (error) {
+              console.error(`Failed to add skill ${skillId}: ${error instanceof Error ? error.message : String(error)}`);
+              process.exitCode = 1;
+            }
+          }
+
+          console.log('\n✅ Setup complete!');
+          console.log('\nRun these commands to see your configuration:');
+          console.log(`  acsync mcp      # Show MCP status`);
+          console.log(`  acsync skill    # Show skill status`);
+
+          // Success - exit loop
+          currentStep = 5;
+        } else {
+          console.log('\nCancelled. No changes made.');
+          // Cancelled - exit loop
+          currentStep = 5;
+        }
+        break;
       }
     }
-
-    // Add Skills
-    for (const skillId of state.selectedSkills) {
-      const skillOptions: SkillAddOptions = {
-        skillId,
-        targets: state.targets,
-        noRegister: false,
-      };
-      try {
-        await skillAdd(skillOptions);
-      } catch (error) {
-        console.error(`Failed to add skill ${skillId}: ${error instanceof Error ? error.message : String(error)}`);
-        process.exitCode = 1;
-      }
-    }
-
-    console.log('\n✅ Setup complete!');
-    console.log('\nRun these commands to see your configuration:');
-    console.log(`  acsync mcp      # Show MCP status`);
-    console.log(`  acsync skill    # Show skill status`);
-  } else {
-    console.log('\nCancelled. No changes made.');
   }
 }

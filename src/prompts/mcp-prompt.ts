@@ -5,11 +5,15 @@ const require = createRequire(import.meta.url);
 const AutoComplete = require('enquirer/lib/prompts/autocomplete.js');
 import { listMcps } from '../catalog.js';
 
+/** Special return value indicating user wants to go back */
+export const MCP_BACK = '__MCP_BACK__';
+
 /**
  * Prompt user to select MCP servers from catalog.
- * @returns Selected MCP server IDs
+ * @param allowBack - Whether to show "Back" option (default: false)
+ * @returns Selected MCP server IDs, or [MCP_BACK] if user chose to go back
  */
-export async function promptMcps(): Promise<string[]> {
+export async function promptMcps(allowBack = false): Promise<string[]> {
   const mcps = await listMcps();
 
   if (mcps.length === 0) {
@@ -27,9 +31,21 @@ export async function promptMcps(): Promise<string[]> {
     hint: mcp.description.slice(0, 50)
   }));
 
+  // Add back option if allowed
+  if (allowBack) {
+    choices.unshift({
+      name: MCP_BACK,
+      message: '← Back to target selection',
+      value: MCP_BACK,
+      hint: 'Return to previous step'
+    });
+  }
+
   const prompt = new AutoComplete({
     name: 'mcps',
-    message: 'Select MCP servers (type to search)',
+    message: allowBack
+      ? 'Select MCP servers (type to search, or select ← Back to return)'
+      : 'Select MCP servers (type to search)',
     multiple: true,
     choices: choices,
     limit: 10,
@@ -44,6 +60,8 @@ export async function promptMcps(): Promise<string[]> {
       // Simple fuzzy search - matches if input is substring of name or message
       const lowerInput = input.toLowerCase();
       return choices.filter(choice => {
+        // Always show back option when filtering
+        if (choice.name === MCP_BACK) return true;
         const name = (choice.name || '').toLowerCase();
         const message = (choice.message || '').toLowerCase();
         return name.includes(lowerInput) || message.includes(lowerInput);
@@ -53,6 +71,10 @@ export async function promptMcps(): Promise<string[]> {
 
   try {
     const result = await prompt.run();
+    // If back was selected, return special value
+    if (result && result.includes(MCP_BACK)) {
+      return [MCP_BACK];
+    }
     return result || [];
   } catch {
     // User cancelled (Ctrl+C)

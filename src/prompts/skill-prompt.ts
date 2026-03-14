@@ -5,11 +5,15 @@ const require = createRequire(import.meta.url);
 const AutoComplete = require('enquirer/lib/prompts/autocomplete.js');
 import { listSkills } from '../catalog.js';
 
+/** Special return value indicating user wants to go back */
+export const SKILL_BACK = '__SKILL_BACK__';
+
 /**
  * Prompt user to select skills from catalog.
- * @returns Selected skill IDs
+ * @param allowBack - Whether to show "Back" option (default: false)
+ * @returns Selected skill IDs, or [SKILL_BACK] if user chose to go back
  */
-export async function promptSkills(): Promise<string[]> {
+export async function promptSkills(allowBack = false): Promise<string[]> {
   const skills = await listSkills();
 
   if (skills.length === 0) {
@@ -27,9 +31,21 @@ export async function promptSkills(): Promise<string[]> {
     hint: skill.description.slice(0, 50)
   }));
 
+  // Add back option if allowed
+  if (allowBack) {
+    choices.unshift({
+      name: SKILL_BACK,
+      message: '← Back to MCP selection',
+      value: SKILL_BACK,
+      hint: 'Return to previous step'
+    });
+  }
+
   const prompt = new AutoComplete({
     name: 'skills',
-    message: 'Select skills (type to search)',
+    message: allowBack
+      ? 'Select skills (type to search, or select ← Back to return)'
+      : 'Select skills (type to search)',
     multiple: true,
     choices: choices,
     limit: 10,
@@ -44,6 +60,8 @@ export async function promptSkills(): Promise<string[]> {
       // Simple fuzzy search - matches if input is substring of name or message
       const lowerInput = input.toLowerCase();
       return choices.filter(choice => {
+        // Always show back option when filtering
+        if (choice.name === SKILL_BACK) return true;
         const name = (choice.name || '').toLowerCase();
         const message = (choice.message || '').toLowerCase();
         return name.includes(lowerInput) || message.includes(lowerInput);
@@ -53,6 +71,10 @@ export async function promptSkills(): Promise<string[]> {
 
   try {
     const result = await prompt.run();
+    // If back was selected, return special value
+    if (result && result.includes(SKILL_BACK)) {
+      return [SKILL_BACK];
+    }
     return result || [];
   } catch {
     // User cancelled (Ctrl+C)

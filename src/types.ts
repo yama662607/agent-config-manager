@@ -138,7 +138,6 @@ export interface GeminiMcpServer {
   args?: string[];
   url?: string;  // HTTP/SSE URL
   cwd?: string;
-  enabled?: boolean;
 }
 
 // ============================================================================

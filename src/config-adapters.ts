@@ -334,7 +334,7 @@ async function addMcpServer(
     }
 
     case 'gemini': {
-      const server: GeminiMcpServer = { enabled: true };
+      const server: GeminiMcpServer = {};
       if (recipe.url) {
         server.url = recipe.url;
       } else if (recipe.command) {
@@ -393,8 +393,9 @@ async function setMcpEnabled(
       break;
 
     case 'gemini':
-      if (config.mcpServers?.[serverName]) {
-        (config.mcpServers[serverName] as GeminiMcpServer).enabled = enabled;
+      // Gemini doesn't support enabled flag - remove when disabled
+      if (!enabled) {
+        delete (config as GeminiMcpConfig).mcpServers[serverName];
       }
       break;
   }

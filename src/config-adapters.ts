@@ -395,7 +395,7 @@ async function setMcpEnabled(
     case 'gemini':
       // Gemini doesn't support enabled flag - remove when disabled
       if (!enabled) {
-        delete (config as GeminiMcpConfig).mcpServers[serverName];
+        delete (config as GeminiSettings).mcpServers?.[serverName];
       }
       break;
   }
@@ -482,8 +482,8 @@ export async function getMcpServers(
           }
           if (server.cwd) recipe.cwd = server.cwd;
           servers[name] = {
-            enabled: server.enabled !== false,
-            recipe: server.enabled !== false && (server.url || server.command) ? recipe : undefined,
+            enabled: true,
+            recipe,
           };
         }
       }

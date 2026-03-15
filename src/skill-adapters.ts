@@ -52,7 +52,7 @@ export function validateSkillName(skillName: string): void {
  * Get the skills directory path for a target.
  * - Claude: <project>/.claude/skills/
  * - Codex: <project>/.codex/skills/
- * - Gemini: <project>/.gemini/antigravity/skills/
+ * - Gemini: <project>/.gemini/skills/
  */
 export function getSkillsDir(projectRoot: string, target: TargetName): string {
   switch (target) {
@@ -61,7 +61,7 @@ export function getSkillsDir(projectRoot: string, target: TargetName): string {
     case 'codex':
       return path.join(projectRoot, '.codex', 'skills');
     case 'gemini':
-      return path.join(projectRoot, '.gemini', 'antigravity', 'skills');
+      return path.join(projectRoot, '.gemini', 'skills');
   }
 }
 

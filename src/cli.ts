@@ -60,7 +60,7 @@ OPTIONS:
 TARGETS:
   claude     Claude Code (.mcp.json, .claude/skills/)
   codex      Codex (.codex/config.toml, .codex/skills/)
-  gemini     Gemini CLI (.gemini/settings.json, .gemini/antigravity/skills/)
+  gemini     Gemini CLI (.gemini/settings.json, .gemini/skills/)
 
 ABOUT CATALOG:
   Your personal catalog (~/.acsync/) stores reusable MCP and skill definitions.

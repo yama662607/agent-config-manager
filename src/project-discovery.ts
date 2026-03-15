@@ -18,7 +18,7 @@ const TARGET_CONFIG_PATHS: Record<TargetName, string> = {
 const TARGET_SKILLS_PATHS: Record<TargetName, string> = {
   claude: path.join('.claude', 'skills'),
   codex: path.join('.codex', 'skills'),
-  gemini: path.join('.gemini', 'antigravity', 'skills'),
+  gemini: path.join('.gemini', 'skills'),
 };
 
 // ============================================================================

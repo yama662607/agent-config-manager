@@ -1,0 +1,61 @@
+#!/usr/bin/expect -f
+set timeout 120
+
+# パブリッシュ開始
+spawn npm publish --access public
+
+expect {
+  # 認証URLの検知（新旧両方のプロンプトに対応）
+  -re "(Authenticate your account at:|Open this URL in your browser to authenticate:)" {
+    
+    # URLの抽出
+    expect -re "(https://www.npmjs.com/auth/cli/\[^\r\n\]*)"
+    set auth_url $expect_out(1,string)
+
+    send_user "\n認証URLを抽出しました: $auth_url\n"
+
+    # ENTER入力を求めるプロンプトを待機
+    expect {
+      "Press ENTER to open in the browser..." {
+        send "\r"
+        send_user "ENTERを送信しました。ブラウザを確認してください。\n"
+      }
+      timeout {
+        # プロンプトが出ない場合は直接openを試みる
+        send_user "ENTERプロンプトがタイムアウトしたため、直接ブラウザを開きます。\n"
+        exec open $auth_url
+      }
+    }
+
+    # 最終的な成功またはエラーを待機
+    expect {
+      "+ @yama662607/agent-config-sync@" {
+        send_user "\n✅ 公開に成功しました！\n"
+        exit 0
+      }
+      "npm error You cannot publish over the previously published versions" {
+        send_user "\n⚠️ すでに同じバージョンが公開されています。\n"
+        exit 0
+      }
+      "npm error" {
+        send_user "\n❌ エラーが発生しました。\n"
+        exit 1
+      }
+      timeout {
+        send_user "\n⏱️ 認証待ちでタイムアウトしました。\n"
+        exit 1
+      }
+    }
+  }
+  
+  # すでに公開済みの場合
+  "npm error You cannot publish over the previously published versions" {
+    send_user "\n✅ すでに公開済みです。\n"
+    exit 0
+  }
+
+  timeout {
+    send_user "\n⏱️ npm publish の起動中にタイムアウトしました。\n"
+    exit 1
+  }
+}

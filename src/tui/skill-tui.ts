@@ -13,6 +13,7 @@ import type { TuiState, ScreenAction } from './tui-base.js';
 import { listSkills } from '../catalog.js';
 import type { TargetName } from '../types.js';
 import { join } from 'node:path';
+import { padRightWide, truncateWide } from '../table-utils.js';
 
 type SkillAction = 'add' | 'remove' | 'install' | 'switch-target' | 'refresh' | 'back' | 'exit';
 
@@ -128,10 +129,15 @@ export class SkillTuiScreen {
       allSkills[target]?.forEach(s => allSkillNames.add(s.name));
     }
 
-    // Table header
-    console.log('\n  ┌─' + '─'.repeat(35) + '┬─'.repeat(3) + '┬─'.repeat(3) + '┬─'.repeat(3) + '┐');
-    console.log('  │ ' + 'Skill'.padEnd(35) + '│ C │ C │ G │');
-    console.log('  │' + '─'.repeat(37) + '┼───┼───┼───┤');
+    const NAME_WIDTH = 35;
+
+    const borderH = '  ┌' + '─'.repeat(NAME_WIDTH + 2) + '┬───┬───┬───┐';
+    const borderM = '  ├' + '─'.repeat(NAME_WIDTH + 2) + '┼───┼───┼───┤';
+    const borderF = '  └' + '─'.repeat(NAME_WIDTH + 2) + '┴───┴───┴───┘';
+
+    console.log('\n' + borderH);
+    console.log('  │ ' + padRightWide('Skill', NAME_WIDTH) + ' │ C │ C │ G │');
+    console.log(borderM);
 
     // Get skill descriptions
     const catalogSkills = await listSkills();
@@ -141,15 +147,15 @@ export class SkillTuiScreen {
     for (const name of Array.from(allSkillNames).sort()) {
       const skillInfo = skillMap.get(name);
       const displayName = skillInfo?.displayName || name;
-      const truncated = displayName.length > 35 ? displayName.slice(0, 32) + '...' : displayName;
+      const truncated = truncateWide(displayName, NAME_WIDTH);
 
-      console.log('  │ ' + truncated.padEnd(35) + '│ ' +
-                  (allSkills.claude?.find(s => s.name === name) ? '✅' : ' ') + ' │ ' +
-                  (allSkills.codex?.find(s => s.name === name) ? '✅' : ' ') + ' │ ' +
-                  (allSkills.gemini?.find(s => s.name === name) ? '✅' : ' ') + ' │');
+      console.log('  │ ' + padRightWide(truncated, NAME_WIDTH) + ' │ ' +
+                  (allSkills.claude?.find(s => s.name === name) ? '✅ ' : '   ') + '│ ' +
+                  (allSkills.codex?.find(s => s.name === name) ? '✅ ' : '   ') + '│ ' +
+                  (allSkills.gemini?.find(s => s.name === name) ? '✅ ' : '   ') + '│');
     }
 
-    console.log('  └─' + '─'.repeat(35) + '┴───┴───┴───┘');
+    console.log(borderF);
     console.log('  Legend: C=Claude, C=Codex, G=Gemini | ✅=Installed');
   }
 

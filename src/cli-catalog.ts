@@ -6,6 +6,7 @@ import {
   removeMcp,
   normalizeMcpPackage,
 } from './catalog.js';
+import { padRightWide, truncateWide } from './table-utils.js';
 
 // ============================================================================
 // List Command
@@ -26,38 +27,27 @@ export async function catalogMcpList(): Promise<void> {
   console.log(`MCP Catalog (${entries.length} entries):\n`);
 
   const ID_WIDTH = 45;
-  const NAME_WIDTH = 19;
-  const DESC_WIDTH = 30;
+  const NAME_WIDTH = 25;
+  const DESC_WIDTH = 35;
 
   const borderH = '┌' + '─'.repeat(ID_WIDTH + 2) + '┬' + '─'.repeat(NAME_WIDTH + 2) + '┬' + '─'.repeat(DESC_WIDTH + 2) + '┐';
   const borderM = '├' + '─'.repeat(ID_WIDTH + 2) + '┼' + '─'.repeat(NAME_WIDTH + 2) + '┼' + '─'.repeat(DESC_WIDTH + 2) + '┤';
   const borderF = '└' + '─'.repeat(ID_WIDTH + 2) + '┴' + '─'.repeat(NAME_WIDTH + 2) + '┴' + '─'.repeat(DESC_WIDTH + 2) + '┘';
 
   console.log(borderH);
-  console.log('│ ' + padRight('ID', ID_WIDTH) + ' │ ' + padRight('Display Name', NAME_WIDTH) + ' │ ' + padRight('Description', DESC_WIDTH) + ' │');
+  console.log('│ ' + padRightWide('ID', ID_WIDTH) + ' │ ' + padRightWide('Display Name', NAME_WIDTH) + ' │ ' + padRightWide('Description', DESC_WIDTH) + ' │');
   console.log(borderM);
 
   for (const entry of entries) {
-    const id = truncate(entry.id, ID_WIDTH);
-    const name = padRight(entry.displayName, NAME_WIDTH);
-    const desc = truncate(entry.description, DESC_WIDTH);
-    console.log('│ ' + padRight(id, ID_WIDTH) + ' │ ' + name + ' │ ' + padRight(desc, DESC_WIDTH) + ' │');
+    const id = truncateWide(entry.id, ID_WIDTH);
+    const name = padRightWide(entry.displayName, NAME_WIDTH);
+    const desc = truncateWide(entry.description, DESC_WIDTH);
+    console.log('│ ' + padRightWide(id, ID_WIDTH) + ' │ ' + name + ' │ ' + padRightWide(desc, DESC_WIDTH) + ' │');
   }
 
   console.log(borderF);
   console.log();
   console.log('Run `acsync catalog mcp show <id>` for details.');
-}
-
-function truncate(str: string, maxLen: number): string {
-  if (str.length > maxLen) {
-    return str.slice(0, maxLen - 1) + '…';
-  }
-  return str;
-}
-
-function padRight(str: string, len: number): string {
-  return str.padEnd(len, ' ');
 }
 
 // ============================================================================
@@ -236,7 +226,7 @@ export async function catalogSkillInstall(options: CatalogSkillInstallOptions): 
     description: info.description,
   });
 
-  await addSkill(entry);
+  await addSkill(entry, content);
   console.log(`\n✓ Added to catalog: ${entry.id}`);
   console.log('\nRun `acsync skill add ' + entry.id + '` to add it to your project.');
 }
@@ -272,15 +262,15 @@ export async function catalogSkillSearch(query: string): Promise<void> {
   const borderF = '└' + '─'.repeat(NAME_WIDTH + 2) + '┴' + '─'.repeat(AUTHOR_WIDTH + 2) + '┴' + '─'.repeat(STARS_WIDTH + 2) + '┘';
 
   console.log(borderH);
-  console.log('│ ' + padRight('Name', NAME_WIDTH) + ' │ ' + padRight('Author', AUTHOR_WIDTH) + ' │ ' + padRight('Stars', STARS_WIDTH) + ' │');
+  console.log('│ ' + padRightWide('Name', NAME_WIDTH) + ' │ ' + padRightWide('Author', AUTHOR_WIDTH) + ' │ ' + padRightWide('Stars', STARS_WIDTH) + ' │');
   console.log(borderM);
 
   for (const skill of results.slice(0, 20)) {
-    const name = truncate(skill.name, NAME_WIDTH);
-    const author = truncate(skill.author, AUTHOR_WIDTH);
-    const stars = padRight('★ ' + formatNumber(skill.stars), STARS_WIDTH);
+    const name = truncateWide(skill.name, NAME_WIDTH);
+    const author = truncateWide(skill.author, AUTHOR_WIDTH);
+    const stars = padRightWide('★ ' + formatNumber(skill.stars), STARS_WIDTH);
 
-    console.log('│ ' + padRight(name, NAME_WIDTH) + ' │ ' + padRight(author, AUTHOR_WIDTH) + ' │ ' + stars + ' │');
+    console.log('│ ' + padRightWide(name, NAME_WIDTH) + ' │ ' + padRightWide(author, AUTHOR_WIDTH) + ' │ ' + stars + ' │');
   }
 
   console.log(borderF);
@@ -405,7 +395,7 @@ export async function catalogSkillImport(options: CatalogSkillImportOptions): Pr
     description: options.description,
   });
 
-  await addSkill(entry);
+  await addSkill(entry, content);
   console.log(`✓ Added to catalog: ${entry.id}`);
   console.log('\nRun `acsync skill add ' + entry.id + '` to add it to your project.');
 }
@@ -430,22 +420,22 @@ export async function catalogSkillList(): Promise<void> {
   console.log(`Skill Catalog (${entries.length} entries):\n`);
 
   const ID_WIDTH = 45;
-  const NAME_WIDTH = 19;
-  const DESC_WIDTH = 30;
+  const NAME_WIDTH = 25;
+  const DESC_WIDTH = 35;
 
   const borderH = '┌' + '─'.repeat(ID_WIDTH + 2) + '┬' + '─'.repeat(NAME_WIDTH + 2) + '┬' + '─'.repeat(DESC_WIDTH + 2) + '┐';
   const borderM = '├' + '─'.repeat(ID_WIDTH + 2) + '┼' + '─'.repeat(NAME_WIDTH + 2) + '┼' + '─'.repeat(DESC_WIDTH + 2) + '┤';
   const borderF = '└' + '─'.repeat(ID_WIDTH + 2) + '┴' + '─'.repeat(NAME_WIDTH + 2) + '┴' + '─'.repeat(DESC_WIDTH + 2) + '┘';
 
   console.log(borderH);
-  console.log('│ ' + padRight('ID', ID_WIDTH) + ' │ ' + padRight('Display Name', NAME_WIDTH) + ' │ ' + padRight('Description', DESC_WIDTH) + ' │');
+  console.log('│ ' + padRightWide('ID', ID_WIDTH) + ' │ ' + padRightWide('Display Name', NAME_WIDTH) + ' │ ' + padRightWide('Description', DESC_WIDTH) + ' │');
   console.log(borderM);
 
   for (const entry of entries) {
-    const id = truncate(entry.id, ID_WIDTH);
-    const name = padRight(entry.displayName, NAME_WIDTH);
-    const desc = truncate(entry.description, DESC_WIDTH);
-    console.log('│ ' + padRight(id, ID_WIDTH) + ' │ ' + name + ' │ ' + padRight(desc, DESC_WIDTH) + ' │');
+    const id = truncateWide(entry.id, ID_WIDTH);
+    const name = padRightWide(entry.displayName, NAME_WIDTH);
+    const desc = truncateWide(entry.description, DESC_WIDTH);
+    console.log('│ ' + padRightWide(id, ID_WIDTH) + ' │ ' + name + ' │ ' + padRightWide(desc, DESC_WIDTH) + ' │');
   }
 
   console.log(borderF);
@@ -461,15 +451,17 @@ export async function catalogSkillList(): Promise<void> {
  * Show details of a specific skill catalog entry.
  */
 export async function catalogSkillShow(id: string): Promise<void> {
-  const { getSkill } = await import('./catalog.js');
-  const entry = await getSkill(id);
+  const { getSkillWithContent } = await import('./catalog.js');
+  const skillWithData = await getSkillWithContent(id);
 
-  if (!entry) {
+  if (!skillWithData) {
     console.error(`Skill entry not found: ${id}\n`);
     console.log('Run `acsync catalog skill list` to see available entries.');
     process.exitCode = 1;
     return;
   }
+
+  const { entry, content } = skillWithData;
 
   console.log(`Skill Entry: ${entry.id}\n`);
   console.log(`  Display Name: ${entry.displayName}`);
@@ -477,7 +469,7 @@ export async function catalogSkillShow(id: string): Promise<void> {
   console.log(`  Content:\n`);
 
   // Show preview of skill content
-  const lines = entry.recipe.content.split('\n');
+  const lines = content.split('\n');
   const previewLines = lines.slice(0, 20); // Show first 20 lines
   console.log(previewLines.join('\n'));
 
@@ -541,7 +533,7 @@ Skill content for ${options.skillId}.
     description: options.description,
   });
 
-  await addSkill(entry);
+  await addSkill(entry, content);
   console.log(`Added to catalog: ${entry.id}\n`);
   console.log('Run `acsync skill add <name>` to add it to your project.');
 }

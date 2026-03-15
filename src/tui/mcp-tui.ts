@@ -15,6 +15,7 @@ import { discoverProject } from '../project-discovery.js';
 import { listMcps } from '../catalog.js';
 import type { TargetName } from '../types.js';
 import { join } from 'node:path';
+import { padRightWide } from '../table-utils.js';
 
 type McpAction = 'toggle' | 'add' | 'remove' | 'edit' | 'switch-target' | 'refresh' | 'back' | 'exit';
 
@@ -143,13 +144,16 @@ export class McpTuiScreen {
       return;
     }
 
-    // Table header
-    console.log('\n  ┌─' + '─'.repeat(30) + '┬─' + '─'.repeat(8) + '─' +
-                '┬─'.repeat(3) + '┬─'.repeat(3) + '┬─'.repeat(3) + '┐');
-    console.log('  │ ' + 'Server'.padEnd(30) + '│ ' + 'Status'.padEnd(8) +
-                ' │ C │ C │ G │');
-    console.log('  │' + '─'.repeat(32) + '┼' + '─'.repeat(10) +
-                '┼───┼───┼───┤');
+    const NAME_WIDTH = 30;
+    const STATUS_WIDTH = 10;
+
+    const borderH = '  ┌' + '─'.repeat(NAME_WIDTH + 2) + '┬' + '─'.repeat(STATUS_WIDTH + 2) + '┬───┬───┬───┐';
+    const borderM = '  ├' + '─'.repeat(NAME_WIDTH + 2) + '┼' + '─'.repeat(STATUS_WIDTH + 2) + '┼───┼───┼───┤';
+    const borderF = '  └' + '─'.repeat(NAME_WIDTH + 2) + '┴' + '─'.repeat(STATUS_WIDTH + 2) + '┴───┴───┴───┘';
+
+    console.log('\n' + borderH);
+    console.log('  │ ' + padRightWide('Server', NAME_WIDTH) + ' │ ' + padRightWide('Status', STATUS_WIDTH) + ' │ C │ C │ G │');
+    console.log(borderM);
 
     // Rows
     for (const name of Array.from(serverNames).sort()) {
@@ -157,14 +161,13 @@ export class McpTuiScreen {
       const enabled = status?.enabled ?? false;
       const statusText = enabled ? '✅ On ' : '❌ Off';
 
-      console.log('  │ ' + name.padEnd(30) + '│ ' + statusText.padEnd(8) + ' │ ' +
-                  (allStatus.claude?.[name]?.enabled ? '✅' : '❌') + ' │ ' +
-                  (allStatus.codex?.[name]?.enabled ? '✅' : '❌') + ' │ ' +
-                  (allStatus.gemini?.[name]?.enabled ? '✅' : '❌') + ' │');
+      console.log('  │ ' + padRightWide(name, NAME_WIDTH) + ' │ ' + padRightWide(statusText, STATUS_WIDTH) + ' │ ' +
+                  (allStatus.claude?.[name]?.enabled ? '✅ ' : '❌ ') + '│ ' +
+                  (allStatus.codex?.[name]?.enabled ? '✅ ' : '❌ ') + '│ ' +
+                  (allStatus.gemini?.[name]?.enabled ? '✅ ' : '❌ ') + '│');
     }
 
-    console.log('  └─' + '─'.repeat(30) + '┴─' + '─'.repeat(8) + '─' +
-                '┴───┴───┴───┘');
+    console.log(borderF);
     console.log('  Legend: C=Claude, C=Codex, G=Gemini | ✅=Enabled, ❌=Disabled');
   }
 

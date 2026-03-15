@@ -1,6 +1,7 @@
 import type { SkillWorkspaceStatus, TargetName } from './types.js';
 import { discoverProject } from './project-discovery.js';
 import { getSkills, validateSkillName } from './skill-adapters.js';
+import { padRightWide, truncateWide, getStringWidth } from './table-utils.js';
 
 // ============================================================================
 // Validation Helpers
@@ -85,7 +86,7 @@ function printSkillStatus(status: SkillWorkspaceStatus, verbose: boolean): void 
     }
   } else {
     // Compact table output
-    const NAME_WIDTH = 30;
+    const NAME_WIDTH = 35;
     const ENABLED_WIDTH = 7;
     const TARGETS_WIDTH = 15;
     const SOURCE_WIDTH = 7;
@@ -95,16 +96,16 @@ function printSkillStatus(status: SkillWorkspaceStatus, verbose: boolean): void 
     const borderF = '└' + '─'.repeat(NAME_WIDTH + 2) + '┴' + '─'.repeat(ENABLED_WIDTH + 2) + '┴' + '─'.repeat(TARGETS_WIDTH + 2) + '┴' + '─'.repeat(SOURCE_WIDTH + 2) + '┘';
 
     console.log(borderH);
-    console.log('│ ' + padRight('Name', NAME_WIDTH) + ' │ ' + padRight('Enabled', ENABLED_WIDTH) + ' │ ' + padRight('Targets', TARGETS_WIDTH) + ' │ ' + padRight('Source', SOURCE_WIDTH) + ' │');
+    console.log('│ ' + padRightWide('Name', NAME_WIDTH) + ' │ ' + padRightWide('Enabled', ENABLED_WIDTH) + ' │ ' + padRightWide('Targets', TARGETS_WIDTH) + ' │ ' + padRightWide('Source', SOURCE_WIDTH) + ' │');
     console.log(borderM);
 
     for (const skill of status.skills) {
-      const name = truncate(skill.name, NAME_WIDTH);
+      const name = truncateWide(skill.name, NAME_WIDTH);
       const enabled = skill.enabled ? '✓' : '✗';
-      const targets = truncate(skill.targets.join(', ') || '(none)', TARGETS_WIDTH);
-      const source = padRight(skill.source, SOURCE_WIDTH);
+      const targets = truncateWide(skill.targets.join(', ') || '(none)', TARGETS_WIDTH);
+      const source = padRightWide(skill.source, SOURCE_WIDTH);
 
-      console.log('│ ' + padRight(name, NAME_WIDTH) + ' │ ' + center(enabled, ENABLED_WIDTH) + ' │ ' + padRight(targets, TARGETS_WIDTH) + ' │ ' + source + ' │');
+      console.log('│ ' + padRightWide(name, NAME_WIDTH) + ' │ ' + centerWide(enabled, ENABLED_WIDTH) + ' │ ' + padRightWide(targets, TARGETS_WIDTH) + ' │ ' + source + ' │');
     }
 
     console.log(borderF);
@@ -113,23 +114,15 @@ function printSkillStatus(status: SkillWorkspaceStatus, verbose: boolean): void 
   }
 }
 
-function truncate(str: string, maxLen: number): string {
-  if (str.length > maxLen) {
-    return str.slice(0, maxLen - 1) + '…';
-  }
-  return str;
-}
-
-function center(str: string, width: number): string {
-  const len = str.length;
-  if (len >= width) return str;
-  const left = Math.floor((width - len) / 2);
-  const right = width - len - left;
+/**
+ * Center a string within a width, considering multibyte characters.
+ */
+function centerWide(str: string, width: number): string {
+  const strWidth = getStringWidth(str);
+  if (strWidth >= width) return str;
+  const left = Math.floor((width - strWidth) / 2);
+  const right = width - strWidth - left;
   return ' '.repeat(left) + str + ' '.repeat(right);
-}
-
-function padRight(str: string, len: number): string {
-  return str.padEnd(len, ' ');
 }
 
 // ============================================================================
@@ -146,7 +139,7 @@ export interface SkillAddOptions {
  * Add a skill to the current project.
  */
 export async function skillAdd(options: SkillAddOptions): Promise<void> {
-  const { normalizeSkillPackage, getSkill, addSkill } = await import('./catalog.js');
+  const { normalizeSkillPackage, getSkill, addSkill, getSkillWithContent } = await import('./catalog.js');
 
   // Validate skill ID
   try {
@@ -159,11 +152,10 @@ export async function skillAdd(options: SkillAddOptions): Promise<void> {
 
   // Check if entry exists in catalog first
   let entry = await getSkill(options.skillId);
+  let content: string;
 
-  // If not in catalog, read from file and optionally add
+  // If not in catalog, create a basic entry
   if (!entry) {
-    // For now, we'll create a basic entry from the skill ID
-    // In a full implementation, this would read from a local file or URL
     const sanitizedId = sanitizeSkillId(options.skillId);
     const defaultContent = `---
 name: ${sanitizedId}
@@ -175,12 +167,22 @@ description: Skill: ${sanitizedId}
 Skill content for ${sanitizedId}.
 `;
     entry = normalizeSkillPackage(options.skillId, defaultContent);
+    content = defaultContent;
 
     // Add to catalog if --no-register is false
     if (!options.noRegister) {
-      await addSkill(entry);
+      await addSkill(entry, content);
       console.log(`Added to catalog: ${entry.id}`);
     }
+  } else {
+    // Load content from file
+    const skillWithData = await getSkillWithContent(options.skillId);
+    if (!skillWithData) {
+      console.error(`Skill content not found for: ${options.skillId}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    content = skillWithData.content;
   }
 
   // Add to each target
@@ -188,7 +190,7 @@ Skill content for ${sanitizedId}.
   const { addSkillToConfig } = await import('./skill-adapters.js');
 
   for (const target of options.targets) {
-    await addSkillToConfig(discovery.root, target, entry.id, entry.recipe.content);
+    await addSkillToConfig(discovery.root, target, entry.id, content);
     console.log(`Added to ${target}: ${entry.id}`);
   }
 
@@ -242,7 +244,7 @@ export async function skillInstallFromGitHub(options: SkillInstallFromGitHubOpti
       description: `Skill: ${name}`,
     });
 
-    await addSkill(entry);
+    await addSkill(entry, content);
     console.log(`✓ Added to catalog: ${entry.id}`);
   }
 

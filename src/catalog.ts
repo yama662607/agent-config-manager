@@ -126,6 +126,9 @@ export async function loadCatalog(): Promise<CatalogFile> {
     parsed.skills = {};
   }
 
+  // Auto-migrate from old format if needed
+  await ensureMigrated();
+
   return parsed;
 }
 
@@ -231,11 +234,62 @@ function extractDisplayName(packageId: string): string {
 }
 
 // ============================================================================
-// Skill Catalog Operations
+// Skill Catalog Operations (File-based storage)
 // ============================================================================
 
 /**
- * List all skill entries in the catalog.
+ * Get the skills directory path.
+ */
+export function getSkillsDir(): string {
+  return path.join(getCatalogDir(), 'skills');
+}
+
+/**
+ * Get a specific skill directory path.
+ */
+export function getSkillDir(id: string): string {
+  return path.join(getSkillsDir(), id);
+}
+
+/**
+ * Get the SKILL.md file path for a skill.
+ */
+export function getSkillFilePath(id: string): string {
+  return path.join(getSkillDir(id), 'SKILL.md');
+}
+
+/**
+ * Ensure skills directory exists.
+ */
+async function ensureSkillsDir(): Promise<void> {
+  await fs.mkdir(getSkillsDir(), { recursive: true });
+}
+
+/**
+ * Validate skill ID to prevent path traversal.
+ */
+function validateSkillId(id: string): void {
+  if (!id || id.length === 0) {
+    throw new Error('Skill ID cannot be empty');
+  }
+
+  if (id.length > 100) {
+    throw new Error('Skill ID too long (max 100 characters)');
+  }
+
+  // Prevent path traversal
+  if (id.includes('..') || id.includes('/') || id.includes('\\')) {
+    throw new Error('Skill ID cannot contain path traversal characters');
+  }
+
+  // Prevent leading/trailing dots and dashes
+  if (id.startsWith('.') || id.startsWith('-') || id.endsWith('.') || id.endsWith('-')) {
+    throw new Error('Skill ID cannot start or end with a dot or dash');
+  }
+}
+
+/**
+ * List all skill entries in the catalog (metadata only).
  */
 export async function listSkills(): Promise<SkillCatalogEntry[]> {
   const catalog = await loadCatalog();
@@ -243,7 +297,7 @@ export async function listSkills(): Promise<SkillCatalogEntry[]> {
 }
 
 /**
- * Get a specific skill entry by ID.
+ * Get a specific skill entry by ID (metadata only).
  */
 export async function getSkill(id: string): Promise<SkillCatalogEntry | null> {
   const catalog = await loadCatalog();
@@ -251,16 +305,128 @@ export async function getSkill(id: string): Promise<SkillCatalogEntry | null> {
 }
 
 /**
- * Add or update a skill entry in the catalog.
+ * Get full skill data including content from file.
  */
-export async function addSkill(entry: SkillCatalogEntry): Promise<void> {
+export async function getSkillWithContent(id: string): Promise<{ entry: SkillCatalogEntry; content: string } | null> {
+  const entry = await getSkill(id);
+  if (!entry) {
+    return null;
+  }
+
+  try {
+    const skillPath = getSkillFilePath(id);
+    const content = await fs.readFile(skillPath, 'utf8');
+    return { entry, content };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Add or update a skill entry in the catalog (file-based).
+ * Creates a directory and saves SKILL.md file.
+ */
+export async function addSkill(entry: SkillCatalogEntry, content: string): Promise<void> {
+  validateSkillId(entry.id);
+  await ensureSkillsDir();
+
+  const skillDir = getSkillDir(entry.id);
+  const skillPath = getSkillFilePath(entry.id);
+
+  // Create skill directory
+  await fs.mkdir(skillDir, { recursive: true });
+
+  // Write SKILL.md atomically
+  const tempPath = `${skillPath}.tmp`;
+  await fs.writeFile(tempPath, content, 'utf8');
+  await fs.rename(tempPath, skillPath);
+
+  // Update catalog metadata
   const catalog = await loadCatalog();
-  catalog.skills[entry.id] = entry;
+  catalog.skills[entry.id] = {
+    id: entry.id,
+    displayName: entry.displayName,
+    description: entry.description,
+    path: `skills/${entry.id}`,
+    addedAt: entry.addedAt ?? new Date().toISOString(),
+    tags: entry.tags ?? [],
+    license: entry.license,
+  };
   await writeCatalogAtomic(catalog);
 }
 
 /**
- * Remove a skill entry from the catalog.
+ * Add a skill from a local directory (copies all files).
+ */
+export async function addSkillFromDir(
+  id: string,
+  sourceDir: string,
+  metadata: Partial<SkillCatalogEntry> = {}
+): Promise<void> {
+  validateSkillId(id);
+  await ensureSkillsDir();
+
+  const skillDir = getSkillDir(id);
+
+  // Create skill directory
+  await fs.mkdir(skillDir, { recursive: true });
+
+  // Copy all files from source directory
+  const entries = await fs.readdir(sourceDir, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const srcPath = path.join(sourceDir, entry.name);
+    const destPath = path.join(skillDir, entry.name);
+
+    if (entry.isDirectory()) {
+      // Recursively copy subdirectories (e.g., references/)
+      await fs.mkdir(destPath, { recursive: true });
+      const subEntries = await fs.readdir(srcPath, { withFileTypes: true });
+      for (const subEntry of subEntries) {
+        if (subEntry.isFile()) {
+          const subSrcPath = path.join(srcPath, subEntry.name);
+          const subDestPath = path.join(destPath, subEntry.name);
+          await fs.copyFile(subSrcPath, subDestPath);
+        }
+      }
+    } else if (entry.isFile()) {
+      await fs.copyFile(srcPath, destPath);
+    }
+  }
+
+  // Parse SKILL.md for metadata
+  const skillPath = getSkillFilePath(id);
+  let content = '';
+  let displayName = metadata.displayName ?? id;
+  let description = metadata.description ?? '';
+  let license: string | undefined = metadata.license;
+
+  try {
+    content = await fs.readFile(skillPath, 'utf8');
+    const recipe = parseSkillFrontmatter(content);
+    displayName = recipe.name || displayName;
+    description = recipe.description || description;
+    license = recipe.license || license;
+  } catch {
+    // SKILL.md not found, use provided metadata
+  }
+
+  // Update catalog metadata
+  const catalog = await loadCatalog();
+  catalog.skills[id] = {
+    id,
+    displayName,
+    description,
+    path: `skills/${id}`,
+    addedAt: metadata.addedAt ?? new Date().toISOString(),
+    tags: metadata.tags ?? [],
+    license,
+  };
+  await writeCatalogAtomic(catalog);
+}
+
+/**
+ * Remove a skill entry from the catalog (deletes directory).
  */
 export async function removeSkill(id: string): Promise<boolean> {
   const catalog = await loadCatalog();
@@ -271,11 +437,17 @@ export async function removeSkill(id: string): Promise<boolean> {
 
   delete catalog.skills[id];
   await writeCatalogAtomic(catalog);
+
+  // Delete skill directory
+  const skillDir = getSkillDir(id);
+  await fs.rm(skillDir, { recursive: true, force: true });
+
   return true;
 }
 
 /**
- * Normalize a skill identifier into a catalog entry.
+ * Normalize a skill identifier and content into a catalog entry.
+ * This extracts metadata from content but doesn't store the content.
  */
 export function normalizeSkillPackage(
   packageId: string,
@@ -285,18 +457,16 @@ export function normalizeSkillPackage(
   const now = new Date().toISOString();
 
   // Parse YAML frontmatter to extract name and description
-  const recipe: SkillRecipe = parseSkillFrontmatter(content);
+  const recipe = parseSkillFrontmatter(content);
 
   return {
     id: packageId,
     displayName: catalogEntry?.displayName ?? recipe.name,
     description: catalogEntry?.description ?? recipe.description,
-    recipe: {
-      ...recipe,
-      content,
-    },
+    path: catalogEntry?.path ?? `skills/${packageId}`,
     addedAt: catalogEntry?.addedAt ?? now,
     tags: catalogEntry?.tags ?? [],
+    license: recipe.license,
   };
 }
 
@@ -394,4 +564,117 @@ function parseSkillFrontmatter(content: string): SkillRecipe {
   recipe.description = recipe.description.slice(0, 500);
 
   return recipe;
+}
+
+// ============================================================================
+// Migration
+// ============================================================================
+
+/**
+ * Check if a skill entry uses the old format (with embedded content).
+ */
+function isOldSkillFormat(entry: any): entry is { recipe: { content: string; name?: string; description?: string; license?: string }; id?: string; displayName?: string; description?: string; addedAt?: string; tags?: string[] } {
+  return entry.recipe && typeof entry.recipe.content === 'string';
+}
+
+/**
+ * Migrate a single skill from old format to new file-based format.
+ */
+async function migrateSkill(id: string, oldEntry: any): Promise<void> {
+  if (!isOldSkillFormat(oldEntry)) {
+    return; // Already migrated or invalid format
+  }
+
+  const content = oldEntry.recipe.content;
+  if (!content) {
+    return;
+  }
+
+  // Create skill directory and write content
+  await ensureSkillsDir();
+  const skillDir = getSkillDir(id);
+  const skillPath = getSkillFilePath(id);
+
+  await fs.mkdir(skillDir, { recursive: true });
+
+  // Write SKILL.md atomically
+  const tempPath = `${skillPath}.tmp`;
+  await fs.writeFile(tempPath, content, 'utf8');
+  await fs.rename(tempPath, skillPath);
+}
+
+/**
+ * Migrate all skills from old JSON format to new file-based format.
+ * Returns the number of skills migrated.
+ */
+export async function migrateSkills(): Promise<number> {
+  const catalogPath = getCatalogPath();
+
+  try {
+    await fs.access(catalogPath);
+  } catch {
+    return 0; // Catalog doesn't exist, nothing to migrate
+  }
+
+  const raw = await fs.readFile(catalogPath, 'utf8');
+  const catalog = JSON.parse(raw) as CatalogFile;
+
+  if (!catalog.skills || Object.keys(catalog.skills).length === 0) {
+    return 0; // No skills to migrate
+  }
+
+  let migratedCount = 0;
+  const newSkills: Record<string, SkillCatalogEntry> = {};
+
+  for (const [id, entry] of Object.entries(catalog.skills)) {
+    if (isOldSkillFormat(entry)) {
+      // Migrate to file-based format
+      await migrateSkill(id, entry);
+
+      // Create new entry structure
+      newSkills[id] = {
+        id: entry.id || id,
+        displayName: entry.displayName || entry.recipe.name || id,
+        description: entry.description || entry.recipe.description || '',
+        path: `skills/${id}`,
+        addedAt: entry.addedAt || new Date().toISOString(),
+        tags: entry.tags || [],
+        license: entry.recipe.license,
+      };
+
+      migratedCount++;
+    } else {
+      // Already in new format, keep as-is
+      newSkills[id] = entry;
+    }
+  }
+
+  if (migratedCount > 0) {
+    // Update catalog with new format
+    catalog.skills = newSkills;
+    await writeCatalogAtomic(catalog);
+  }
+
+  return migratedCount;
+}
+
+/**
+ * Auto-migrate on catalog load if needed.
+ */
+let migrationChecked = false;
+
+async function ensureMigrated(): Promise<void> {
+  if (migrationChecked) {
+    return;
+  }
+  migrationChecked = true;
+
+  try {
+    const count = await migrateSkills();
+    if (count > 0) {
+      console.log(`Migrated ${count} skill(s) to file-based format.`);
+    }
+  } catch {
+    // Silently ignore migration errors
+  }
 }

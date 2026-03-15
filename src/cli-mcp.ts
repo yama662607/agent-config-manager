@@ -1,6 +1,7 @@
 import type { McpWorkspaceStatus, TargetName } from './types.js';
 import { discoverProject } from './project-discovery.js';
 import { getMcpServers } from './config-adapters.js';
+import { padRightWide, truncateWide, getStringWidth } from './table-utils.js';
 
 // ============================================================================
 // Status Command
@@ -74,7 +75,7 @@ function printMcpStatus(status: McpWorkspaceStatus, verbose: boolean): void {
     }
   } else {
     // Compact table output
-    const NAME_WIDTH = 30;
+    const NAME_WIDTH = 35;
     const ENABLED_WIDTH = 7;
     const TARGETS_WIDTH = 15;
     const SOURCE_WIDTH = 7;
@@ -84,16 +85,16 @@ function printMcpStatus(status: McpWorkspaceStatus, verbose: boolean): void {
     const borderF = '└' + '─'.repeat(NAME_WIDTH + 2) + '┴' + '─'.repeat(ENABLED_WIDTH + 2) + '┴' + '─'.repeat(TARGETS_WIDTH + 2) + '┴' + '─'.repeat(SOURCE_WIDTH + 2) + '┘';
 
     console.log(borderH);
-    console.log('│ ' + padRight('Name', NAME_WIDTH) + ' │ ' + padRight('Enabled', ENABLED_WIDTH) + ' │ ' + padRight('Targets', TARGETS_WIDTH) + ' │ ' + padRight('Source', SOURCE_WIDTH) + ' │');
+    console.log('│ ' + padRightWide('Name', NAME_WIDTH) + ' │ ' + padRightWide('Enabled', ENABLED_WIDTH) + ' │ ' + padRightWide('Targets', TARGETS_WIDTH) + ' │ ' + padRightWide('Source', SOURCE_WIDTH) + ' │');
     console.log(borderM);
 
     for (const server of status.servers) {
-      const name = truncate(server.name, NAME_WIDTH);
+      const name = truncateWide(server.name, NAME_WIDTH);
       const enabled = server.enabled ? '✓' : '✗';
-      const targets = truncate(server.targets.join(', ') || '(none)', TARGETS_WIDTH);
-      const source = padRight(server.source, SOURCE_WIDTH);
+      const targets = truncateWide(server.targets.join(', ') || '(none)', TARGETS_WIDTH);
+      const source = padRightWide(server.source, SOURCE_WIDTH);
 
-      console.log('│ ' + padRight(name, NAME_WIDTH) + ' │ ' + center(enabled, ENABLED_WIDTH) + ' │ ' + padRight(targets, TARGETS_WIDTH) + ' │ ' + source + ' │');
+      console.log('│ ' + padRightWide(name, NAME_WIDTH) + ' │ ' + centerWide(enabled, ENABLED_WIDTH) + ' │ ' + padRightWide(targets, TARGETS_WIDTH) + ' │ ' + source + ' │');
     }
 
     console.log(borderF);
@@ -102,23 +103,15 @@ function printMcpStatus(status: McpWorkspaceStatus, verbose: boolean): void {
   }
 }
 
-function truncate(str: string, maxLen: number): string {
-  if (str.length > maxLen) {
-    return str.slice(0, maxLen - 1) + '…';
-  }
-  return str;
-}
-
-function center(str: string, width: number): string {
-  const len = str.length;
-  if (len >= width) return str;
-  const left = Math.floor((width - len) / 2);
-  const right = width - len - left;
+/**
+ * Center a string within a width, considering multibyte characters.
+ */
+function centerWide(str: string, width: number): string {
+  const strWidth = getStringWidth(str);
+  if (strWidth >= width) return str;
+  const left = Math.floor((width - strWidth) / 2);
+  const right = width - strWidth - left;
   return ' '.repeat(left) + str + ' '.repeat(right);
-}
-
-function padRight(str: string, len: number): string {
-  return str.padEnd(len, ' ');
 }
 
 // ============================================================================

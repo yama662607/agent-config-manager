@@ -88,14 +88,17 @@ export interface SkillRecipe {
   metadata?: Record<string, unknown>;
 }
 
-/** Skill entry in the catalog */
+/** Skill entry in the catalog (file-based storage) */
 export interface SkillCatalogEntry {
   id: string;
   displayName: string;
   description: string;
-  recipe: SkillRecipe;
+  /** Relative path from catalog directory (e.g., "skills/skill-creator") */
+  path: string;
   addedAt: string; // ISO 8601 timestamp
   tags?: string[];
+  /** Optional license from YAML frontmatter */
+  license?: string;
 }
 
 // ============================================================================

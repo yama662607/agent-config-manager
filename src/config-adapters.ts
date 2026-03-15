@@ -309,8 +309,10 @@ async function addMcpServer(
     case 'claude': {
       const server: ClaudeMcpServer = {};
       if (recipe.url) {
-        server.httpUrl = recipe.url;
+        server.type = 'http';
+        server.url = recipe.url;
       } else if (recipe.command) {
+        server.type = 'stdio';
         server.command = recipe.command;
         if (recipe.args) server.args = recipe.args;
       }
@@ -424,8 +426,8 @@ export async function getMcpServers(
       const servers: Record<string, { enabled: boolean; recipe: McpRecipe }> = {};
       for (const [name, server] of Object.entries(config.mcpServers)) {
         const recipe: McpRecipe = {};
-        if (server.httpUrl) {
-          recipe.url = server.httpUrl;
+        if (server.url) {
+          recipe.url = server.url;
           recipe.transport = 'http';
         } else if (server.command) {
           recipe.command = server.command;

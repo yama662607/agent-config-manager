@@ -108,9 +108,10 @@ export interface ClaudeMcpConfig {
 }
 
 export interface ClaudeMcpServer {
+  type?: 'stdio' | 'http';
   command?: string;
   args?: string[];
-  httpUrl?: string;
+  url?: string;
   env?: Record<string, string>;
 }
 

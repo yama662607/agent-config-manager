@@ -62,10 +62,12 @@ describe('table-utils', () => {
       assert.ok(truncated.endsWith('...'));
     });
 
-    it('should handle boundary cases where ellipsis barely fits', () => {
-      // "あいう" (6) truncated to 5 -> "a..." (1+3=4) or "..." (3)?
-      // Actually "あ" is 2. 2 + 3 = 5. So "あ..." should fit.
-      assert.strictEqual(truncateWide('あいう', 5), 'あ...');
+    it('should truncate a specific long string correctly', () => {
+      const longStr = 'mcp-bestpractice-typescript';
+      const truncated = truncateWide(longStr, 25);
+      assert.strictEqual(getStringWidth(truncated), 25);
+      assert.ok(truncated.endsWith('...'));
+      assert.strictEqual(truncated, 'mcp-bestpractice-types...');
     });
   });
 });

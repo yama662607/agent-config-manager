@@ -40,9 +40,9 @@ export async function catalogMcpList(): Promise<void> {
 
   for (const entry of entries) {
     const id = truncateWide(entry.id, ID_WIDTH);
-    const name = padRightWide(entry.displayName, NAME_WIDTH);
+    const name = truncateWide(entry.displayName, NAME_WIDTH);
     const desc = truncateWide(entry.description, DESC_WIDTH);
-    console.log('│ ' + padRightWide(id, ID_WIDTH) + ' │ ' + name + ' │ ' + padRightWide(desc, DESC_WIDTH) + ' │');
+    console.log('│ ' + padRightWide(id, ID_WIDTH) + ' │ ' + padRightWide(name, NAME_WIDTH) + ' │ ' + padRightWide(desc, DESC_WIDTH) + ' │');
   }
 
   console.log(borderF);
@@ -433,9 +433,9 @@ export async function catalogSkillList(): Promise<void> {
 
   for (const entry of entries) {
     const id = truncateWide(entry.id, ID_WIDTH);
-    const name = padRightWide(entry.displayName, NAME_WIDTH);
+    const name = truncateWide(entry.displayName, NAME_WIDTH);
     const desc = truncateWide(entry.description, DESC_WIDTH);
-    console.log('│ ' + padRightWide(id, ID_WIDTH) + ' │ ' + name + ' │ ' + padRightWide(desc, DESC_WIDTH) + ' │');
+    console.log('│ ' + padRightWide(id, ID_WIDTH) + ' │ ' + padRightWide(name, NAME_WIDTH) + ' │ ' + padRightWide(desc, DESC_WIDTH) + ' │');
   }
 
   console.log(borderF);

@@ -1,5 +1,10 @@
 # agent-config-sync
 
+[![npm version](https://img.shields.io/npm/v/@yama662607/agent-config-sync)](https://www.npmjs.com/package/@yama662607/agent-config-sync)
+[![npm downloads](https://img.shields.io/npm/dm/@yama662607/agent-config-sync)](https://www.npmjs.com/package/@yama662607/agent-config-sync)
+[![license](https://img.shields.io/npm/l/@yama662607/agent-config-sync)](LICENSE)
+[![Node.js Version](https://img.shields.io/node/v/@yama662607/agent-config-sync)](https://github.com/yama662607/agent-config-sync)
+
 `acsync` is a cross-agent configuration manager for MCP servers and skills. Unlike manifest-based tools, `acsync` directly edits native config files in your project—no intermediate manifest, no "sync" step.
 
 ## Design Principles
@@ -15,7 +20,7 @@
 
 ```bash
 # Install
-npm install -g agent-config-sync
+npm install -g @yama662607/agent-config-sync
 
 # Add an MCP server to your project
 acsync mcp add @modelcontextprotocol/server-github --targets claude
@@ -39,7 +44,7 @@ acsync catalog skill list
 Manage MCP servers for the current project.
 
 ```bash
-# Show status (default)
+# Show status (default) - Interactive TUI
 acsync mcp
 
 # Add a server
@@ -58,7 +63,7 @@ acsync mcp enable github --targets codex
 Manage skills for the current project.
 
 ```bash
-# Show status (default)
+# Show status (default) - Interactive TUI
 acsync skill
 
 # Add a skill from catalog
@@ -171,4 +176,19 @@ my-project/                   # Your project
 
 ## License
 
-MIT
+MIT © [Daisuke Yamashiki](https://github.com/yama662607)
+
+## Links
+
+- [npm Package](https://www.npmjs.com/package/@yama662607/agent-config-sync)
+- [GitHub Repository](https://github.com/yama662607/agent-config-sync)
+- [Issues](https://github.com/yama662607/agent-config-sync/issues)
+- [Model Context Protocol](https://modelcontextprotocol.io)
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## Support
+
+If you encounter any issues or have questions, please [file an issue](https://github.com/yama662607/agent-config-sync/issues/new) on GitHub.

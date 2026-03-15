@@ -24,7 +24,8 @@ const CLI_PATH = path.join(PROJECT_ROOT, 'dist', 'cli.js');
 // Test project directory
 const TEST_PROJECT_DIR = path.join(os.tmpdir(), 'acsync-tui-test');
 
-describe('TUI Integration Tests', () => {
+// Run these tests serially to avoid file system conflicts
+describe('TUI Integration Tests', { concurrency: false }, () => {
   let originalHome: string | undefined;
   let originalCwd: string | undefined;
 

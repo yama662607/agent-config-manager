@@ -8,3 +8,7 @@ dist
 .claude/skills/!.gitkeep
 .codex/
 .gemini/
+
+# npm publish scripts (development only)
+npm-*.exp
+*.tgz

@@ -26,19 +26,32 @@ const TARGET_SKILLS_PATHS: Record<TargetName, string> = {
 // ============================================================================
 
 /**
+ * Options for project discovery.
+ */
+export interface DiscoverProjectOptions {
+  /** Allow using home directory as project root */
+  allowHome?: boolean;
+}
+
+/**
  * Discover the active project from the current working directory.
  * Uses the current directory as the project root.
  */
-export async function discoverProject(cwd: string = process.cwd()): Promise<ProjectDiscovery> {
+export async function discoverProject(
+  cwd: string = process.cwd(),
+  options?: DiscoverProjectOptions
+): Promise<ProjectDiscovery> {
   const currentDir = path.resolve(cwd);
   const homeDir = os.homedir();
 
-  // Prevent using home directory as project root
-  if (currentDir === homeDir || currentDir === path.dirname(homeDir)) {
-    throw new Error(
-      'Cannot use home directory as project root. ' +
-      'Navigate to a project directory first.'
-    );
+  // Prevent using home directory as project root (unless explicitly allowed)
+  if (!options?.allowHome) {
+    if (currentDir === homeDir || currentDir === path.dirname(homeDir)) {
+      throw new Error(
+        'Cannot use home directory as project root. ' +
+        'Use --allow-home to enable global config management, or navigate to a project directory.'
+      );
+    }
   }
 
   const targets = await resolveNativeConfigPaths(currentDir);

@@ -26,10 +26,7 @@ export class McpTuiScreen {
   name = 'mcp' as const;
 
   async render(state: TuiState): Promise<TuiState | null> {
-    console.clear();
-    this.renderHeader();
-
-    // Main loop
+    // Main loop - header cleared/redrawn in renderMain
     while (true) {
       const action = await this.renderMain(state);
       if (action === 'exit') return null;
@@ -55,7 +52,10 @@ export class McpTuiScreen {
   }
 
   private async renderMain(state: TuiState): Promise<McpAction> {
-    const discovery = await discoverProject();
+    console.clear();
+    this.renderHeader();
+
+    const discovery = await discoverProject(undefined, { allowHome: state.allowHome });
     const currentTarget = state.target;
 
     // Get current status for all targets

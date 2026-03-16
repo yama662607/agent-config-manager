@@ -12,6 +12,7 @@ export interface TuiState {
   filter: string;
   target: import('../types.js').TargetName;
   lastAction: string | null;
+  allowHome?: boolean;
 }
 
 export interface ScreenAction {

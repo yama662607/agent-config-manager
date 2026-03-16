@@ -29,10 +29,7 @@ export class SkillTuiScreen {
   name = 'skill' as const;
 
   async render(state: TuiState): Promise<TuiState | null> {
-    console.clear();
-    this.renderHeader();
-
-    // Main loop
+    // Main loop - header cleared/redrawn in renderMain
     while (true) {
       const action = await this.renderMain(state);
       if (action === 'exit') return null;
@@ -58,13 +55,16 @@ export class SkillTuiScreen {
   }
 
   private async renderMain(state: TuiState): Promise<SkillAction> {
+    console.clear();
+    this.renderHeader();
+
     const currentTarget = state.target;
 
     // Get installed skills for current target
-    const installedSkills = await this.getInstalledSkills(currentTarget);
+    const installedSkills = await this.getInstalledSkills(currentTarget, state.allowHome);
 
     // Display status table
-    await this.renderStatusTable(installedSkills, currentTarget);
+    await this.renderStatusTable(installedSkills, currentTarget, state.allowHome);
 
     console.log();
 
@@ -109,7 +109,7 @@ export class SkillTuiScreen {
     }
   }
 
-  private async renderStatusTable(installedSkills: SkillStatus[], currentTarget: TargetName): Promise<void> {
+  private async renderStatusTable(installedSkills: SkillStatus[], currentTarget: TargetName, allowHome?: boolean): Promise<void> {
     const targets: TargetName[] = ['claude', 'codex', 'gemini'];
 
     if (installedSkills.length === 0) {
@@ -121,7 +121,7 @@ export class SkillTuiScreen {
     // Get all skills across targets
     const allSkills: Record<TargetName, SkillStatus[]> = {} as any;
     for (const target of targets) {
-      allSkills[target] = await this.getInstalledSkills(target);
+      allSkills[target] = await this.getInstalledSkills(target, allowHome);
     }
 
     const allSkillNames = new Set<string>();
@@ -159,10 +159,10 @@ export class SkillTuiScreen {
     console.log('  Legend: C=Claude, C=Codex, G=Gemini | ✅=Installed');
   }
 
-  private async getInstalledSkills(target: TargetName): Promise<SkillStatus[]> {
+  private async getInstalledSkills(target: TargetName, allowHome?: boolean): Promise<SkillStatus[]> {
     try {
       const { discoverProject } = await import('../project-discovery.js');
-      const discovery = await discoverProject();
+      const discovery = await discoverProject(undefined, { allowHome });
 
       const { getSkills } = await import('../skill-adapters.js');
       const configPath = this.getDefaultConfigPath(target, discovery.root);

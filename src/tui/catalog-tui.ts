@@ -23,22 +23,21 @@ export class CatalogTuiScreen {
   name = 'catalog' as const;
 
   async render(state: TuiState): Promise<TuiState | null> {
-    console.clear();
-    this.renderHeader();
-
-    // Let user select tab first
-    const tab = await this.selectTab();
-    if (!tab) return null; // Exit
-
-    // Main loop for this tab
+    // Outer loop: tab selection
     while (true) {
-      const action = await this.renderTab(tab, state);
-      if (action === 'exit') return null;
-      if (action === 'back') break;
-      // Handle other actions...
-    }
+      // Let user select tab (screen cleared/redrawn inside)
+      const tab = await this.selectTab();
+      if (!tab) return null; // Exit
 
-    return state;
+      // Inner loop: actions within the selected tab
+      while (true) {
+        const action = await this.renderTab(tab, state);
+        if (action === 'exit') return null;
+        if (action === 'back') break; // Break inner loop, go back to tab selection
+        // For other actions, continue the inner loop (show the tab again)
+      }
+      // When inner loop breaks, we go back to tab selection (outer loop continues)
+    }
   }
 
   private renderHeader(): void {
@@ -49,6 +48,9 @@ export class CatalogTuiScreen {
   }
 
   private async selectTab(): Promise<CatalogTab | null> {
+    console.clear();
+    this.renderHeader();
+
     const prompt = new Select({
       name: 'tab',
       message: 'Select catalog section:',
@@ -73,6 +75,8 @@ export class CatalogTuiScreen {
   }
 
   private async renderTab(tab: CatalogTab, state: TuiState): Promise<CatalogAction> {
+    console.clear();
+    this.renderHeader();
     console.log(`\n─── ${tab.toUpperCase()} CATALOG ───\n`);
 
     switch (tab) {

@@ -157,6 +157,7 @@ SUBCOMMANDS:
 OPTIONS:
   --targets <list>    Comma-separated target list (default: claude,codex,gemini)
   --[no-]register      Auto-register to catalog (default: yes)
+  --allow-home         Allow managing configs in home directory (global configs)
 
 TARGETS:
   claude     Claude Code (.mcp.json)
@@ -202,6 +203,7 @@ SUBCOMMANDS:
 OPTIONS:
   --targets <list>    Comma-separated target list (default: claude,codex,gemini)
   --[no-]register      Auto-register to catalog (default: yes)
+  --allow-home         Allow managing configs in home directory (global configs)
 
 INSTALL OPTIONS (for GitHub install):
   --name <name>             Override skill name from GitHub
@@ -544,24 +546,36 @@ async function handleCatalogSkillImport(argv: string[]): Promise<void> {
 }
 
 async function handleMcp(argv: string[]): Promise<void> {
-  if (argv.length === 0) {
+  // Parse flags before subcommand
+  const allowHome = parseFlag(argv, 'allow-home');
+  const verbose = parseFlag(argv, 'verbose', 'v');
+
+  // Remove flags from argv for further parsing
+  const filteredArgs = argv.filter((arg) =>
+    arg !== '--allow-home' &&
+    arg !== '--verbose' &&
+    arg !== '-v'
+  );
+
+  if (filteredArgs.length === 0) {
     // Launch MCP TUI
     const { McpTuiScreen } = await import('./tui/index.js');
     const screen = new McpTuiScreen();
-    await screen.render({ currentScreen: 'mcp', selectedItem: null, filter: '', target: 'claude', lastAction: null });
+    await screen.render({
+      currentScreen: 'mcp',
+      selectedItem: null,
+      filter: '',
+      target: 'claude',
+      lastAction: null,
+      allowHome
+    });
     return;
   }
 
-  if (argv[0] === '--help' || argv[0] === '-h') {
+  if (filteredArgs[0] === '--help' || filteredArgs[0] === '-h') {
     process.stdout.write(MCP_HELP);
     return;
   }
-
-  // Check if verbose flag is present
-  const verbose = parseFlag(argv, 'verbose', 'v');
-
-  // Remove verbose from argv for further parsing
-  const filteredArgs = argv.filter((arg) => arg !== '--verbose' && arg !== '-v');
 
   const subcommand = filteredArgs[0];
 
@@ -631,24 +645,36 @@ async function handleMcp(argv: string[]): Promise<void> {
 }
 
 async function handleSkill(argv: string[]): Promise<void> {
-  if (argv.length === 0) {
+  // Parse flags before subcommand
+  const allowHome = parseFlag(argv, 'allow-home');
+  const verbose = parseFlag(argv, 'verbose', 'v');
+
+  // Remove flags from argv for further parsing
+  const filteredArgs = argv.filter((arg) =>
+    arg !== '--allow-home' &&
+    arg !== '--verbose' &&
+    arg !== '-v'
+  );
+
+  if (filteredArgs.length === 0) {
     // Launch Skill TUI
     const { SkillTuiScreen } = await import('./tui/index.js');
     const screen = new SkillTuiScreen();
-    await screen.render({ currentScreen: 'skill', selectedItem: null, filter: '', target: 'claude', lastAction: null });
+    await screen.render({
+      currentScreen: 'skill',
+      selectedItem: null,
+      filter: '',
+      target: 'claude',
+      lastAction: null,
+      allowHome
+    });
     return;
   }
 
-  if (argv[0] === '--help' || argv[0] === '-h') {
+  if (filteredArgs[0] === '--help' || filteredArgs[0] === '-h') {
     process.stdout.write(SKILL_HELP);
     return;
   }
-
-  // Check if verbose flag is present
-  const verbose = parseFlag(argv, 'verbose', 'v');
-
-  // Remove verbose from argv for further parsing
-  const filteredArgs = argv.filter((arg) => arg !== '--verbose' && arg !== '-v');
 
   const subcommand = filteredArgs[0];
 

@@ -59,7 +59,7 @@ Commands:
 
 Options:
   -g, --global  Operate on the global catalog (~/.acsync/) instead of current project
-  -t, --targets Comma-separated target list (claude, codex, antigravity; aliases: c, x, a, g)
+  -t, --targets Comma-separated target list (claude, codex, agy; aliases: c, x, a, g)
   -H, --home    Allow managing configs in home directory (global configs)
   -h, --help    Show this help message
   -V, --version Show version information
@@ -67,7 +67,7 @@ Options:
 Targets:
   claude      Claude Code (.mcp.json, .claude/skills/) (alias: c)
   codex       Codex (.codex/config.toml, .codex/skills/) (alias: x)
-  antigravity Antigravity CLI (.gemini/antigravity/mcp_config.json, .agents/skills/) (alias: a, g)
+  agy         Antigravity CLI (.gemini/antigravity/mcp_config.json, .agents/skills/) (alias: a, g)
 
 EXAMPLES:
   acsync init                         Interactive setup for current project
@@ -125,7 +125,7 @@ Subcommands:
 
 Options:
   -g, --global        Operate on the global catalog (~/.acsync/)
-  -t, --targets <l>   Comma-separated target list (default: claude,codex,antigravity; aliases: c,x,a,g)
+  -t, --targets <l>   Comma-separated target list (default: claude,codex,agy; aliases: c,x,a,g)
   --[no-]register     Auto-register to catalog (default: yes)
   --url <url>         HTTP/SSE URL for custom MCP add/edit
   --command <cmd>     Command for custom stdio MCP add/edit
@@ -172,7 +172,7 @@ Subcommands:
 
 Options:
   -g, --global        Operate on the global catalog (~/.acsync/)
-  -t, --targets <l>   Comma-separated target list (default: claude,codex,antigravity; aliases: c,x,a,g)
+  -t, --targets <l>   Comma-separated target list (default: claude,codex,agy; aliases: c,x,a,g)
   --[no-]register     Auto-register to catalog (default: yes)
   -H, --home          Allow managing configs in home directory (global configs)
   --name <name>       Override skill name from GitHub or import
@@ -1270,6 +1270,10 @@ function parseTargets(input: string): TargetName[] {
   const validTargets: TargetName[] = ['claude', 'codex', 'antigravity'];
   
   const aliasMap: Record<string, TargetName> = {
+    claude: 'claude',
+    codex: 'codex',
+    agy: 'antigravity',
+    antigravity: 'antigravity',
     c: 'claude',
     x: 'codex',
     a: 'antigravity',
@@ -1284,7 +1288,7 @@ function parseTargets(input: string): TargetName[] {
   for (const target of targets) {
     if (!validTargets.includes(target)) {
       process.stderr.write(`Invalid target: ${target}\n`);
-      process.stderr.write(`Valid targets: ${validTargets.join(', ')} (aliases: c, x, a, g)\n`);
+      process.stderr.write(`Valid targets: claude, codex, agy (aliases: c, x, a, g)\n`);
       process.exit(1);
     }
   }

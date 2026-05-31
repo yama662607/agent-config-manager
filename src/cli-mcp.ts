@@ -61,7 +61,7 @@ function printMcpStatus(status: McpWorkspaceStatus, verbose: boolean): void {
 
   if (status.servers.length === 0) {
     console.log('No MCP servers configured.');
-    console.log('Run `acsync mcp add <package>` to add a server.\n');
+    console.log('Run `acm mcp add <package>` to add a server.\n');
     return;
   }
 
@@ -99,7 +99,7 @@ function printMcpStatus(status: McpWorkspaceStatus, verbose: boolean): void {
 
     console.log(borderF);
     console.log();
-    console.log('Run `acsync mcp <name>` for details, `acsync mcp add` to add new servers.\n');
+    console.log('Run `acm mcp <name>` for details, `acm mcp add` to add new servers.\n');
   }
 }
 
@@ -161,7 +161,7 @@ export async function mcpAdd(options: McpAddOptions): Promise<void> {
     console.log(`Added to ${target}: ${entry.id}${suffix}`);
   }
 
-  console.log('\nRun `acsync mcp` to see the updated status.');
+  console.log('\nRun `acm mcp` to see the updated status.');
 }
 
 export interface McpEditOptions {
@@ -191,7 +191,7 @@ export async function mcpEdit(options: McpEditOptions): Promise<void> {
     console.log(`Updated in ${target}: ${options.serverName}${suffix}`);
   }
 
-  console.log('\nRun `acsync mcp` to see the updated status.');
+  console.log('\nRun `acm mcp` to see the updated status.');
 }
 
 // ============================================================================
@@ -219,7 +219,7 @@ export async function mcpRemove(options: McpRemoveOptions): Promise<void> {
     console.log(`Removed from ${target}: ${options.serverName}`);
   }
 
-  console.log('\nRun `acsync mcp` to see the updated status.');
+  console.log('\nRun `acm mcp` to see the updated status.');
 }
 
 // ============================================================================
@@ -247,7 +247,7 @@ export async function mcpEnable(options: McpEnableOptions): Promise<void> {
     console.log(`Enabled in ${target}: ${options.serverName}`);
   }
 
-  console.log('\nRun `acsync mcp` to see the updated status.');
+  console.log('\nRun `acm mcp` to see the updated status.');
 }
 
 // ============================================================================
@@ -275,7 +275,7 @@ export async function mcpDisable(options: McpDisableOptions): Promise<void> {
     console.log(`Disabled in ${target}: ${options.serverName}`);
   }
 
-  console.log('\nRun `acsync mcp` to see the updated status.');
+  console.log('\nRun `acm mcp` to see the updated status.');
 }
 
 function normalizeRecipe(recipe?: McpRecipe): McpRecipe | undefined {

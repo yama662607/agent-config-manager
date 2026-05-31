@@ -13,7 +13,7 @@ import {
 } from '../../src/config-adapters.js';
 import type { McpRecipe } from '../../src/types.js';
 
-const TEST_DIR = path.join(os.tmpdir(), 'acsync-config-adapters-test');
+const TEST_DIR = path.join(os.tmpdir(), 'acm-config-adapters-test');
 const CODEX_CONFIG_PATH = path.join(TEST_DIR, '.codex', 'config.toml');
 const CLAUDE_CONFIG_PATH = path.join(TEST_DIR, '.mcp.json');
 const ANTIGRAVITY_CONFIG_PATH = path.join(TEST_DIR, '.gemini', 'antigravity', 'mcp_config.json');

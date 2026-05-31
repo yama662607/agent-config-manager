@@ -23,7 +23,7 @@ import {
 import type { McpCatalogEntry } from '../../src/types.js';
 
 // Use a temporary catalog directory for testing
-const TEST_CATALOG_DIR = path.join(os.tmpdir(), '.acsync-test');
+const TEST_CATALOG_DIR = path.join(os.tmpdir(), '.acm-test');
 
 describe('Catalog Module', () => {
   // Mock the home directory for testing
@@ -51,7 +51,7 @@ describe('Catalog Module', () => {
   describe('Path Resolution', () => {
     it('should return correct catalog directory', () => {
       const catalogDir = getCatalogDir();
-      assert.ok(catalogDir.includes('.acsync'));
+      assert.ok(catalogDir.includes('.acm'));
     });
 
     it('should return correct catalog file path', () => {
@@ -94,8 +94,8 @@ describe('Catalog Module', () => {
     });
 
     it('should seamlessly migrate old catalog.json to catalog.toml', async () => {
-      const oldPath = path.join(TEST_CATALOG_DIR, '.acsync', 'catalog.json');
-      const newPath = path.join(TEST_CATALOG_DIR, '.acsync', 'catalog.toml');
+      const oldPath = path.join(TEST_CATALOG_DIR, '.acm', 'catalog.json');
+      const newPath = path.join(TEST_CATALOG_DIR, '.acm', 'catalog.toml');
 
       // Clean up first
       await fs.rm(newPath, { force: true });
@@ -129,8 +129,8 @@ describe('Catalog Module', () => {
     });
 
     it('should seamlessly migrate old catalog.yaml to catalog.toml', async () => {
-      const oldPathYaml = path.join(TEST_CATALOG_DIR, '.acsync', 'catalog.yaml');
-      const newPath = path.join(TEST_CATALOG_DIR, '.acsync', 'catalog.toml');
+      const oldPathYaml = path.join(TEST_CATALOG_DIR, '.acm', 'catalog.yaml');
+      const newPath = path.join(TEST_CATALOG_DIR, '.acm', 'catalog.toml');
 
       // Clean up first
       await fs.rm(newPath, { force: true });
@@ -403,7 +403,7 @@ Do cool things.
       const targetSkillId = 'linked-target';
       const symlinkSkillId = 'linked-symlink';
       
-      const targetDir = path.join(os.tmpdir(), '.acsync-linked-target');
+      const targetDir = path.join(os.tmpdir(), '.acm-linked-target');
       const symlinkDir = path.join(getCatalogDir(), 'skills', symlinkSkillId);
       
       await fs.rm(targetDir, { recursive: true, force: true });

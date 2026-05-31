@@ -6,23 +6,23 @@ The current codebase is a small manifest renderer:
 - `src/render.ts` renders Claude and Codex MCP config
 - `src/cli.ts` exposes `init`, `render`, and `sync`
 
-That is coherent, but it is the wrong center of gravity for the intended product. The user does not want a nonstandard project file such as `agent-config-sync.yaml` in repositories. They want:
+That is coherent, but it is the wrong center of gravity for the intended product. The user does not want a nonstandard project file such as `agent-config-manager.yaml` in repositories. They want:
 
 - native agent config files inside the project to remain the project source of truth
 - a reusable local library of MCP definitions available from any directory
 - intuitive CLI workflows for viewing and mutating the current project's state
 - no dependency on online search or registry lookup for normal operation
 
-This change therefore reorients `acsync` from a manifest renderer into a **cross-agent config manager** with a user-level catalog and project-level native config editing.
+This change therefore reorients `acm` from a manifest renderer into a **cross-agent config manager** with a user-level catalog and project-level native config editing.
 
-**Key principle**: `acsync` directly edits native config files. There is no intermediate manifest and no "sync" operation.
+**Key principle**: `acm` directly edits native config files. There is no intermediate manifest and no "sync" operation.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
 - Use native project config files as the source of truth for project state.
-- Keep all `acsync`-specific persistent state outside the project, except generated files that are already native to supported agents.
+- Keep all `acm`-specific persistent state outside the project, except generated files that are already native to supported agents.
 - Support a reusable local catalog of MCP definitions that works offline. (Skills: Phase 2)
 - Provide a coherent CLI where command scope is obvious:
   - `catalog` for reusable library items
@@ -44,7 +44,7 @@ This change therefore reorients `acsync` from a manifest renderer into a **cross
 
 ### 1. Native project config files become the only project-level source of truth
 
-`acsync` will no longer require a project-local manifest. The current project's state is derived directly from agent-native files such as:
+`acm` will no longer require a project-local manifest. The current project's state is derived directly from agent-native files such as:
 
 - `.mcp.json` for Claude Code
 - `.codex/config.toml` for Codex
@@ -54,33 +54,33 @@ Why:
 
 - It avoids introducing a project file the user does not want.
 - The files users inspect and commit are the same files the agents consume.
-- Removing `acsync` later does not leave behind an orphaned project-specific configuration model.
+- Removing `acm` later does not leave behind an orphaned project-specific configuration model.
 
 Alternatives considered:
 
 - Keep the project manifest and hide it better: still adds an unnatural file and duplicates state.
 - Generate native files from a hidden project file: same duplication problem, less transparency.
 
-### 2. `acsync` keeps a user-level local catalog for reusable definitions
+### 2. `acm` keeps a user-level local catalog for reusable definitions
 
-Reusable MCP and skill definitions belong in an `acsync`-managed catalog outside projects. The catalog is stored in the user's home directory:
+Reusable MCP and skill definitions belong in an `acm`-managed catalog outside projects. The catalog is stored in the user's home directory:
 
-- **All platforms**: `~/.acsync/`
-  - macOS: `/Users/username/.acsync/`
-  - Linux: `/home/username/.acsync/`
-  - Windows: `C:\Users\username\.acsync\`
+- **All platforms**: `~/.acm/`
+  - macOS: `/Users/username/.acm/`
+  - Linux: `/home/username/.acm/`
+  - Windows: `C:\Users\username\.acm\`
 
 Why:
 
 - Short, memorable, and follows the same pattern as other CLI tools (`.npm`, `.yarn`, `.docker`, `.cargo`)
-- Keeps project repositories free of `acsync`-specific files
+- Keeps project repositories free of `acm`-specific files
 - The catalog remains available from any working directory
-- Makes it clear that this directory is owned by `acsync`
+- Makes it clear that this directory is owned by `acm`
 
 Alternatives considered:
 
-- `~/Library/Application Support/agent-config-sync/`: macOS-native but longer and less CLI-conventional
-- `~/.config/agent-config-sync/`: Linux XDG standard, but adds an extra directory level
+- `~/Library/Application Support/agent-config-manager/`: macOS-native but longer and less CLI-conventional
+- `~/.config/agent-config-manager/`: Linux XDG standard, but adds an extra directory level
 - Project-local catalog: violates the user's preference against nonstandard project files.
 
 ### 3. Catalog and workspace are separate scopes with different command surfaces
@@ -95,17 +95,17 @@ Where `<kind>` is initially `mcp` or `skill`.
 Why:
 
 - The same verbs otherwise become ambiguous.
-- Users explicitly want `acsync mcp` to mean "show this project's MCP state", not "show my global library".
+- Users explicitly want `acm mcp` to mean "show this project's MCP state", not "show my global library".
 - Scope-first naming keeps daily commands short while preserving precise catalog operations.
 
 Alternatives considered:
 
-- One flat action-first CLI like `acsync add mcp`: ambiguous between catalog and project.
+- One flat action-first CLI like `acm add mcp`: ambiguous between catalog and project.
 - Put catalog under `mcp catalog ...`: workable, but less consistent once multiple resource types exist.
 
 ### 4. Project discovery is root-based and works from nested directories
 
-`acsync` should discover the active workspace from any nested directory using this priority:
+`acm` should discover the active workspace from any nested directory using this priority:
 
 1. nearest ancestor that is a Git repository root
 2. if no Git root is present, nearest ancestor containing any supported native agent config path
@@ -113,7 +113,7 @@ Alternatives considered:
 
 Why:
 
-- The user explicitly wants commands such as `acsync mcp init` to work from any subdirectory.
+- The user explicitly wants commands such as `acm mcp init` to work from any subdirectory.
 - Git roots are the most common and predictable workspace boundary.
 
 Alternatives considered:
@@ -127,7 +127,7 @@ The normal MCP add flow will accept package identifiers such as `@modelcontextpr
 
 Why:
 
-- It removes unnecessary verbosity without requiring `acsync` to maintain a fragile short-name alias registry.
+- It removes unnecessary verbosity without requiring `acm` to maintain a fragile short-name alias registry.
 - It is close to how existing install tools already work.
 
 Alternatives considered:
@@ -137,7 +137,7 @@ Alternatives considered:
 
 ### 6. `mcp add` is allowed to auto-register into the local catalog
 
-For convenience, `acsync mcp add <package>` may create a catalog entry if the package is not already present, then attach it to the current project.
+For convenience, `acm mcp add <package>` may create a catalog entry if the package is not already present, then attach it to the current project.
 
 Why:
 
@@ -150,14 +150,14 @@ Alternatives considered:
 
 ### 7. (Phase 2) Skills are managed as generated native files with embedded provenance metadata
 
-Unlike MCP entries, skills are file assets. To avoid project-side sidecar state, `acsync` will manage generated skill files directly in native target directories and embed lightweight provenance metadata inside the generated file content, such as an HTML comment header in `SKILL.md`.
+Unlike MCP entries, skills are file assets. To avoid project-side sidecar state, `acm` will manage generated skill files directly in native target directories and embed lightweight provenance metadata inside the generated file content, such as an HTML comment header in `SKILL.md`.
 
 **This decision is deferred to Phase 2.** Skills will be implemented after MCP is stable.
 
 Why (for Phase 2):
 
 - It avoids adding a separate project metadata file.
-- It gives `acsync` enough information to identify managed skill files, update them, and show status.
+- It gives `acm` enough information to identify managed skill files, update them, and show status.
 
 Alternatives considered:
 
@@ -166,7 +166,7 @@ Alternatives considered:
 
 ### 8. Interactive and non-interactive commands share one mutation engine
 
-Commands like `acsync mcp init` will use prompts, but they must call the same core mutation logic as `add`, `remove`, `enable`, and `disable` with explicit flags.
+Commands like `acm mcp init` will use prompts, but they must call the same core mutation logic as `add`, `remove`, `enable`, and `disable` with explicit flags.
 
 Why:
 
@@ -215,12 +215,12 @@ Why:
 
 ### Usability
 - All commands must work from any subdirectory of a detected project
-- Error messages must suggest remediation (e.g., "Run `acsync mcp init` first")
+- Error messages must suggest remediation (e.g., "Run `acm mcp init` first")
 - Interactive prompts should support `--help` flag to show current options
 
 ## Open Questions — Resolved
 
-### Q1: Should `acsync mcp` default to a compact table view, a verbose grouped view, or support both with flags?
+### Q1: Should `acm mcp` default to a compact table view, a verbose grouped view, or support both with flags?
 
 **Answer:** Compact table view by default, with `--verbose` flag for detailed output.
 

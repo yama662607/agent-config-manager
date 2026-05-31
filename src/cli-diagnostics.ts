@@ -105,7 +105,7 @@ export interface DoctorOptions {
  * Run diagnostics and health checks.
  */
 export async function doctor(options: DoctorOptions): Promise<{ hasErrors: boolean; hasWarnings: boolean }> {
-  console.log('acsync Diagnostics\n');
+  console.log('acm Diagnostics\n');
   console.log('='.repeat(50));
 
   let hasErrors = false;
@@ -176,7 +176,7 @@ export async function doctor(options: DoctorOptions): Promise<{ hasErrors: boole
         const size = (await fs.stat(configPath.path)).size;
         console.log(`  ✓ ${target}: config exists (${size} bytes)`);
       } else {
-        console.log(`  ⚠ ${target}: config not found (run \`acsync mcp init\`)`);
+        console.log(`  ⚠ ${target}: config not found (run \`acm mcp init\`)`);
         hasWarnings = true;
       }
     }
@@ -194,7 +194,7 @@ export async function doctor(options: DoctorOptions): Promise<{ hasErrors: boole
     console.error('\nDiagnostics failed with warnings (strict mode).');
     process.exitCode = 1;
   } else {
-    console.log('\nFor more help, run `acsync --help` or visit the documentation.\n');
+    console.log('\nFor more help, run `acm --help` or visit the documentation.\n');
   }
 
   return { hasErrors, hasWarnings };

@@ -18,7 +18,7 @@ const PROJECT_ROOT = path.resolve(__dirname, '../..');
 const CLI_PATH = path.join(PROJECT_ROOT, 'dist', 'cli.js');
 
 // Test project directory
-const TEST_PROJECT_DIR = path.join(os.tmpdir(), 'acsync-test-project');
+const TEST_PROJECT_DIR = path.join(os.tmpdir(), 'acm-test-project');
 
 describe('MCP CLI Integration Tests', () => {
   let originalHome: string | undefined;
@@ -84,7 +84,7 @@ describe('MCP CLI Integration Tests', () => {
       await fs.mkdir(nestedDir, { recursive: true });
       process.chdir(nestedDir);
 
-      // Run acsync from nested directory using absolute path to CLI
+      // Run acm from nested directory using absolute path to CLI
       const { stdout } = await execAsync(`node "${CLI_PATH}" mcp status`, {
         cwd: nestedDir,
       });

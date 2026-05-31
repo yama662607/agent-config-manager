@@ -14,7 +14,7 @@ import type {
   CatalogFile,
   ClaudeMcpConfig,
   CodexConfig,
-  GeminiSettings,
+  AntigravitySettings,
   McpServerStatus,
   McpWorkspaceStatus,
   ConfigReadResult,
@@ -24,11 +24,11 @@ describe('Type Definitions', () => {
   it('should have valid TargetName types', () => {
     const claude: TargetName = 'claude';
     const codex: TargetName = 'codex';
-    const gemini: TargetName = 'gemini';
+    const antigravity: TargetName = 'antigravity';
 
     assert.strictEqual(claude, 'claude');
     assert.strictEqual(codex, 'codex');
-    assert.strictEqual(gemini, 'gemini');
+    assert.strictEqual(antigravity, 'antigravity');
   });
 
   it('should have valid TransportType types', () => {
@@ -56,6 +56,42 @@ describe('Type Definitions', () => {
 
     assert.strictEqual(stdioRecipe.command, 'npx');
     assert.strictEqual(httpRecipe.url, 'https://example.com/mcp');
+  });
+
+  it('should accept target configs with env maps', () => {
+    const claudeConfig: ClaudeMcpConfig = {
+      mcpServers: {
+        obsidian: {
+          command: 'npx',
+          args: ['-y', '@yama662607/obsidian-companion-mcp'],
+          env: { OBSIDIAN_VAULT_PATH: '/vault/main' },
+        },
+      },
+    };
+
+    const codexConfig: CodexConfig = {
+      mcp_servers: {
+        obsidian_companion: {
+          command: 'npx',
+          args: ['-y', '@yama662607/obsidian-companion-mcp'],
+          env: { OBSIDIAN_VAULT_PATH: '/vault/main' },
+        },
+      },
+    };
+
+    const antigravityConfig: AntigravitySettings = {
+      mcpServers: {
+        obsidian: {
+          command: 'npx',
+          args: ['-y', '@yama662607/obsidian-companion-mcp'],
+          env: { OBSIDIAN_VAULT_PATH: '/vault/main' },
+        },
+      },
+    };
+
+    assert.strictEqual(claudeConfig.mcpServers.obsidian.env?.OBSIDIAN_VAULT_PATH, '/vault/main');
+    assert.strictEqual(codexConfig.mcp_servers?.obsidian_companion.env?.OBSIDIAN_VAULT_PATH, '/vault/main');
+    assert.strictEqual(antigravityConfig.mcpServers?.obsidian.env?.OBSIDIAN_VAULT_PATH, '/vault/main');
   });
 
   it('should accept valid McpCatalogEntry structures', () => {

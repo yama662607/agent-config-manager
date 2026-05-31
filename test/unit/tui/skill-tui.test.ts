@@ -101,12 +101,13 @@ describe('SkillTuiScreen', () => {
       assert.ok(path.includes('config.toml'));
     });
 
-    it('should return correct path for Gemini target', () => {
+    it('should return correct path for Antigravity target', () => {
       const screen = new SkillTuiScreen() as any;
-      const path = screen.getDefaultConfigPath('gemini', '/project/root');
+      const path = screen.getDefaultConfigPath('antigravity', '/project/root');
 
       assert.ok(path.includes('.gemini'));
-      assert.ok(path.includes('settings.json'));
+      assert.ok(path.includes('antigravity'));
+      assert.ok(path.includes('mcp_config.json'));
     });
   });
 
@@ -200,11 +201,11 @@ describe('SkillTuiScreen', () => {
       console.log('Select target:');
       console.log('  claude (current)');
       console.log('  codex');
-      console.log('  gemini');
+      console.log('  antigravity');
       capture.stop();
 
       assertTuiRendering(capture, {
-        items: ['Select target', 'claude', 'codex', 'gemini'],
+        items: ['Select target', 'claude', 'codex', 'antigravity'],
       });
     });
   });

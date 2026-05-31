@@ -262,11 +262,11 @@ describe('TUI Test Helper - Mock State Creation', () => {
     it('should override specific properties', () => {
       const state = createMockTuiState({
         currentScreen: 'skill',
-        target: 'gemini',
+        target: 'antigravity',
       });
 
       assert.strictEqual(state.currentScreen, 'skill');
-      assert.strictEqual(state.target, 'gemini');
+      assert.strictEqual(state.target, 'antigravity');
       assert.strictEqual(state.selectedItem, null); // Default
     });
 
@@ -293,7 +293,7 @@ describe('TUI Test Helper - Mock State Creation', () => {
 
       assert.ok(status.claude);
       assert.ok(status.codex);
-      assert.ok(status.gemini);
+      assert.ok(status.antigravity);
       assert.strictEqual(Object.keys(status.claude).length, 0);
     });
 
@@ -307,13 +307,13 @@ describe('TUI Test Helper - Mock State Creation', () => {
       assert.strictEqual(status.claude['server2'].enabled, false);
     });
 
-    it('should not populate codex and gemini by default', () => {
+    it('should not populate codex and antigravity by default', () => {
       const status = createMockMcpStatus({
         'test': true,
       });
 
       assert.strictEqual(Object.keys(status.codex).length, 0);
-      assert.strictEqual(Object.keys(status.gemini).length, 0);
+      assert.strictEqual(Object.keys(status.antigravity).length, 0);
     });
   });
 
@@ -331,10 +331,10 @@ describe('TUI Test Helper - Mock State Creation', () => {
 
     it('should preserve target information', () => {
       const skills = createMockSkills([
-        { name: 'test', targets: ['claude', 'codex', 'gemini'] },
+        { name: 'test', targets: ['claude', 'codex', 'antigravity'] },
       ]);
 
-      assert.deepStrictEqual(skills[0].targets, ['claude', 'codex', 'gemini']);
+      assert.deepStrictEqual(skills[0].targets, ['claude', 'codex', 'antigravity']);
     });
   });
 });

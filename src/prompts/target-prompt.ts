@@ -40,10 +40,10 @@ export async function promptTargets(preselected: TargetName[] = []): Promise<Tar
         enabled: preselected.includes('codex') || allSelected
       },
       {
-        name: 'gemini',
-        message: 'Gemini CLI',
-        hint: '.gemini/settings.json',
-        enabled: preselected.includes('gemini') || allSelected
+        name: 'antigravity',
+        message: 'Antigravity CLI',
+        hint: '.gemini/antigravity/mcp_config.json',
+        enabled: preselected.includes('antigravity') || allSelected
       }
     ],
     validate: (value: TargetName[]) => value.length > 0 || 'Please select at least one target'

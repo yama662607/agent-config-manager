@@ -1,4 +1,4 @@
-import type { McpWorkspaceStatus, TargetName } from './types.js';
+import type { McpRecipe, McpWorkspaceStatus, TargetName } from './types.js';
 import { discoverProject } from './project-discovery.js';
 import { getMcpServers } from './config-adapters.js';
 import { padRightWide, truncateWide, getStringWidth } from './table-utils.js';
@@ -10,15 +10,15 @@ import { padRightWide, truncateWide, getStringWidth } from './table-utils.js';
 /**
  * Show MCP status for the current project.
  */
-export async function mcpStatus(verbose: boolean = false): Promise<void> {
-  const discovery = await discoverProject();
-  const status = await buildMcpStatus(discovery.root);
+export async function mcpStatus(verbose: boolean = false, allowHome: boolean = false): Promise<void> {
+  const discovery = await discoverProject(process.cwd(), { allowHome });
+  const status = await buildMcpStatus(discovery.root, allowHome);
 
   printMcpStatus(status, verbose);
 }
 
-async function buildMcpStatus(projectRoot: string): Promise<McpWorkspaceStatus> {
-  const { targets } = await discoverProject();
+async function buildMcpStatus(projectRoot: string, allowHome: boolean = false): Promise<McpWorkspaceStatus> {
+  const { targets } = await discoverProject(process.cwd(), { allowHome });
 
   const serverMap = new Map<string, { name: string; enabled: boolean; targets: TargetName[]; source: 'catalog' | 'inline' }>();
 
@@ -122,39 +122,73 @@ export interface McpAddOptions {
   packageId: string;
   targets: TargetName[];
   noRegister: boolean;
+  recipe?: McpRecipe;
+  allowHome?: boolean;
 }
 
 /**
  * Add an MCP server to the current project.
  */
 export async function mcpAdd(options: McpAddOptions): Promise<void> {
-  const { normalizeMcpPackage, getMcp } = await import('./catalog.js');
+  const { normalizeMcpPackage, getMcp, addMcp } = await import('./catalog.js');
 
-  // Check if entry exists in catalog first
-  let entry = await getMcp(options.packageId);
+  const customRecipe = normalizeRecipe(options.recipe);
+  let entry = customRecipe
+    ? normalizeMcpPackage(options.packageId, { recipe: customRecipe })
+    : await getMcp(options.packageId);
 
-  // If not in catalog, normalize and optionally add
   if (!entry) {
     entry = normalizeMcpPackage(options.packageId);
+  }
 
-    // Add to catalog if --no-register is false
-    if (!options.noRegister) {
-      const { addMcp } = await import('./catalog.js');
-      await addMcp(entry);
-      console.log(`Added to catalog: ${entry.id}`);
-    }
+  if (!options.noRegister && (customRecipe || !(await getMcp(options.packageId)))) {
+    await addMcp(entry);
+    console.log(`Added to catalog: ${entry.id}`);
   }
 
   // Add to each target
-  const discovery = await discoverProject();
+  const discovery = await discoverProject(process.cwd(), { allowHome: options.allowHome });
   const { addMcpToConfig } = await import('./config-adapters.js');
 
   for (const target of options.targets) {
     const configPath = discovery.targets.get(target);
     if (!configPath) continue;
 
-    await addMcpToConfig(target, configPath.path, entry.id, entry.recipe);
-    console.log(`Added to ${target}: ${entry.id}`);
+    const actualServerName = await addMcpToConfig(target, configPath.path, entry.id, entry.recipe);
+    const suffix = target === 'codex' && actualServerName !== entry.id
+      ? ` (key: ${actualServerName})`
+      : '';
+    console.log(`Added to ${target}: ${entry.id}${suffix}`);
+  }
+
+  console.log('\nRun `acsync mcp` to see the updated status.');
+}
+
+export interface McpEditOptions {
+  serverName: string;
+  targets: TargetName[];
+  recipe: McpRecipe;
+  allowHome?: boolean;
+}
+
+export async function mcpEdit(options: McpEditOptions): Promise<void> {
+  const recipe = normalizeRecipe(options.recipe);
+  if (!recipe) {
+    throw new Error('At least one MCP configuration field must be provided for edit');
+  }
+
+  const discovery = await discoverProject(process.cwd(), { allowHome: options.allowHome });
+  const { updateMcpInConfig } = await import('./config-adapters.js');
+
+  for (const target of options.targets) {
+    const configPath = discovery.targets.get(target);
+    if (!configPath) continue;
+
+    const actualServerName = await updateMcpInConfig(target, configPath.path, options.serverName, recipe);
+    const suffix = target === 'codex' && actualServerName !== options.serverName
+      ? ` (key: ${actualServerName})`
+      : '';
+    console.log(`Updated in ${target}: ${options.serverName}${suffix}`);
   }
 
   console.log('\nRun `acsync mcp` to see the updated status.');
@@ -167,13 +201,14 @@ export async function mcpAdd(options: McpAddOptions): Promise<void> {
 export interface McpRemoveOptions {
   serverName: string;
   targets: TargetName[];
+  allowHome?: boolean;
 }
 
 /**
  * Remove an MCP server from the current project.
  */
 export async function mcpRemove(options: McpRemoveOptions): Promise<void> {
-  const discovery = await discoverProject();
+  const discovery = await discoverProject(process.cwd(), { allowHome: options.allowHome });
   const { removeMcpFromConfig } = await import('./config-adapters.js');
 
   for (const target of options.targets) {
@@ -194,13 +229,14 @@ export async function mcpRemove(options: McpRemoveOptions): Promise<void> {
 export interface McpEnableOptions {
   serverName: string;
   targets: TargetName[];
+  allowHome?: boolean;
 }
 
 /**
  * Enable an MCP server in the current project.
  */
 export async function mcpEnable(options: McpEnableOptions): Promise<void> {
-  const discovery = await discoverProject();
+  const discovery = await discoverProject(process.cwd(), { allowHome: options.allowHome });
   const { enableMcpInConfig } = await import('./config-adapters.js');
 
   for (const target of options.targets) {
@@ -221,13 +257,14 @@ export async function mcpEnable(options: McpEnableOptions): Promise<void> {
 export interface McpDisableOptions {
   serverName: string;
   targets: TargetName[];
+  allowHome?: boolean;
 }
 
 /**
  * Disable an MCP server in the current project.
  */
 export async function mcpDisable(options: McpDisableOptions): Promise<void> {
-  const discovery = await discoverProject();
+  const discovery = await discoverProject(process.cwd(), { allowHome: options.allowHome });
   const { disableMcpInConfig } = await import('./config-adapters.js');
 
   for (const target of options.targets) {
@@ -239,4 +276,18 @@ export async function mcpDisable(options: McpDisableOptions): Promise<void> {
   }
 
   console.log('\nRun `acsync mcp` to see the updated status.');
+}
+
+function normalizeRecipe(recipe?: McpRecipe): McpRecipe | undefined {
+  if (!recipe) return undefined;
+
+  const normalized: McpRecipe = {};
+  if (recipe.transport) normalized.transport = recipe.transport;
+  if (recipe.command) normalized.command = recipe.command;
+  if (recipe.args) normalized.args = recipe.args;
+  if (recipe.url) normalized.url = recipe.url;
+  if (recipe.cwd) normalized.cwd = recipe.cwd;
+  if (recipe.env && Object.keys(recipe.env).length > 0) normalized.env = recipe.env;
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
 }

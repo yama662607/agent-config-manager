@@ -4,28 +4,24 @@
  * Interactive catalog browser with list view, details, and actions.
  */
 
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-
-// @ts-ignore - enquirer uses CommonJS exports
-const { Select } = require('enquirer');
 import type { TuiState, ScreenAction } from './tui-base.js';
+import { TuiBaseScreen } from './tui-base.js';
 import { listMcps, listSkills } from '../catalog.js';
 import type { McpCatalogEntry, SkillCatalogEntry } from '../types.js';
 
 type CatalogTab = 'mcp' | 'skill' | 'registry';
-type CatalogAction = 'view' | 'add-to-project' | 'delete' | 'import' | 'install' | 'back' | 'exit';
+type CatalogAction = 'view' | 'add' | 'delete' | 'import' | 'install' | 'back' | 'exit';
 
 /**
  * Catalog TUI Screen
  */
-export class CatalogTuiScreen {
+export class CatalogTuiScreen extends TuiBaseScreen {
   name = 'catalog' as const;
 
   async render(state: TuiState): Promise<TuiState | null> {
     // Outer loop: tab selection
     while (true) {
-      // Let user select tab (screen cleared/redrawn inside)
+      // Let user select tab
       const tab = await this.selectTab();
       if (!tab) return null; // Exit
 
@@ -34,51 +30,30 @@ export class CatalogTuiScreen {
         const action = await this.renderTab(tab, state);
         if (action === 'exit') return null;
         if (action === 'back') break; // Break inner loop, go back to tab selection
-        // For other actions, continue the inner loop (show the tab again)
       }
-      // When inner loop breaks, we go back to tab selection (outer loop continues)
     }
   }
 
-  private renderHeader(): void {
-    console.log('╔═══════════════════════════════════════════════════════════════════╗');
-    console.log('║  📚 Catalog Browser                                                 ║');
-    console.log('╚═══════════════════════════════════════════════════════════════════╝');
+  private renderCatalogHeader(): void {
+    this.renderHeader('Catalog Browser', '📚');
     console.log();
   }
 
   private async selectTab(): Promise<CatalogTab | null> {
-    console.clear();
-    this.renderHeader();
+    this.clear();
+    this.renderCatalogHeader();
 
-    const prompt = new Select({
-      name: 'tab',
-      message: 'Select catalog section:',
-      choices: [
-        { name: 'mcp', message: '📦 MCP Servers' },
-        { name: 'skill', message: '📚 Skills' },
-        { name: 'registry', message: '🔍 Skill Registry' },
-        { name: 'exit', message: '🚪 Exit' },
-      ],
-      actions: {
-        ctrl: { n: 'down', p: 'up' }
-      }
-    });
+    const choices = [
+      { name: 'mcp', message: '📦 MCP Servers' },
+      { name: 'skill', message: '📚 Skills' },
+      { name: 'registry', message: '🔍 Skill Registry' },
+      { name: 'exit', message: '🚪 Exit' },
+    ];
 
-    try {
-      const result = await prompt.run();
-      if (result === 'exit') return null;
-      return result as CatalogTab;
-    } catch {
-      return null;
-    }
+    return await this.select<CatalogTab>('Select catalog section:', choices);
   }
 
   private async renderTab(tab: CatalogTab, state: TuiState): Promise<CatalogAction> {
-    console.clear();
-    this.renderHeader();
-    console.log(`\n─── ${tab.toUpperCase()} CATALOG ───\n`);
-
     switch (tab) {
       case 'mcp':
         return await this.renderMcpCatalog(state);
@@ -90,108 +65,99 @@ export class CatalogTuiScreen {
   }
 
   private async renderMcpCatalog(state: TuiState): Promise<CatalogAction> {
-    const mcps = await listMcps();
+    while (true) {
+      this.clear();
+      this.renderCatalogHeader();
+      console.log(`\n─── MCP CATALOG ───\n`);
 
-    if (mcps.length === 0) {
-      console.log('No MCP entries in catalog.');
-      console.log('\nTip: Use "acsync catalog mcp add <package>" to add entries.');
-      await this.pressEnter();
-      return 'back';
-    }
+      const mcps = await listMcps();
 
-    // Create choices with actions
-    const choices = mcps.map(mcp => ({
-      name: mcp.id,
-      message: `📦 ${mcp.displayName || mcp.id}`,
-      value: mcp.id,
-      hint: mcp.description?.slice(0, 40)
-    }));
+      if (mcps.length === 0) {
+        console.log('No MCP entries in catalog.');
+        console.log('\nTip: Use "acsync catalog mcp add <package>" to add entries.');
+        await this.pressEnter();
+        return 'back';
+      }
 
-    choices.push(
-      { name: 'add', message: '➕ Add new MCP to catalog', value: '__add__', hint: '' },
-      { name: 'back', message: '← Back to tabs', value: '__back__', hint: '' },
-      { name: 'exit', message: '🚪 Exit', value: '__exit__', hint: '' }
-    );
+      // Create choices with actions
+      const choices = mcps.map(mcp => ({
+        name: mcp.id,
+        message: `📦 ${mcp.displayName || mcp.id}`,
+        value: mcp.id,
+        hint: mcp.description?.slice(0, 40)
+      }));
 
-    const prompt = new Select({
-      name: 'mcp',
-      message: 'Select MCP (or action):',
-      choices,
-      actions: {
-        ctrl: { n: 'down', p: 'up' }
-      },
-      footer: 'Use ↑↓ to navigate, Enter to select'
-    });
+      choices.push(
+        { name: 'add', message: '➕ Add new MCP to catalog', value: '__add__', hint: '' },
+        { name: 'back', message: '← Back to tabs', value: '__back__', hint: '' },
+        { name: 'exit', message: '🚪 Exit', value: '__exit__', hint: '' }
+      );
 
-    try {
-      const selected = await prompt.run();
+      const selected = await this.select('Select MCP (or action):', choices);
 
-      if (selected === '__exit__') return 'exit';
+      if (!selected || selected === '__exit__') return 'exit';
       if (selected === '__back__') return 'back';
       if (selected === '__add__') {
         await this.addMcpToCatalog();
-        return 'back'; // Return to refresh
+        continue; // Refresh list
       }
 
       // Show MCP details and actions
-      return await this.showMcpDetails(selected, mcps.find(m => m.id === selected)!, state);
-    } catch {
-      return 'exit';
+      const action = await this.showMcpDetails(selected, mcps.find(m => m.id === selected)!, state);
+      if (action === 'exit') return 'exit';
+      // If action is 'back', the loop continues and shows the list again
     }
   }
 
   private async renderSkillCatalog(state: TuiState): Promise<CatalogAction> {
-    const skills = await listSkills();
+    while (true) {
+      this.clear();
+      this.renderCatalogHeader();
+      console.log(`\n─── SKILL CATALOG ───\n`);
 
-    if (skills.length === 0) {
-      console.log('No skill entries in catalog.');
-      console.log('\nTip: Use "acsync catalog skill import <path>" to add skills.');
-      await this.pressEnter();
-      return 'back';
-    }
+      const skills = await listSkills();
 
-    const choices = skills.map(skill => ({
-      name: skill.id,
-      message: `📚 ${skill.displayName || skill.id}`,
-      value: skill.id,
-      hint: skill.description?.slice(0, 40)
-    }));
-
-    choices.push(
-      { name: 'import', message: '📥 Import local skill', value: '__import__', hint: '' },
-      { name: 'back', message: '← Back to tabs', value: '__back__', hint: '' },
-      { name: 'exit', message: '🚪 Exit', value: '__exit__', hint: '' }
-    );
-
-    const prompt = new Select({
-      name: 'skill',
-      message: 'Select skill (or action):',
-      choices,
-      actions: {
-        ctrl: { n: 'down', p: 'up' }
-      }
-    });
-
-    try {
-      const selected = await prompt.run();
-
-      if (selected === '__exit__') return 'exit';
-      if (selected === '__back__') return 'back';
-      if (selected === '__import__') {
-        await this.importSkill();
+      if (skills.length === 0) {
+        console.log('No skill entries in catalog.');
+        console.log('\nTip: Use "acsync catalog skill import <path>" to add skills.');
+        await this.pressEnter();
         return 'back';
       }
 
+      const choices = skills.map(skill => ({
+        name: skill.id,
+        message: `📚 ${skill.displayName || skill.id}`,
+        value: skill.id,
+        hint: skill.description?.slice(0, 40)
+      }));
+
+      choices.push(
+        { name: 'import', message: '📥 Import local skill', value: '__import__', hint: '' },
+        { name: 'back', message: '← Back to tabs', value: '__back__', hint: '' },
+        { name: 'exit', message: '🚪 Exit', value: '__exit__', hint: '' }
+      );
+
+      const selected = await this.select('Select skill (or action):', choices);
+
+      if (!selected || selected === '__exit__') return 'exit';
+      if (selected === '__back__') return 'back';
+      if (selected === '__import__') {
+        await this.importSkill();
+        continue;
+      }
+
       // Show skill details and actions
-      return await this.showSkillDetails(selected, skills.find(s => s.id === selected)!, state);
-    } catch {
-      return 'exit';
+      const action = await this.showSkillDetails(selected, skills.find(s => s.id === selected)!, state);
+      if (action === 'exit') return 'exit';
     }
   }
 
   private async renderRegistry(state: TuiState): Promise<CatalogAction> {
-    const { prompt } = await import('enquirer');
+    const { prompt } = require('enquirer');
 
+    this.clear();
+    this.renderCatalogHeader();
+    console.log(`\n─── REGISTRY ───\n`);
     console.log('Search skills.directory registry...\n');
 
     try {
@@ -215,8 +181,8 @@ export class CatalogTuiScreen {
   }
 
   private async showMcpDetails(id: string, mcp: McpCatalogEntry, state: TuiState): Promise<CatalogAction> {
-    console.clear();
-    this.renderHeader();
+    this.clear();
+    this.renderCatalogHeader();
     console.log(`\n📦 ${mcp.displayName || id}`);
     console.log('─'.repeat(60));
     console.log(`ID: ${mcp.id}`);
@@ -236,40 +202,29 @@ export class CatalogTuiScreen {
 
     console.log('\n' + '─'.repeat(60));
 
-    const prompt = new Select({
-      name: 'action',
-      message: 'What would you like to do?',
-      choices: [
-        { name: 'add', message: '➕ Add to project' },
-        { name: 'delete', message: '🗑️  Delete from catalog' },
-        { name: 'back', message: '← Back to list' },
-        { name: 'exit', message: '🚪 Exit' },
-      ],
-      actions: {
-        ctrl: { n: 'down', p: 'up' }
-      }
-    });
+    const choices = [
+      { name: 'add', message: '➕ Add to project' },
+      { name: 'delete', message: '🗑️  Delete from catalog' },
+      { name: 'back', message: '← Back to list' },
+      { name: 'exit', message: '🚪 Exit' },
+    ];
 
-    try {
-      const action = await prompt.run();
+    const action = await this.select<CatalogAction>('What would you like to do?', choices);
 
-      if (action === 'exit') return 'exit';
-      if (action === 'back') return 'back';
-      if (action === 'add') {
-        await this.addMcpToProject(mcp, state);
-      }
-      if (action === 'delete') {
-        await this.deleteMcpFromCatalog(id);
-      }
-      return 'back'; // Return to list
-    } catch {
-      return 'exit';
+    if (!action || action === 'exit') return 'exit';
+    if (action === 'back') return 'back';
+    if (action === 'add') {
+      await this.addMcpToProject(mcp, state);
     }
+    if (action === 'delete') {
+      await this.deleteMcpFromCatalog(id);
+    }
+    return 'back'; // Return to list
   }
 
   private async showSkillDetails(id: string, skill: SkillCatalogEntry, state: TuiState): Promise<CatalogAction> {
-    console.clear();
-    this.renderHeader();
+    this.clear();
+    this.renderCatalogHeader();
     console.log(`\n📚 ${skill.displayName || id}`);
     console.log('─'.repeat(60));
     console.log(`ID: ${skill.id}`);
@@ -277,35 +232,24 @@ export class CatalogTuiScreen {
 
     console.log('\n' + '─'.repeat(60));
 
-    const prompt = new Select({
-      name: 'action',
-      message: 'What would you like to do?',
-      choices: [
-        { name: 'add', message: '➕ Add to project' },
-        { name: 'delete', message: '🗑️  Delete from catalog' },
-        { name: 'back', message: '← Back to list' },
-        { name: 'exit', message: '🚪 Exit' },
-      ],
-      actions: {
-        ctrl: { n: 'down', p: 'up' }
-      }
-    });
+    const choices = [
+      { name: 'add', message: '➕ Add to project' },
+      { name: 'delete', message: '🗑️  Delete from catalog' },
+      { name: 'back', message: '← Back to list' },
+      { name: 'exit', message: '🚪 Exit' },
+    ];
 
-    try {
-      const action = await prompt.run();
+    const action = await this.select<CatalogAction>('What would you like to do?', choices);
 
-      if (action === 'exit') return 'exit';
-      if (action === 'back') return 'back';
-      if (action === 'add') {
-        await this.addSkillToProject(skill, state);
-      }
-      if (action === 'delete') {
-        await this.deleteSkillFromCatalog(id);
-      }
-      return 'back';
-    } catch {
-      return 'exit';
+    if (!action || action === 'exit') return 'exit';
+    if (action === 'back') return 'back';
+    if (action === 'add') {
+      await this.addSkillToProject(skill, state);
     }
+    if (action === 'delete') {
+      await this.deleteSkillFromCatalog(id);
+    }
+    return 'back';
   }
 
   private async addMcpToCatalog(): Promise<void> {
@@ -405,12 +349,15 @@ export class CatalogTuiScreen {
         initial: false
       }) as { confirmed: boolean };
 
-      if (!confirm) return;
+      if (!confirm || !confirm.confirmed) return;
 
       const { catalogMcpRemove } = await import('../cli-catalog.js');
       await catalogMcpRemove(id);
       console.log('\n✅ Deleted from catalog!');
     } catch (error: any) {
+      if (error instanceof Error && error.message.includes('User force closed')) {
+        throw error;
+      }
       console.error(`\n❌ Error: ${error.message}`);
     }
 
@@ -428,26 +375,18 @@ export class CatalogTuiScreen {
         initial: false
       }) as { confirmed: boolean };
 
-      if (!confirm) return;
+      if (!confirm || !confirm.confirmed) return;
 
       const { catalogSkillRemove } = await import('../cli-catalog.js');
       await catalogSkillRemove(id);
       console.log('\n✅ Deleted from catalog!');
     } catch (error: any) {
+      if (error instanceof Error && error.message.includes('User force closed')) {
+        throw error;
+      }
       console.error(`\n❌ Error: ${error.message}`);
     }
 
     await this.pressEnter();
-  }
-
-  private pressEnter(): Promise<void> {
-    return new Promise(resolve => {
-      process.stdin.once('data', () => resolve());
-    });
-  }
-
-  handleAction(state: TuiState, action: ScreenAction): Promise<TuiState> {
-    // Implement action handling
-    return Promise.resolve(state);
   }
 }

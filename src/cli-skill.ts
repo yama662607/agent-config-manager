@@ -21,15 +21,15 @@ function sanitizeSkillId(skillId: string): string {
 /**
  * Show skill status for the current project.
  */
-export async function skillStatus(verbose: boolean = false): Promise<void> {
-  const discovery = await discoverProject();
-  const status = await buildSkillStatus(discovery.root);
+export async function skillStatus(verbose: boolean = false, allowHome: boolean = false): Promise<void> {
+  const discovery = await discoverProject(process.cwd(), { allowHome });
+  const status = await buildSkillStatus(discovery.root, allowHome);
 
   printSkillStatus(status, verbose);
 }
 
-async function buildSkillStatus(projectRoot: string): Promise<SkillWorkspaceStatus> {
-  const { targets } = await discoverProject();
+async function buildSkillStatus(projectRoot: string, allowHome: boolean = false): Promise<SkillWorkspaceStatus> {
+  const { targets } = await discoverProject(process.cwd(), { allowHome });
 
   const skillMap = new Map<string, { name: string; enabled: boolean; targets: TargetName[]; source: 'catalog' | 'inline' }>();
 
@@ -133,6 +133,7 @@ export interface SkillAddOptions {
   skillId: string;
   targets: TargetName[];
   noRegister: boolean;
+  allowHome?: boolean;
 }
 
 /**
@@ -186,7 +187,7 @@ Skill content for ${sanitizedId}.
   }
 
   // Add to each target
-  const discovery = await discoverProject();
+  const discovery = await discoverProject(process.cwd(), { allowHome: options.allowHome });
   const { addSkillToConfig } = await import('./skill-adapters.js');
 
   for (const target of options.targets) {
@@ -206,6 +207,7 @@ export interface SkillInstallFromGitHubOptions {
   skillName?: string;
   targets: TargetName[];
   addToCatalog?: boolean;
+  allowHome?: boolean;
 }
 
 /**
@@ -249,7 +251,7 @@ export async function skillInstallFromGitHub(options: SkillInstallFromGitHubOpti
   }
 
   // Add to project
-  const discovery = await discoverProject();
+  const discovery = await discoverProject(process.cwd(), { allowHome: options.allowHome });
   const { addSkillToConfig } = await import('./skill-adapters.js');
 
   for (const target of options.targets) {
@@ -267,6 +269,7 @@ export async function skillInstallFromGitHub(options: SkillInstallFromGitHubOpti
 export interface SkillRemoveOptions {
   skillName: string;
   targets: TargetName[];
+  allowHome?: boolean;
 }
 
 /**
@@ -282,7 +285,7 @@ export async function skillRemove(options: SkillRemoveOptions): Promise<void> {
     return;
   }
 
-  const discovery = await discoverProject();
+  const discovery = await discoverProject(process.cwd(), { allowHome: options.allowHome });
   const { removeSkillFromConfig } = await import('./skill-adapters.js');
 
   for (const target of options.targets) {
@@ -318,6 +321,7 @@ export async function skillEnable(options: SkillEnableOptions): Promise<void> {
 export interface SkillDisableOptions {
   skillName: string;
   targets: TargetName[];
+  allowHome?: boolean;
 }
 
 /**

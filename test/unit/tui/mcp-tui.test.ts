@@ -64,7 +64,7 @@ describe('McpTuiScreen', () => {
       const emptyStatus = {
         claude: {},
         codex: {},
-        gemini: {},
+        antigravity: {},
       };
 
       capture.start();
@@ -131,7 +131,7 @@ describe('McpTuiScreen', () => {
       capture.stop();
 
       assertTuiRendering(capture, {
-        items: ['Legend', 'C=Claude', 'C=Codex', 'G=Gemini', '✅=Enabled', '❌=Disabled'],
+        items: ['Legend', 'C=Claude', 'C=Codex', 'A=Antigravity', '✅=Enabled', '❌=Disabled'],
       });
     });
 
@@ -142,7 +142,7 @@ describe('McpTuiScreen', () => {
       const status: Record<string, Record<string, { enabled: boolean }>> = {
         claude: { 'server1': { enabled: true } },
         codex: { 'server1': { enabled: true }, 'server2': { enabled: false } },
-        gemini: { 'server1': { enabled: false } },
+        antigravity: { 'server1': { enabled: false } },
       };
 
       capture.start();
@@ -172,12 +172,13 @@ describe('McpTuiScreen', () => {
       assert.ok(path.includes('config.toml'));
     });
 
-    it('should return correct path for Gemini target', () => {
+    it('should return correct path for Antigravity target', () => {
       const screen = new McpTuiScreen() as any;
-      const path = screen.getDefaultConfigPath('gemini', '/project/root');
+      const path = screen.getDefaultConfigPath('antigravity', '/project/root');
 
       assert.ok(path.includes('.gemini'));
-      assert.ok(path.includes('settings.json'));
+      assert.ok(path.includes('antigravity'));
+      assert.ok(path.includes('mcp_config.json'));
     });
   });
 
@@ -188,6 +189,33 @@ describe('McpTuiScreen', () => {
 
       const result = await screen.handleAction(state, { type: 'test' });
       assert.strictEqual(result, state);
+    });
+  });
+
+  describe('Env Helpers', () => {
+    it('should render env details in recipe summary', () => {
+      const screen = new McpTuiScreen() as any;
+      const capture = new ConsoleCapture();
+
+      capture.start();
+      screen.renderRecipeSummary({
+        command: 'npx',
+        args: ['-y', '@yama662607/obsidian-companion-mcp'],
+        env: { OBSIDIAN_VAULT_PATH: '/vault/main' },
+      });
+      capture.stop();
+
+      assert.ok(capture.contains('Env: OBSIDIAN_VAULT_PATH=/vault/main'));
+    });
+
+    it('should build env prompt initial value', () => {
+      const screen = new McpTuiScreen() as any;
+      const value = screen.envPromptInitialValue({
+        B: '2',
+        A: '1',
+      });
+
+      assert.strictEqual(value, 'A=1, B=2');
     });
   });
 });
@@ -271,12 +299,12 @@ describe('TUI Helper Functions', () => {
     it('should create mock TUI state with overrides', () => {
       const state = createMockTuiState({
         currentScreen: 'skill',
-        target: 'gemini',
+        target: 'antigravity',
         selectedItem: 'test-item',
       });
 
       assert.strictEqual(state.currentScreen, 'skill');
-      assert.strictEqual(state.target, 'gemini');
+      assert.strictEqual(state.target, 'antigravity');
       assert.strictEqual(state.selectedItem, 'test-item');
     });
 

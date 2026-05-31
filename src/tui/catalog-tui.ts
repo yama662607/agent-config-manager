@@ -74,7 +74,7 @@ export class CatalogTuiScreen extends TuiBaseScreen {
 
       if (mcps.length === 0) {
         console.log('No MCP entries in catalog.');
-        console.log('\nTip: Use "acsync catalog mcp add <package>" to add entries.');
+        console.log('\nTip: Use "acm catalog mcp add <package>" to add entries.');
         await this.pressEnter();
         return 'back';
       }
@@ -119,7 +119,7 @@ export class CatalogTuiScreen extends TuiBaseScreen {
 
       if (skills.length === 0) {
         console.log('No skill entries in catalog.');
-        console.log('\nTip: Use "acsync catalog skill import <path>" to add skills.');
+        console.log('\nTip: Use "acm catalog skill import <path>" to add skills.');
         await this.pressEnter();
         return 'back';
       }

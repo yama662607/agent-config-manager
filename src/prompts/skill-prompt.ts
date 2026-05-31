@@ -19,8 +19,8 @@ export async function promptSkills(allowBack = false): Promise<string[]> {
   if (skills.length === 0) {
     console.log('No skill entries in catalog.\n');
     console.log('Tip: Use these commands to add skills first:');
-    console.log('  acsync catalog skill import ~/.claude/skills/my-skill');
-    console.log('  acsync skill install <github-url>\n');
+    console.log('  acm catalog skill import ~/.claude/skills/my-skill');
+    console.log('  acm skill install <github-url>\n');
     return [];
   }
 

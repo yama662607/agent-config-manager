@@ -4,7 +4,7 @@ This document contains guidelines and instructions for AI agents working on this
 
 ## Project Overview
 
-`agent-config-sync` is a cross-agent configuration manager for MCP servers and skills. It directly edits native config files without requiring manifests or sync steps.
+`agent-config-manager` is a cross-agent configuration manager for MCP servers and skills. It directly edits native config files without requiring manifests or sync steps.
 
 **Tech Stack:**
 - Language: TypeScript (ES modules)
@@ -40,7 +40,7 @@ This project expects agents to use `just` commands to keep quality high.
 ## Project Structure
 
 ```
-agent-config-sync/
+agent-config-manager/
 ├── src/              # Source code
 ├── dist/             # Compiled output (generated)
 ├── test/             # Test files

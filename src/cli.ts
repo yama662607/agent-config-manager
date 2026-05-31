@@ -44,21 +44,21 @@ import { validate, doctor } from './cli-diagnostics.js';
 // Constants
 // ============================================================================
 
-const HELP = `acsync - Agent configuration sync tool
+const HELP = `acm - Agent configuration sync tool
 
 Usage:
-  acsync [COMMAND]
+  acm [COMMAND]
 
 Commands:
   init        Interactive setup for the current project
   catalog     Browse and manage catalog (TUI mode) [DEPRECATED: Use "-g" or "--global" instead]
   mcp         Manage MCP servers (TUI mode by default)
   skill       Manage skills (TUI mode by default)
-  validate    Validate current project configuration [DEPRECATED: Use "acsync doctor --strict" instead]
+  validate    Validate current project configuration [DEPRECATED: Use "acm doctor --strict" instead]
   doctor      Run diagnostics and health checks
 
 Options:
-  -g, --global  Operate on the global catalog (~/.acsync/) instead of current project
+  -g, --global  Operate on the global catalog (~/.acm/) instead of current project
   -t, --targets Comma-separated target list (claude, codex, agy; aliases: c, x, a, g)
   -H, --home    Allow managing configs in home directory (global configs)
   -h, --help    Show this help message
@@ -70,23 +70,23 @@ Targets:
   agy         Antigravity CLI (.gemini/antigravity/mcp_config.json, .agents/skills/) (alias: a, g)
 
 EXAMPLES:
-  acsync init                         Interactive setup for current project
-  acsync mcp                          Manage MCPs in TUI mode
-  acsync mcp list                     Show project MCP status
-  acsync mcp list -g                  List all MCPs in global catalog
-  acsync mcp add github -t c          Add GitHub MCP to Claude Code
-  acsync mcp add github -g            Add GitHub MCP to global catalog
-  acsync skill list -g                List all skills in global catalog
-  acsync doctor                       Run diagnostics and health checks
+  acm init                         Interactive setup for current project
+  acm mcp                          Manage MCPs in TUI mode
+  acm mcp list                     Show project MCP status
+  acm mcp list -g                  List all MCPs in global catalog
+  acm mcp add github -t c          Add GitHub MCP to Claude Code
+  acm mcp add github -g            Add GitHub MCP to global catalog
+  acm skill list -g                List all skills in global catalog
+  acm doctor                       Run diagnostics and health checks
 `;
 
-const CATALOG_HELP = `acsync catalog - Manage reusable MCP and skill definitions [DEPRECATED: Use "-g" or "--global" flags instead]
+const CATALOG_HELP = `acm catalog - Manage reusable MCP and skill definitions [DEPRECATED: Use "-g" or "--global" flags instead]
 
 Usage:
-  acsync catalog <kind> <subcommand>
+  acm catalog <kind> <subcommand>
 
 ABOUT CATALOG:
-  Your personal catalog (~/.acsync/catalog.toml) stores reusable MCP servers
+  Your personal catalog (~/.acm/catalog.toml) stores reusable MCP servers
   and skills. Once added to the catalog, you can easily add them to any project.
 
 KINDS:
@@ -109,10 +109,10 @@ SKILL Subcommands:
   remove <id>        Remove a skill entry from catalog
 `;
 
-const MCP_HELP = `acsync mcp - Manage MCP servers for the current project or global catalog
+const MCP_HELP = `acm mcp - Manage MCP servers for the current project or global catalog
 
 Usage:
-  acsync mcp [subcommand] [options]
+  acm mcp [subcommand] [options]
 
 Subcommands:
   list, status            Show MCP status (default)
@@ -124,7 +124,7 @@ Subcommands:
   show <server>           Show details of an MCP server
 
 Options:
-  -g, --global        Operate on the global catalog (~/.acsync/)
+  -g, --global        Operate on the global catalog (~/.acm/)
   -t, --targets <l>   Comma-separated target list (default: claude,codex,agy; aliases: c,x,a,g)
   --[no-]register     Auto-register to catalog (default: yes)
   --url <url>         HTTP/SSE URL for custom MCP add/edit
@@ -136,28 +136,28 @@ Options:
 
 EXAMPLES:
   # Show project MCP status
-  acsync mcp list
+  acm mcp list
   
   # List all MCPs in global catalog
-  acsync mcp list -g
+  acm mcp list -g
 
   # Add from npm package to Claude Code
-  acsync mcp add @modelcontextprotocol/server-github -t c
+  acm mcp add @modelcontextprotocol/server-github -t c
   
   # Register npm package directly to global catalog
-  acsync mcp add @modelcontextprotocol/server-filesystem -g
+  acm mcp add @modelcontextprotocol/server-filesystem -g
 
   # Remove from project
-  acsync mcp remove github
+  acm mcp remove github
   
   # Remove from global catalog
-  acsync mcp remove github -g
+  acm mcp remove github -g
 `;
 
-const SKILL_HELP = `acsync skill - Manage skills for the current project or global catalog
+const SKILL_HELP = `acm skill - Manage skills for the current project or global catalog
 
 Usage:
-  acsync skill [subcommand] [options]
+  acm skill [subcommand] [options]
 
 Subcommands:
   list, status            Show skill status (default)
@@ -171,7 +171,7 @@ Subcommands:
   show <name>             Show details of a skill entry
 
 Options:
-  -g, --global        Operate on the global catalog (~/.acsync/)
+  -g, --global        Operate on the global catalog (~/.acm/)
   -t, --targets <l>   Comma-separated target list (default: claude,codex,agy; aliases: c,x,a,g)
   --[no-]register     Auto-register to catalog (default: yes)
   -H, --home          Allow managing configs in home directory (global configs)
@@ -181,34 +181,34 @@ Options:
 
 EXAMPLES:
   # Show project skill status
-  acsync skill list
+  acm skill list
   
   # List all skills in global catalog
-  acsync skill list -g
+  acm skill list -g
 
   # Add from catalog to Claude Code
-  acsync skill add frontend-design -t c
+  acm skill add frontend-design -t c
 
   # Install directly from GitHub (adds to catalog + project)
-  acsync skill install https://github.com/anthropics/skills/tree/main/skill-creator
+  acm skill install https://github.com/anthropics/skills/tree/main/skill-creator
   
   # Import local skill to global catalog
-  acsync skill import ./my-skill -g
+  acm skill import ./my-skill -g
 `;
 
-const VALIDATE_HELP = `acsync validate - Validate current project configuration [DEPRECATED: Use "acsync doctor --strict" instead]
+const VALIDATE_HELP = `acm validate - Validate current project configuration [DEPRECATED: Use "acm doctor --strict" instead]
 
 Usage:
-  acsync validate [options]
+  acm validate [options]
 
 Options:
   --strict      Fail on warnings as well as errors
 `;
 
-const DOCTOR_HELP = `acsync doctor - Run diagnostics and health checks
+const DOCTOR_HELP = `acm doctor - Run diagnostics and health checks
 
 Usage:
-  acsync doctor [options]
+  acm doctor [options]
 
 Options:
   --fix               Attempt to auto-fix issues
@@ -216,15 +216,15 @@ Options:
   -H, --allow-home    Allow operations in the home directory
 
 DESCRIPTION:
-  Runs comprehensive diagnostics on your acsync setup and project configurations.
+  Runs comprehensive diagnostics on your acm setup and project configurations.
   Checks catalog integrity, config file validity, and common issues.
   Acts as both validation tool and interactive fixer.
 
 EXAMPLES:
-  acsync doctor                  # Diagnose issues without fixing
-  acsync doctor --fix            # Attempt to auto-fix found issues
-  acsync doctor --strict         # Fail on any warnings or errors (useful for CI)
-  acsync doctor --allow-home     # Allow diagnostics in the home directory
+  acm doctor                  # Diagnose issues without fixing
+  acm doctor --fix            # Attempt to auto-fix found issues
+  acm doctor --strict         # Fail on any warnings or errors (useful for CI)
+  acm doctor --allow-home     # Allow diagnostics in the home directory
 `;
 
 // ============================================================================
@@ -254,7 +254,7 @@ async function main(): Promise<void> {
   // Version
   if (argv[0] === '--version' || argv[0] === '-V') {
     const { version } = await getPackageVersion();
-    process.stdout.write(`acsync v${version}\n`);
+    process.stdout.write(`acm v${version}\n`);
     return;
   }
 
@@ -297,7 +297,7 @@ async function main(): Promise<void> {
 // ============================================================================
 
 async function handleCatalog(argv: string[]): Promise<void> {
-  process.stderr.write('[DEPRECATED] "acsync catalog" commands are deprecated. Please use commands with "-g" or "--global" flags instead.\n\n');
+  process.stderr.write('[DEPRECATED] "acm catalog" commands are deprecated. Please use commands with "-g" or "--global" flags instead.\n\n');
   if (argv.length === 0) {
     // Check if we can run TUI
     if (!isInteractive()) {
@@ -322,7 +322,7 @@ async function handleCatalog(argv: string[]): Promise<void> {
 
   if (resource !== 'mcp' && resource !== 'skill') {
     process.stderr.write(`Unknown catalog resource: ${resource}\n`);
-    process.stderr.write('Use "acsync catalog mcp" or "acsync catalog skill" for management.\n');
+    process.stderr.write('Use "acm catalog mcp" or "acm catalog skill" for management.\n');
     process.exitCode = 1;
     return;
   }
@@ -344,7 +344,7 @@ async function handleCatalog(argv: string[]): Promise<void> {
 
 async function handleCatalogMcp(subcommand: string | undefined, args: string[]): Promise<void> {
   if (!subcommand) {
-    process.stderr.write('Usage: acsync catalog mcp <subcommand>\n');
+    process.stderr.write('Usage: acm catalog mcp <subcommand>\n');
     process.exitCode = 1;
     return;
   }
@@ -356,7 +356,7 @@ async function handleCatalogMcp(subcommand: string | undefined, args: string[]):
 
     case 'show':
       if (args.length === 0) {
-        process.stderr.write('Usage: acsync catalog mcp show <id>\n');
+        process.stderr.write('Usage: acm catalog mcp show <id>\n');
         process.exitCode = 1;
         return;
       }
@@ -369,7 +369,7 @@ async function handleCatalogMcp(subcommand: string | undefined, args: string[]):
 
     case 'remove':
       if (args.length === 0) {
-        process.stderr.write('Usage: acsync catalog mcp remove <id>\n');
+        process.stderr.write('Usage: acm catalog mcp remove <id>\n');
         process.exitCode = 1;
         return;
       }
@@ -385,7 +385,7 @@ async function handleCatalogMcp(subcommand: string | undefined, args: string[]):
 
 async function handleCatalogMcpAdd(argv: string[]): Promise<void> {
   if (argv.length === 0) {
-    process.stderr.write('Usage: acsync catalog mcp add <package-id> [options]\n');
+    process.stderr.write('Usage: acm catalog mcp add <package-id> [options]\n');
     process.exitCode = 1;
     return;
   }
@@ -407,7 +407,7 @@ async function handleCatalogMcpAdd(argv: string[]): Promise<void> {
 
 async function handleCatalogSkill(subcommand: string | undefined, args: string[]): Promise<void> {
   if (!subcommand) {
-    process.stderr.write('Usage: acsync catalog skill <subcommand>\n');
+    process.stderr.write('Usage: acm catalog skill <subcommand>\n');
     process.exitCode = 1;
     return;
   }
@@ -419,7 +419,7 @@ async function handleCatalogSkill(subcommand: string | undefined, args: string[]
 
     case 'show':
       if (args.length === 0) {
-        process.stderr.write('Usage: acsync catalog skill show <id>\n');
+        process.stderr.write('Usage: acm catalog skill show <id>\n');
         process.exitCode = 1;
         return;
       }
@@ -436,7 +436,7 @@ async function handleCatalogSkill(subcommand: string | undefined, args: string[]
 
     case 'search':
       if (args.length === 0) {
-        process.stderr.write('Usage: acsync catalog skill search <query>\n');
+        process.stderr.write('Usage: acm catalog skill search <query>\n');
         process.exitCode = 1;
         return;
       }
@@ -449,7 +449,7 @@ async function handleCatalogSkill(subcommand: string | undefined, args: string[]
 
     case 'remove':
       if (args.length === 0) {
-        process.stderr.write('Usage: acsync catalog skill remove <id>\n');
+        process.stderr.write('Usage: acm catalog skill remove <id>\n');
         process.exitCode = 1;
         return;
       }
@@ -465,7 +465,7 @@ async function handleCatalogSkill(subcommand: string | undefined, args: string[]
 
 async function handleCatalogSkillAdd(argv: string[]): Promise<void> {
   if (argv.length === 0) {
-    process.stderr.write('Usage: acsync catalog skill add <skill-id> [options]\n');
+    process.stderr.write('Usage: acm catalog skill add <skill-id> [options]\n');
     process.exitCode = 1;
     return;
   }
@@ -483,7 +483,7 @@ async function handleCatalogSkillAdd(argv: string[]): Promise<void> {
 
 async function handleCatalogSkillInstall(argv: string[]): Promise<void> {
   if (argv.length === 0) {
-    process.stderr.write('Usage: acsync catalog skill install <skill-id> [--force]\n');
+    process.stderr.write('Usage: acm catalog skill install <skill-id> [--force]\n');
     process.exitCode = 1;
     return;
   }
@@ -496,7 +496,7 @@ async function handleCatalogSkillInstall(argv: string[]): Promise<void> {
 
 async function handleCatalogSkillImport(argv: string[]): Promise<void> {
   if (argv.length === 0) {
-    process.stderr.write('Usage: acsync catalog skill import <path> [options]\n');
+    process.stderr.write('Usage: acm catalog skill import <path> [options]\n');
     process.exitCode = 1;
     return;
   }
@@ -590,7 +590,7 @@ async function handleMcp(argv: string[]): Promise<void> {
   switch (subcommand) {
     case 'add':
       if (options.packageId === undefined) {
-        process.stderr.write('Usage: acsync mcp add <package> [options]\n');
+        process.stderr.write('Usage: acm mcp add <package> [options]\n');
         process.exitCode = 1;
         return;
       }
@@ -619,7 +619,7 @@ async function handleMcp(argv: string[]): Promise<void> {
 
     case 'show':
       if (options.packageId === undefined) {
-        process.stderr.write('Usage: acsync mcp show <id>\n');
+        process.stderr.write('Usage: acm mcp show <id>\n');
         process.exitCode = 1;
         return;
       }
@@ -629,7 +629,7 @@ async function handleMcp(argv: string[]): Promise<void> {
 
     case 'edit':
       if (options.packageId === undefined) {
-        process.stderr.write('Usage: acsync mcp edit <server> [options]\n');
+        process.stderr.write('Usage: acm mcp edit <server> [options]\n');
         process.exitCode = 1;
         return;
       }
@@ -648,7 +648,7 @@ async function handleMcp(argv: string[]): Promise<void> {
 
     case 'remove':
       if (options.packageId === undefined) {
-        process.stderr.write('Usage: acsync mcp remove <server> [options]\n');
+        process.stderr.write('Usage: acm mcp remove <server> [options]\n');
         process.exitCode = 1;
         return;
       }
@@ -666,7 +666,7 @@ async function handleMcp(argv: string[]): Promise<void> {
 
     case 'enable':
       if (options.packageId === undefined) {
-        process.stderr.write('Usage: acsync mcp enable <server> [options]\n');
+        process.stderr.write('Usage: acm mcp enable <server> [options]\n');
         process.exitCode = 1;
         return;
       }
@@ -684,7 +684,7 @@ async function handleMcp(argv: string[]): Promise<void> {
 
     case 'disable':
       if (options.packageId === undefined) {
-        process.stderr.write('Usage: acsync mcp disable <server> [options]\n');
+        process.stderr.write('Usage: acm mcp disable <server> [options]\n');
         process.exitCode = 1;
         return;
       }
@@ -785,7 +785,7 @@ async function handleSkill(argv: string[]): Promise<void> {
   switch (subcommand) {
     case 'add':
       if (options.skillId === undefined) {
-        process.stderr.write('Usage: acsync skill add <name> [options]\n');
+        process.stderr.write('Usage: acm skill add <name> [options]\n');
         process.exitCode = 1;
         return;
       }
@@ -809,7 +809,7 @@ async function handleSkill(argv: string[]): Promise<void> {
 
     case 'show':
       if (options.skillId === undefined) {
-        process.stderr.write('Usage: acsync skill show <name>\n');
+        process.stderr.write('Usage: acm skill show <name>\n');
         process.exitCode = 1;
         return;
       }
@@ -820,7 +820,7 @@ async function handleSkill(argv: string[]): Promise<void> {
     case 'install':
       if (isGlobal) {
         if (options.skillId === undefined) {
-          process.stderr.write('Usage: acsync skill install <skill-id> -g [--force]\n');
+          process.stderr.write('Usage: acm skill install <skill-id> -g [--force]\n');
           process.exitCode = 1;
           return;
         }
@@ -832,7 +832,7 @@ async function handleSkill(argv: string[]): Promise<void> {
       } else {
         const githubUrl = options.githubUrl || options.skillId;
         if (githubUrl === undefined || !githubUrl.startsWith('http')) {
-          process.stderr.write('Usage: acsync skill install <github-url> [options] or acsync skill install <skill-id> -g [--force]\n');
+          process.stderr.write('Usage: acm skill install <github-url> [options] or acm skill install <skill-id> -g [--force]\n');
           process.exitCode = 1;
           return;
         }
@@ -848,7 +848,7 @@ async function handleSkill(argv: string[]): Promise<void> {
 
     case 'import':
       if (options.skillId === undefined) {
-        process.stderr.write('Usage: acsync skill import <path> [options]\n');
+        process.stderr.write('Usage: acm skill import <path> [options]\n');
         process.exitCode = 1;
         return;
       }
@@ -881,7 +881,7 @@ async function handleSkill(argv: string[]): Promise<void> {
 
     case 'search':
       if (options.skillId === undefined) {
-        process.stderr.write('Usage: acsync skill search <query>\n');
+        process.stderr.write('Usage: acm skill search <query>\n');
         process.exitCode = 1;
         return;
       }
@@ -891,7 +891,7 @@ async function handleSkill(argv: string[]): Promise<void> {
 
     case 'remove':
       if (options.skillId === undefined) {
-        process.stderr.write('Usage: acsync skill remove <name> [options]\n');
+        process.stderr.write('Usage: acm skill remove <name> [options]\n');
         process.exitCode = 1;
         return;
       }
@@ -909,7 +909,7 @@ async function handleSkill(argv: string[]): Promise<void> {
 
     case 'enable':
       if (options.skillId === undefined) {
-        process.stderr.write('Usage: acsync skill enable <name> [options]\n');
+        process.stderr.write('Usage: acm skill enable <name> [options]\n');
         process.exitCode = 1;
         return;
       }
@@ -921,7 +921,7 @@ async function handleSkill(argv: string[]): Promise<void> {
 
     case 'disable':
       if (options.skillId === undefined) {
-        process.stderr.write('Usage: acsync skill disable <name> [options]\n');
+        process.stderr.write('Usage: acm skill disable <name> [options]\n');
         process.exitCode = 1;
         return;
       }
@@ -940,7 +940,7 @@ async function handleSkill(argv: string[]): Promise<void> {
 }
 
 async function handleValidate(argv: string[]): Promise<void> {
-  process.stderr.write('[DEPRECATED] "acsync validate" is deprecated. Please use "acsync doctor --strict" instead.\n\n');
+  process.stderr.write('[DEPRECATED] "acm validate" is deprecated. Please use "acm doctor --strict" instead.\n\n');
   if (argv.includes('--help') || argv.includes('-h')) {
     process.stdout.write(VALIDATE_HELP);
     return;
@@ -966,10 +966,10 @@ async function handleDoctor(argv: string[]): Promise<void> {
 // Init Command
 // ============================================================================
 
-const INIT_HELP = `acsync init - Interactive setup for the current project
+const INIT_HELP = `acm init - Interactive setup for the current project
 
 Usage:
-  acsync init [options]
+  acm init [options]
 
 Options:
   --targets <list>    Pre-select targets (e.g., claude,codex)
@@ -979,8 +979,8 @@ DESCRIPTION:
   Guides you through selecting MCP servers and skills from your catalog.
 
 EXAMPLES:
-  acsync init                        # Full interactive setup
-  acsync init --targets claude       # Skip target selection
+  acm init                        # Full interactive setup
+  acm init --targets claude       # Skip target selection
 `;
 
 async function handleInit(argv: string[]): Promise<void> {
@@ -992,7 +992,7 @@ async function handleInit(argv: string[]): Promise<void> {
   // Check if we can run interactive init
   if (!isInteractive()) {
     process.stderr.write('Error: Interactive init is not supported in non-TTY or CI environments.\n');
-    process.stderr.write('Use explicit commands like "acsync mcp add" and "acsync skill add" instead.\n');
+    process.stderr.write('Use explicit commands like "acm mcp add" and "acm skill add" instead.\n');
     process.exitCode = 1;
     return;
   }
@@ -1027,7 +1027,7 @@ function parseInitOptions(argv: string[]): InitOptions {
 }
 
 async function init(options: InitOptions): Promise<void> {
-  console.log('🚀 acsync init - Interactive Project Setup\n');
+  console.log('🚀 acm init - Interactive Project Setup\n');
 
   // Import the interactive init module
   const { runInteractiveInit } = await import('./cli-init.js');

@@ -20,8 +20,8 @@
 ## 4. Native MCP Management
 
 - [x] 4.1 Implement native config adapters for Claude Code, Codex, and Gemini CLI that can read, mutate, and preserve unrelated config content.
-- [x] 4.2 Implement `acsync mcp` status output for the current project with target-aware reporting.
-- [x] 4.3 Implement `acsync mcp init`, `add`, `remove`, `enable`, and `disable`, including package-name normalization and optional auto-registration into the catalog.
+- [x] 4.2 Implement `acm mcp` status output for the current project with target-aware reporting.
+- [x] 4.3 Implement `acm mcp init`, `add`, `remove`, `enable`, and `disable`, including package-name normalization and optional auto-registration into the catalog.
 - [x] 4.4 Add tests covering direct MCP mutation, target-scoped enable/disable, unmanaged-content preservation, and nested-directory invocation.
 
 ## 5. Diagnostics and Safety

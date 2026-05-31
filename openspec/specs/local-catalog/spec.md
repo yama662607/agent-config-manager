@@ -4,7 +4,7 @@
 TBD - created by archiving change adopt-native-config-workflows. Update Purpose after archive.
 ## Requirements
 ### Requirement: The tool stores reusable MCP definitions in a user-level local catalog
-The system SHALL maintain reusable MCP definitions in a user-level `acsync` catalog stored outside project repositories.
+The system SHALL maintain reusable MCP definitions in a user-level `acm` catalog stored outside project repositories.
 
 **Note**: Skills will be added in Phase 2. The catalog schema is designed to be extensible for future asset types.
 
@@ -17,16 +17,16 @@ The catalog SHALL be stored as JSON files in the user's home directory with clea
 
 **Catalog structure:**
 ```
-~/.acsync/
+~/.acm/
 ├── catalog.json           # Main catalog index
 ├── catalog-schema.json    # Schema version and validation rules
 └── catalog.lock           # File lock for concurrent access
 ```
 
 **Path resolution:**
-- macOS: `/Users/username/.acsync/`
-- Linux: `/home/username/.acsync/`
-- Windows: `C:\Users\username\.acsync\`
+- macOS: `/Users/username/.acm/`
+- Linux: `/home/username/.acm/`
+- Windows: `C:\Users\username\.acm\`
 
 **catalog.json schema (Phase 1 - MCP only):**
 ```json

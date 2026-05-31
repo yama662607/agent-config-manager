@@ -22,7 +22,7 @@ const PROJECT_ROOT = path.resolve(__dirname, '../..');
 const CLI_PATH = path.join(PROJECT_ROOT, 'dist', 'cli.js');
 
 // Test project directory
-const TEST_PROJECT_DIR = path.join(os.tmpdir(), 'acsync-tui-test');
+const TEST_PROJECT_DIR = path.join(os.tmpdir(), 'acm-tui-test');
 
 // Run these tests serially to avoid file system conflicts
 describe('TUI Integration Tests', { concurrency: false }, () => {

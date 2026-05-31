@@ -17,7 +17,28 @@ import { CATALOG_VERSION } from './types.js';
 // ============================================================================
 
 /** Catalog directory name in user's home directory */
-const CATALOG_DIR = '.acsync';
+const CATALOG_DIR = '.acm';
+
+/**
+ * Migrates ~/.acm directory to ~/.acm if the old directory exists
+ * but the new one does not.
+ */
+async function migrateCatalogDir(): Promise<void> {
+  const home = os.homedir();
+  const oldDir = path.join(home, '.acm');
+  const newDir = path.join(home, '.acm');
+
+  try {
+    await fs.access(oldDir);
+    try {
+      await fs.access(newDir);
+    } catch {
+      await fs.rename(oldDir, newDir);
+    }
+  } catch {
+    // Ignore
+  }
+}
 
 /** Maximum catalog file size (10MB) */
 const MAX_CATALOG_SIZE = 10 * 1024 * 1024;
@@ -92,6 +113,7 @@ export function getCatalogLockPath(): string {
  * Initialize an empty catalog if it doesn't exist.
  */
 export async function initCatalog(): Promise<void> {
+  await migrateCatalogDir();
   const catalogDir = getCatalogDir();
   const catalogPath = getCatalogPath();
 
@@ -118,6 +140,7 @@ export async function initCatalog(): Promise<void> {
  * Load the catalog from disk.
  */
 export async function loadCatalog(): Promise<CatalogFile> {
+  await migrateCatalogDir();
   const catalogPath = getCatalogPath();
   const oldCatalogPath = getOldCatalogPath();
   const oldCatalogPathYaml = getOldCatalogPathYaml();

@@ -137,7 +137,7 @@ export function createMockMcpStatus(
       Object.entries(servers).map(([name, enabled]) => [name, { enabled }])
     ),
     codex: {},
-    gemini: {},
+    antigravity: {},
   };
 }
 

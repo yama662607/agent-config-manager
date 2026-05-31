@@ -12,3 +12,7 @@ dist
 # npm publish scripts (development only)
 npm-*.exp
 *.tgz
+
+# Local editor settings & data
+.claude/
+.data/

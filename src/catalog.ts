@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import YAML from 'yaml';
+import TOML from '@iarna/toml';
 import type {
   CatalogFile,
   McpCatalogEntry,
@@ -21,7 +23,13 @@ const CATALOG_DIR = '.acsync';
 const MAX_CATALOG_SIZE = 10 * 1024 * 1024;
 
 /** Catalog filename */
-const CATALOG_FILE = 'catalog.json';
+const CATALOG_FILE = 'catalog.toml';
+
+/** Old catalog filename (for migration) */
+const OLD_CATALOG_FILE = 'catalog.json';
+
+/** Old YAML catalog filename (for migration) */
+const OLD_CATALOG_FILE_YAML = 'catalog.yaml';
 
 /** Catalog schema filename */
 const CATALOG_SCHEMA_FILE = 'catalog-schema.json';
@@ -46,6 +54,20 @@ export function getCatalogDir(): string {
  */
 export function getCatalogPath(): string {
   return path.join(getCatalogDir(), CATALOG_FILE);
+}
+
+/**
+ * Get the old catalog file path (for migration).
+ */
+export function getOldCatalogPath(): string {
+  return path.join(getCatalogDir(), OLD_CATALOG_FILE);
+}
+
+/**
+ * Get the old YAML catalog file path (for migration).
+ */
+export function getOldCatalogPathYaml(): string {
+  return path.join(getCatalogDir(), OLD_CATALOG_FILE_YAML);
 }
 
 /**
@@ -97,6 +119,34 @@ export async function initCatalog(): Promise<void> {
  */
 export async function loadCatalog(): Promise<CatalogFile> {
   const catalogPath = getCatalogPath();
+  const oldCatalogPath = getOldCatalogPath();
+  const oldCatalogPathYaml = getOldCatalogPathYaml();
+
+  // 1. Try migrating old JSON catalog if it exists
+  try {
+    await fs.access(oldCatalogPath);
+    const rawOld = await fs.readFile(oldCatalogPath, 'utf8');
+    const parsedOld = JSON.parse(rawOld) as CatalogFile;
+    
+    await fs.mkdir(getCatalogDir(), { recursive: true });
+    await writeCatalogAtomic(parsedOld);
+    await fs.rm(oldCatalogPath, { force: true });
+  } catch {
+    // Ignore
+  }
+
+  // 2. Try migrating old YAML catalog if it exists
+  try {
+    await fs.access(oldCatalogPathYaml);
+    const rawOldYaml = await fs.readFile(oldCatalogPathYaml, 'utf8');
+    const parsedOldYaml = YAML.parse(rawOldYaml) as CatalogFile;
+    
+    await fs.mkdir(getCatalogDir(), { recursive: true });
+    await writeCatalogAtomic(parsedOldYaml);
+    await fs.rm(oldCatalogPathYaml, { force: true });
+  } catch {
+    // Ignore
+  }
 
   try {
     await fs.access(catalogPath);
@@ -112,24 +162,187 @@ export async function loadCatalog(): Promise<CatalogFile> {
     throw new Error('Catalog file too large. Please clean up the catalog.');
   }
 
-  const parsed = JSON.parse(raw) as CatalogFile;
+  const rawObj = TOML.parse(raw) as any;
+  const catalog: CatalogFile = {
+    $schema: rawObj?.$schema ?? `./${CATALOG_SCHEMA_FILE}`,
+    version: rawObj?.version ?? CATALOG_VERSION,
+    mcps: rawObj?.mcps ?? {},
+    skills: rawObj?.skills ?? {},
+  };
 
   // Validate version
-  if (parsed.version !== CATALOG_VERSION) {
+  if (catalog.version !== CATALOG_VERSION) {
     throw new Error(
-      `Unsupported catalog version: ${parsed.version}. Expected: ${CATALOG_VERSION}`
+      `Unsupported catalog version: ${catalog.version}. Expected: ${CATALOG_VERSION}`
     );
   }
 
-  // Ensure skills field exists (for backward compatibility)
-  if (!parsed.skills) {
-    parsed.skills = {};
+  let needsSync = false;
+
+  // 1. MCP Copy-Paste Detection & Normalization
+  if (rawObj && typeof rawObj === 'object') {
+    const mcpServers = rawObj.mcpServers ?? rawObj.mcp_servers;
+    if (mcpServers && typeof mcpServers === 'object') {
+      for (const [name, server] of Object.entries(mcpServers)) {
+        if (!server || typeof server !== 'object') continue;
+        const s = server as any;
+        
+        const recipe: McpRecipe = {};
+        if (s.serverUrl || s.url || s.httpUrl) {
+          recipe.url = s.serverUrl || s.url || s.httpUrl;
+          recipe.transport = 'http';
+        } else if (s.command) {
+          recipe.command = s.command;
+          recipe.args = s.args ?? [];
+          recipe.transport = 'stdio';
+        }
+        if (s.cwd) recipe.cwd = s.cwd;
+        if (s.env) recipe.env = s.env;
+
+        const existing = catalog.mcps[name];
+        const recipeChanged = !existing || JSON.stringify(existing.recipe) !== JSON.stringify(recipe);
+
+        if (recipeChanged || !existing) {
+          catalog.mcps[name] = {
+            id: name,
+            displayName: existing?.displayName ?? extractDisplayName(name),
+            description: existing?.description ?? `MCP server: ${name}`,
+            recipe,
+            addedAt: existing?.addedAt ?? new Date().toISOString(),
+            tags: existing?.tags ?? [],
+          };
+          needsSync = true;
+        }
+      }
+    }
+  }
+
+  // 2. Skill Drag-and-Drop Auto-Discovery & Synchronization
+  const skillsDir = getSkillsDir();
+  try {
+    const entries = await fs.readdir(skillsDir, { withFileTypes: true });
+    const activeSkillIds = new Set<string>();
+
+    for (const entry of entries) {
+      let isDir = entry.isDirectory();
+      if (entry.isSymbolicLink()) {
+        try {
+          const stat = await fs.stat(path.join(skillsDir, entry.name));
+          isDir = stat.isDirectory();
+        } catch {
+          // Dead symlink, skip
+          isDir = false;
+        }
+      }
+
+      if (!isDir) continue;
+      const skillId = entry.name;
+      
+      try {
+        validateSkillId(skillId);
+      } catch {
+        continue;
+      }
+
+      const skillFilePath = getSkillFilePath(skillId);
+      try {
+        await fs.access(skillFilePath);
+        activeSkillIds.add(skillId);
+
+        const content = await fs.readFile(skillFilePath, 'utf8');
+        const recipe = parseSkillFrontmatter(content);
+
+        const existing = catalog.skills[skillId];
+        const updatedEntry: SkillCatalogEntry = {
+          id: skillId,
+          displayName: recipe.name || skillId,
+          description: recipe.description || '',
+          path: `skills/${skillId}`,
+          addedAt: existing?.addedAt ?? new Date().toISOString(),
+          tags: existing?.tags ?? [],
+          license: recipe.license,
+        };
+
+        if (!existing ||
+            existing.displayName !== updatedEntry.displayName ||
+            existing.description !== updatedEntry.description ||
+            existing.license !== updatedEntry.license) {
+          catalog.skills[skillId] = updatedEntry;
+          needsSync = true;
+        }
+      } catch {
+        // Skip directory if SKILL.md not accessible
+      }
+    }
+
+    for (const skillId of Object.keys(catalog.skills)) {
+      if (!activeSkillIds.has(skillId)) {
+        delete catalog.skills[skillId];
+        needsSync = true;
+      }
+    }
+  } catch {
+    // Directory doesn't exist, skip
+  }
+
+  if (needsSync) {
+    await writeCatalogAtomic(catalog);
   }
 
   // Auto-migrate from old format if needed
   await ensureMigrated();
 
-  return parsed;
+  return catalog;
+}
+
+const LOCK_TIMEOUT = 5000; // 5 seconds
+const LOCK_RETRY_INTERVAL = 50; // 50ms
+
+/**
+ * Acquire a file lock for catalog mutations.
+ */
+async function acquireLock(): Promise<void> {
+  const lockPath = getCatalogLockPath();
+  const startTime = Date.now();
+
+  while (true) {
+    try {
+      // Create the lock file. 'wx' fails if the file already exists.
+      const handle = await fs.open(lockPath, 'wx');
+      await handle.close();
+      return; // Lock acquired
+    } catch (err: any) {
+      if (err.code === 'EEXIST') {
+        // Lock file exists, check if it's orphaned (e.g. older than 10 seconds)
+        try {
+          const stat = await fs.stat(lockPath);
+          const age = Date.now() - stat.mtimeMs;
+          if (age > 10000) {
+            // Orphaned lock, remove it
+            await fs.rm(lockPath, { force: true });
+            continue; // Try acquiring again immediately
+          }
+        } catch {
+          // If stat fails (e.g. file was just deleted), ignore and retry
+        }
+
+        if (Date.now() - startTime > LOCK_TIMEOUT) {
+          throw new Error(`Failed to acquire lock on ${lockPath}: timeout reached`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_INTERVAL));
+      } else {
+        throw err;
+      }
+    }
+  }
+}
+
+/**
+ * Release the file lock.
+ */
+async function releaseLock(): Promise<void> {
+  const lockPath = getCatalogLockPath();
+  await fs.rm(lockPath, { force: true });
 }
 
 /**
@@ -139,8 +352,13 @@ async function writeCatalogAtomic(catalog: CatalogFile): Promise<void> {
   const catalogPath = getCatalogPath();
   const tempPath = `${catalogPath}.tmp`;
 
-  await fs.writeFile(tempPath, JSON.stringify(catalog, null, 2), 'utf8');
-  await fs.rename(tempPath, catalogPath);
+  await acquireLock();
+  try {
+    await fs.writeFile(tempPath, TOML.stringify(catalog as any), 'utf8');
+    await fs.rename(tempPath, catalogPath);
+  } finally {
+    await releaseLock();
+  }
 }
 
 /**
@@ -371,28 +589,8 @@ export async function addSkillFromDir(
   // Create skill directory
   await fs.mkdir(skillDir, { recursive: true });
 
-  // Copy all files from source directory
-  const entries = await fs.readdir(sourceDir, { withFileTypes: true });
-
-  for (const entry of entries) {
-    const srcPath = path.join(sourceDir, entry.name);
-    const destPath = path.join(skillDir, entry.name);
-
-    if (entry.isDirectory()) {
-      // Recursively copy subdirectories (e.g., references/)
-      await fs.mkdir(destPath, { recursive: true });
-      const subEntries = await fs.readdir(srcPath, { withFileTypes: true });
-      for (const subEntry of subEntries) {
-        if (subEntry.isFile()) {
-          const subSrcPath = path.join(srcPath, subEntry.name);
-          const subDestPath = path.join(destPath, subEntry.name);
-          await fs.copyFile(subSrcPath, subDestPath);
-        }
-      }
-    } else if (entry.isFile()) {
-      await fs.copyFile(srcPath, destPath);
-    }
-  }
+  // Copy all files from source directory recursively
+  await fs.cp(sourceDir, skillDir, { recursive: true });
 
   // Parse SKILL.md for metadata
   const skillPath = getSkillFilePath(id);
@@ -487,76 +685,27 @@ function parseSkillFrontmatter(content: string): SkillRecipe {
   }
 
   const yamlText = match[1];
-  const body = match[2];
   const recipe: SkillRecipe = {
     name: 'unknown',
     description: '',
     content,
   };
 
-  // Parse YAML frontmatter with improved handling
-  const lines = yamlText.split(/\r?\n/);
-  let inMultiline = false;
-  let multilineKey = '';
-  let multilineValues: string[] = [];
-
-  for (const line of lines) {
-    // Skip empty lines and comments
-    if (!line.trim() || line.trim().startsWith('#')) {
-      continue;
-    }
-
-    // Handle multiline values
-    if (inMultiline) {
-      if (line.startsWith('  ') || line.startsWith('\t')) {
-        multilineValues.push(line.trim());
-        continue;
-      } else {
-        inMultiline = false;
-        // Store the accumulated multiline value
-        if (multilineKey === 'description') {
-          recipe.description = multilineValues.join(' ').replace(/^["']|["']$/g, '');
-        }
-        multilineValues = [];
-        multilineKey = '';
+  try {
+    const parsed = YAML.parse(yamlText);
+    if (parsed && typeof parsed === 'object') {
+      if (typeof parsed.name === 'string') {
+        recipe.name = parsed.name;
+      }
+      if (typeof parsed.description === 'string') {
+        recipe.description = parsed.description;
+      }
+      if (typeof parsed.license === 'string') {
+        recipe.license = parsed.license;
       }
     }
-
-    const colonIndex = line.indexOf(':');
-    if (colonIndex === -1) continue;
-
-    const key = line.slice(0, colonIndex).trim();
-    const value = line.slice(colonIndex + 1).trim();
-
-    // Handle empty values (start of multiline)
-    if (!value && (key === 'description' || key === 'name')) {
-      inMultiline = true;
-      multilineKey = key;
-      continue;
-    }
-
-    // Sanitize values: remove quotes and limit length
-    const sanitizedValue = value.replace(/^["']|["']$/g, '').slice(0, 500);
-
-    switch (key) {
-      case 'name':
-        recipe.name = sanitizedValue || 'unknown';
-        break;
-      case 'description':
-        recipe.description = sanitizedValue || '';
-        break;
-      case 'license':
-        recipe.license = sanitizedValue;
-        break;
-      case 'metadata':
-        // Skip metadata for now (would need YAML parser)
-        break;
-    }
-  }
-
-  // Handle trailing multiline value
-  if (inMultiline && multilineKey === 'description' && multilineValues.length > 0) {
-    recipe.description = multilineValues.join(' ').replace(/^["']|["']$/g, '');
+  } catch {
+    // Malformed YAML frontmatter, fallback
   }
 
   // Sanitize name to prevent injection
@@ -617,7 +766,7 @@ export async function migrateSkills(): Promise<number> {
   }
 
   const raw = await fs.readFile(catalogPath, 'utf8');
-  const catalog = JSON.parse(raw) as CatalogFile;
+  const catalog = YAML.parse(raw) as CatalogFile;
 
   if (!catalog.skills || Object.keys(catalog.skills).length === 0) {
     return 0; // No skills to migrate

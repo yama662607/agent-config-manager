@@ -3,7 +3,7 @@
 // ============================================================================
 
 /** Supported agent targets */
-export type TargetName = 'claude' | 'codex' | 'gemini';
+export type TargetName = 'claude' | 'codex' | 'antigravity';
 
 /** Transport types for MCP servers */
 export type TransportType = 'stdio' | 'http' | 'sse';
@@ -132,16 +132,17 @@ export interface CodexMcpServer {
   enabled?: boolean;
 }
 
-/** Gemini CLI .gemini/settings.json structure (partial) */
-export interface GeminiSettings {
-  mcpServers?: Record<string, GeminiMcpServer>;
+/** Antigravity CLI .gemini/antigravity/mcp_config.json structure (partial) */
+export interface AntigravitySettings {
+  mcpServers?: Record<string, AntigravityMcpServer>;
 }
 
-export interface GeminiMcpServer {
+export interface AntigravityMcpServer {
   command?: string;
   args?: string[];
-  url?: string;  // HTTP/SSE URL
+  serverUrl?: string;  // HTTP/SSE URL
   cwd?: string;
+  env?: Record<string, string>;
 }
 
 // ============================================================================

@@ -272,11 +272,12 @@ describe('TUI Edge Cases - Target Handling', () => {
       assert.ok(path.includes('.codex'));
     });
 
-    it('should handle gemini target', () => {
+    it('should handle antigravity target', () => {
       const screen = new McpTuiScreen() as any;
-      const path = screen.getDefaultConfigPath('gemini', '/project');
+      const path = screen.getDefaultConfigPath('antigravity', '/project');
 
       assert.ok(path.includes('.gemini'));
+      assert.ok(path.includes('antigravity'));
     });
   });
 
@@ -536,7 +537,7 @@ describe('TUI Edge Cases - Error Recovery', () => {
       const capture = new ConsoleCapture();
 
       capture.start();
-      screen.renderStatusTable({ claude: {}, codex: {}, gemini: {} }, 'claude');
+      screen.renderStatusTable({ claude: {}, codex: {}, antigravity: {} }, 'claude');
       capture.stop();
 
       // Should show empty state

@@ -1,6 +1,6 @@
 {
   "name": "@yama662607/agent-config-sync",
-  "version": "0.4.2",
+  "version": "0.4.4",
   "description": "Cross-agent configuration manager for MCP servers and skills. Directly edits native config files—no manifest, no sync step.",
   "type": "module",
   "publishConfig": {
@@ -19,14 +19,14 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && chmod +x dist/cli.js",
     "clean": "rm -rf dist",
     "dev": "tsx src/cli.ts",
     "prepack": "npm run clean && npm run build",
     "check": "npm run clean && npm run build",
-    "test": "tsx --test test/**/*.test.ts",
-    "test:unit": "tsx --test test/unit/*.test.ts",
-    "test:integration": "tsx --test test/integration/*.test.ts",
+    "test": "NODE_ENV=test tsx --test test/**/*.test.ts",
+    "test:unit": "NODE_ENV=test tsx --test test/unit/*.test.ts",
+    "test:integration": "NODE_ENV=test tsx --test test/integration/*.test.ts",
     "test:smoke": "node dist/cli.js --version && node dist/cli.js catalog mcp list"
   },
   "keywords": [

@@ -40,6 +40,7 @@ describe('MCP CLI Integration Tests', () => {
 
     // Create test config files
     await fs.mkdir(path.join(TEST_PROJECT_DIR, '.codex'), { recursive: true });
+    await fs.mkdir(path.join(TEST_PROJECT_DIR, '.gemini', 'antigravity'), { recursive: true });
 
     // Claude .mcp.json
     await fs.writeFile(
@@ -51,6 +52,11 @@ describe('MCP CLI Integration Tests', () => {
     await fs.writeFile(
       path.join(TEST_PROJECT_DIR, '.codex', 'config.toml'),
       '# Test Codex config\n'
+    );
+
+    await fs.writeFile(
+      path.join(TEST_PROJECT_DIR, '.gemini', 'antigravity', 'mcp_config.json'),
+      JSON.stringify({ mcpServers: {} }, null, 2)
     );
 
     // Change to test project directory
@@ -128,6 +134,66 @@ describe('MCP CLI Integration Tests', () => {
       );
       const config = JSON.parse(mcpJson);
       assert.ok(config.mcpServers, 'Should have mcpServers key');
+    });
+
+    it('should write a valid Codex MCP key for npm package servers', async () => {
+      process.chdir(TEST_PROJECT_DIR);
+
+      const { stdout, stderr } = await execAsync(
+        `node "${CLI_PATH}" mcp add @modelcontextprotocol/server-github --targets codex`
+      );
+
+      assert.ok(
+        stdout.includes('Added to codex') || stderr.includes('Added to codex'),
+        'Should confirm addition to Codex'
+      );
+
+      const codexToml = await fs.readFile(
+        path.join(TEST_PROJECT_DIR, '.codex', 'config.toml'),
+        'utf8'
+      );
+
+      assert.match(codexToml, /\[mcp_servers\.github\]/);
+      assert.ok(!/\[mcp_servers\."@modelcontextprotocol\/server-github"\]/.test(codexToml));
+    });
+
+    it('should add custom env configuration across targets', async () => {
+      process.chdir(TEST_PROJECT_DIR);
+
+      await execAsync(
+        `node "${CLI_PATH}" mcp add @yama662607/obsidian-companion-mcp --command npx --args '["-y","@yama662607/obsidian-companion-mcp"]' --env OBSIDIAN_VAULT_PATH=/vault/main --targets claude,codex,antigravity --no-register`
+      );
+
+      const claudeConfig = JSON.parse(await fs.readFile(path.join(TEST_PROJECT_DIR, '.mcp.json'), 'utf8'));
+      const antigravityConfig = JSON.parse(await fs.readFile(path.join(TEST_PROJECT_DIR, '.gemini', 'antigravity', 'mcp_config.json'), 'utf8'));
+      const codexToml = await fs.readFile(path.join(TEST_PROJECT_DIR, '.codex', 'config.toml'), 'utf8');
+
+      assert.strictEqual(
+        claudeConfig.mcpServers['@yama662607/obsidian-companion-mcp'].env.OBSIDIAN_VAULT_PATH,
+        '/vault/main'
+      );
+      assert.strictEqual(
+        antigravityConfig.mcpServers['@yama662607/obsidian-companion-mcp'].env.OBSIDIAN_VAULT_PATH,
+        '/vault/main'
+      );
+      assert.match(codexToml, /\[mcp_servers\.obsidian_companion\.env\]/);
+      assert.match(codexToml, /OBSIDIAN_VAULT_PATH = "\/vault\/main"/);
+    });
+
+    it('should edit environment variables for an existing MCP server', async () => {
+      process.chdir(TEST_PROJECT_DIR);
+
+      await execAsync(
+        `node "${CLI_PATH}" mcp add @yama662607/obsidian-excalidraw-mcp --command npx --args '["-y","@yama662607/obsidian-excalidraw-mcp"]' --targets codex --no-register`
+      );
+
+      await execAsync(
+        `node "${CLI_PATH}" mcp edit @yama662607/obsidian-excalidraw-mcp --command npx --args '["-y","@yama662607/obsidian-excalidraw-mcp"]' --env OBSIDIAN_VAULT_PATH=/vault/main --targets codex`
+      );
+
+      const codexToml = await fs.readFile(path.join(TEST_PROJECT_DIR, '.codex', 'config.toml'), 'utf8');
+      assert.match(codexToml, /\[mcp_servers\.obsidian_excalidraw\.env\]/);
+      assert.match(codexToml, /OBSIDIAN_VAULT_PATH = "\/vault\/main"/);
     });
   });
 

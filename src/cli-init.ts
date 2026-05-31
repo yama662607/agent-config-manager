@@ -123,8 +123,8 @@ export async function runInteractiveInit(options: InitOptions): Promise<void> {
 
           console.log('\n✅ Setup complete!');
           console.log('\nRun these commands to see your configuration:');
-          console.log(`  acsync mcp      # Show MCP status`);
-          console.log(`  acsync skill    # Show skill status`);
+          console.log(`  acm mcp      # Show MCP status`);
+          console.log(`  acm skill    # Show skill status`);
 
           // Success - exit loop
           currentStep = 5;

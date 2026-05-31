@@ -72,7 +72,7 @@ function printSkillStatus(status: SkillWorkspaceStatus, verbose: boolean): void 
 
   if (status.skills.length === 0) {
     console.log('No skills configured.');
-    console.log('Run `acsync skill add <name>` to add a skill.\n');
+    console.log('Run `acm skill add <name>` to add a skill.\n');
     return;
   }
 
@@ -110,7 +110,7 @@ function printSkillStatus(status: SkillWorkspaceStatus, verbose: boolean): void 
 
     console.log(borderF);
     console.log();
-    console.log('Run `acsync skill <name>` for details, `acsync skill add` to add new skills.\n');
+    console.log('Run `acm skill <name>` for details, `acm skill add` to add new skills.\n');
   }
 }
 
@@ -195,7 +195,7 @@ Skill content for ${sanitizedId}.
     console.log(`Added to ${target}: ${entry.id}`);
   }
 
-  console.log('\nRun `acsync skill` to see the updated status.');
+  console.log('\nRun `acm skill` to see the updated status.');
 }
 
 // ============================================================================
@@ -259,7 +259,7 @@ export async function skillInstallFromGitHub(options: SkillInstallFromGitHubOpti
     console.log(`✓ Added to ${target}: ${name}`);
   }
 
-  console.log('\nRun `acsync skill` to see the updated status.');
+  console.log('\nRun `acm skill` to see the updated status.');
 }
 
 // ============================================================================
@@ -293,7 +293,7 @@ export async function skillRemove(options: SkillRemoveOptions): Promise<void> {
     console.log(`Removed from ${target}: ${options.skillName}`);
   }
 
-  console.log('\nRun `acsync skill` to see the updated status.');
+  console.log('\nRun `acm skill` to see the updated status.');
 }
 
 // ============================================================================
@@ -311,7 +311,7 @@ export interface SkillEnableOptions {
  * This is a no-op for now but kept for API consistency.
  */
 export async function skillEnable(options: SkillEnableOptions): Promise<void> {
-  console.log('Skills are enabled when present. Use `acsync skill add` to add skills.\n');
+  console.log('Skills are enabled when present. Use `acm skill add` to add skills.\n');
 }
 
 // ============================================================================

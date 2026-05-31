@@ -20,7 +20,7 @@ export async function catalogMcpList(): Promise<void> {
 
   if (entries.length === 0) {
     console.log('No MCP entries in catalog.\n');
-    console.log('Run `acsync catalog mcp add <package>` to add an entry.');
+    console.log('Run `acm catalog mcp add <package>` to add an entry.');
     return;
   }
 
@@ -47,7 +47,7 @@ export async function catalogMcpList(): Promise<void> {
 
   console.log(borderF);
   console.log();
-  console.log('Run `acsync catalog mcp show <id>` for details.');
+  console.log('Run `acm catalog mcp show <id>` for details.');
 }
 
 // ============================================================================
@@ -62,7 +62,7 @@ export async function catalogMcpShow(id: string): Promise<void> {
 
   if (!entry) {
     console.error(`MCP entry not found: ${id}\n`);
-    console.log('Run `acsync catalog mcp list` to see available entries.');
+    console.log('Run `acm catalog mcp list` to see available entries.');
     process.exitCode = 1;
     return;
   }
@@ -121,7 +121,7 @@ export async function catalogMcpAdd(options: CatalogMcpAddOptions): Promise<void
   const existing = await getMcp(options.packageId);
   if (existing) {
     console.error(`MCP entry already exists: ${options.packageId}\n`);
-    console.log('Use `acsync catalog mcp edit` to modify the entry.');
+    console.log('Use `acm catalog mcp edit` to modify the entry.');
     process.exitCode = 1;
     return;
   }
@@ -150,7 +150,7 @@ export async function catalogMcpAdd(options: CatalogMcpAddOptions): Promise<void
 
   await addMcp(entry);
   console.log(`Added to catalog: ${entry.id}\n`);
-  console.log('Run `acsync mcp add <package>` to add it to your project.');
+  console.log('Run `acm mcp add <package>` to add it to your project.');
 }
 
 // ============================================================================
@@ -165,7 +165,7 @@ export async function catalogMcpRemove(id: string): Promise<void> {
 
   if (!removed) {
     console.error(`MCP entry not found: ${id}\n`);
-    console.log('Run `acsync catalog mcp list` to see available entries.');
+    console.log('Run `acm catalog mcp list` to see available entries.');
     process.exitCode = 1;
     return;
   }
@@ -194,7 +194,7 @@ export async function catalogSkillInstall(options: CatalogSkillInstallOptions): 
 
   if (!info) {
     console.error(`Skill not found in registry: ${options.skillId}\n`);
-    console.log('Run `acsync catalog skill search <query>` to search the registry.');
+    console.log('Run `acm catalog skill search <query>` to search the registry.');
     process.exitCode = 1;
     return;
   }
@@ -216,7 +216,7 @@ export async function catalogSkillInstall(options: CatalogSkillInstallOptions): 
   const existing = await getSkill(options.skillId);
   if (existing && !options.force) {
     console.error(`Skill already exists in catalog: ${options.skillId}\n`);
-    console.log('Use `acsync catalog skill install ' + options.skillId + ' --force` to reinstall.');
+    console.log('Use `acm catalog skill install ' + options.skillId + ' --force` to reinstall.');
     process.exitCode = 1;
     return;
   }
@@ -228,7 +228,7 @@ export async function catalogSkillInstall(options: CatalogSkillInstallOptions): 
 
   await addSkill(entry, content);
   console.log(`\n✓ Added to catalog: ${entry.id}`);
-  console.log('\nRun `acsync skill add ' + entry.id + '` to add it to your project.');
+  console.log('\nRun `acm skill add ' + entry.id + '` to add it to your project.');
 }
 
 // ============================================================================
@@ -279,7 +279,7 @@ export async function catalogSkillSearch(query: string): Promise<void> {
     console.log(`\n... and ${results.length - 20} more results`);
   }
 
-  console.log(`\nRun \`acsync catalog skill install <name>\` to install a skill.`);
+  console.log(`\nRun \`acm catalog skill install <name>\` to install a skill.`);
   console.log(`Visit https://skills.directory for more information.\n`);
 }
 
@@ -397,7 +397,7 @@ export async function catalogSkillImport(options: CatalogSkillImportOptions): Pr
 
   await addSkill(entry, content);
   console.log(`✓ Added to catalog: ${entry.id}`);
-  console.log('\nRun `acsync skill add ' + entry.id + '` to add it to your project.');
+  console.log('\nRun `acm skill add ' + entry.id + '` to add it to your project.');
 }
 
 // ============================================================================
@@ -413,7 +413,7 @@ export async function catalogSkillList(): Promise<void> {
 
   if (entries.length === 0) {
     console.log('No skill entries in catalog.\n');
-    console.log('Run `acsync catalog skill add <name>` to add an entry.');
+    console.log('Run `acm catalog skill add <name>` to add an entry.');
     return;
   }
 
@@ -440,7 +440,7 @@ export async function catalogSkillList(): Promise<void> {
 
   console.log(borderF);
   console.log();
-  console.log('Run `acsync catalog skill show <id>` for details.');
+  console.log('Run `acm catalog skill show <id>` for details.');
 }
 
 // ============================================================================
@@ -456,7 +456,7 @@ export async function catalogSkillShow(id: string): Promise<void> {
 
   if (!skillWithData) {
     console.error(`Skill entry not found: ${id}\n`);
-    console.log('Run `acsync catalog skill list` to see available entries.');
+    console.log('Run `acm catalog skill list` to see available entries.');
     process.exitCode = 1;
     return;
   }
@@ -506,7 +506,7 @@ export async function catalogSkillAdd(options: CatalogSkillAddOptions): Promise<
   const existing = await getSkill(options.skillId);
   if (existing) {
     console.error(`Skill entry already exists: ${options.skillId}\n`);
-    console.log('Use `acsync skill add` to add it to your project.');
+    console.log('Use `acm skill add` to add it to your project.');
     process.exitCode = 1;
     return;
   }
@@ -535,7 +535,7 @@ Skill content for ${options.skillId}.
 
   await addSkill(entry, content);
   console.log(`Added to catalog: ${entry.id}\n`);
-  console.log('Run `acsync skill add <name>` to add it to your project.');
+  console.log('Run `acm skill add <name>` to add it to your project.');
 }
 
 // ============================================================================
@@ -551,7 +551,7 @@ export async function catalogSkillRemove(id: string): Promise<void> {
 
   if (!removed) {
     console.error(`Skill entry not found: ${id}\n`);
-    console.log('Run `acsync catalog skill list` to see available entries.');
+    console.log('Run `acm catalog skill list` to see available entries.');
     process.exitCode = 1;
     return;
   }

@@ -19,8 +19,8 @@ export async function promptMcps(allowBack = false): Promise<string[]> {
   if (mcps.length === 0) {
     console.log('No MCP entries in catalog.\n');
     console.log('Tip: Use these commands to add MCPs first:');
-    console.log('  acsync catalog mcp add @modelcontextprotocol/server-github');
-    console.log('  acsync catalog mcp add @modelcontextprotocol/server-filesystem\n');
+    console.log('  acm catalog mcp add @modelcontextprotocol/server-github');
+    console.log('  acm catalog mcp add @modelcontextprotocol/server-filesystem\n');
     return [];
   }
 

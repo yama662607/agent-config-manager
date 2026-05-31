@@ -8,7 +8,7 @@ The CLI SHALL expose stable top-level commands whose scope is unambiguous: `cata
 
 **Complete CLI command tree:**
 ```
-acsync
+acm
 ├── catalog           # Manage reusable definitions (user-level)
 │   ├── mcp
 │   │   ├── list      # List all MCP entries in catalog
@@ -54,10 +54,10 @@ acsync
 
 **Top-level help output:**
 ```
-acsync - Agent configuration sync tool
+acm - Agent configuration sync tool
 
 USAGE:
-  acsync [COMMAND]
+  acm [COMMAND]
 
 COMMANDS:
   catalog     Manage reusable MCP and skill definitions
@@ -71,9 +71,9 @@ OPTIONS:
   -V, --version Show version information
 
 EXAMPLES:
-  acsync mcp status              Show MCP status for current project
-  acsync mcp add github --targets codex   Add GitHub MCP to Codex
-  acsync catalog mcp list        List all MCPs in local catalog
+  acm mcp status              Show MCP status for current project
+  acm mcp add github --targets codex   Add GitHub MCP to Codex
+  acm catalog mcp list        List all MCPs in local catalog
 ```
 
 #### Scenario: User inspects the top-level help output
@@ -84,13 +84,13 @@ EXAMPLES:
 Commands with the same verb SHALL keep the same meaning within their scope, so that catalog mutations do not have the same semantics as current-project mutations.
 
 #### Scenario: Catalog and project add commands are both present
-- **WHEN** a user compares `acsync catalog mcp add` with `acsync mcp add`
+- **WHEN** a user compares `acm catalog mcp add` with `acm mcp add`
 - **THEN** the help and behavior MUST distinguish reusable-definition registration from current-project assignment
 
 ### Requirement: Interactive mutations have explicit non-interactive equivalents
 Every interactive mutation flow SHALL have an equivalent non-interactive command form suitable for scripting.
 
 #### Scenario: User wants to automate an interactive flow
-- **WHEN** a command such as `acsync mcp init` or `acsync skill init` offers an interactive selection flow
+- **WHEN** a command such as `acm mcp init` or `acm skill init` offers an interactive selection flow
 - **THEN** the CLI MUST also provide explicit arguments or subcommands that perform the same mutation without prompts
 

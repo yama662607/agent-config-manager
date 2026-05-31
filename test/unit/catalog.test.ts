@@ -5,6 +5,8 @@ import assert from 'node:assert';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import YAML from 'yaml';
+import TOML from '@iarna/toml';
 
 // Import catalog functions
 import {
@@ -22,7 +24,6 @@ import type { McpCatalogEntry } from '../../src/types.js';
 
 // Use a temporary catalog directory for testing
 const TEST_CATALOG_DIR = path.join(os.tmpdir(), '.acsync-test');
-const TEST_CATALOG_FILE = path.join(TEST_CATALOG_DIR, 'catalog.json');
 
 describe('Catalog Module', () => {
   // Mock the home directory for testing
@@ -55,7 +56,7 @@ describe('Catalog Module', () => {
 
     it('should return correct catalog file path', () => {
       const catalogPath = getCatalogPath();
-      assert.ok(catalogPath.endsWith('catalog.json'));
+      assert.ok(catalogPath.endsWith('catalog.toml'));
     });
   });
 
@@ -90,6 +91,76 @@ describe('Catalog Module', () => {
 
       const catalog = await loadCatalog();
       assert.ok(catalog.mcps['test-mcp'], 'Existing entry should persist');
+    });
+
+    it('should seamlessly migrate old catalog.json to catalog.toml', async () => {
+      const oldPath = path.join(TEST_CATALOG_DIR, '.acsync', 'catalog.json');
+      const newPath = path.join(TEST_CATALOG_DIR, '.acsync', 'catalog.toml');
+
+      // Clean up first
+      await fs.rm(newPath, { force: true });
+
+      // Write an old JSON catalog
+      const oldCatalog = {
+        version: '1.0',
+        mcps: {
+          'migrated-mcp': {
+            id: 'migrated-mcp',
+            displayName: 'Migrated MCP',
+            recipe: { transport: 'stdio', command: 'node' }
+          }
+        },
+        skills: {}
+      };
+      await fs.mkdir(path.dirname(oldPath), { recursive: true });
+      await fs.writeFile(oldPath, JSON.stringify(oldCatalog, null, 2), 'utf8');
+
+      // Load catalog (should trigger migration)
+      const loaded = await loadCatalog();
+
+      // Assertions
+      assert.ok(loaded.mcps['migrated-mcp'], 'Migrated MCP should be present in loaded catalog');
+      
+      const oldExists = await fs.access(oldPath).then(() => true).catch(() => false);
+      const newExists = await fs.access(newPath).then(() => true).catch(() => false);
+      
+      assert.strictEqual(oldExists, false, 'Old JSON catalog file should be deleted');
+      assert.strictEqual(newExists, true, 'New TOML catalog file should exist');
+    });
+
+    it('should seamlessly migrate old catalog.yaml to catalog.toml', async () => {
+      const oldPathYaml = path.join(TEST_CATALOG_DIR, '.acsync', 'catalog.yaml');
+      const newPath = path.join(TEST_CATALOG_DIR, '.acsync', 'catalog.toml');
+
+      // Clean up first
+      await fs.rm(newPath, { force: true });
+
+      // Write an old YAML catalog
+      const oldCatalog = {
+        version: '1.0',
+        mcps: {
+          'migrated-mcp-yaml': {
+            id: 'migrated-mcp-yaml',
+            displayName: 'Migrated MCP YAML',
+            recipe: { transport: 'stdio', command: 'node' }
+          }
+        },
+        skills: {}
+      };
+      await fs.mkdir(path.dirname(oldPathYaml), { recursive: true });
+      await fs.writeFile(oldPathYaml, YAML.stringify(oldCatalog), 'utf8');
+
+      // Load catalog (should trigger migration)
+      const loaded = await loadCatalog();
+
+      // Assertions
+      assert.ok(loaded.mcps['migrated-mcp-yaml'], 'Migrated MCP YAML should be present in loaded catalog');
+      
+      const oldExists = await fs.access(oldPathYaml).then(() => true).catch(() => false);
+      const newExists = await fs.access(newPath).then(() => true).catch(() => false);
+      
+      assert.strictEqual(oldExists, false, 'Old YAML catalog file should be deleted');
+      assert.strictEqual(newExists, true, 'New TOML catalog file should exist');
     });
   });
 
@@ -244,6 +315,175 @@ describe('Catalog Module', () => {
 
       assert.strictEqual(entry.recipe.transport, 'http');
       assert.strictEqual(entry.recipe.url, 'https://example.com/mcp');
+    });
+  });
+
+  describe('Copy-Paste MCP Support', () => {
+    it('should dynamically import raw Claude/Codex mcpServers pasted into catalog.toml', async () => {
+      const catalogPath = getCatalogPath();
+
+      // Write a catalog file containing raw mcpServers block
+      const rawCatalog = {
+        version: '1.0',
+        mcps: {},
+        skills: {},
+        mcpServers: {
+          'pasted-mcp': {
+            command: 'node',
+            args: ['-v'],
+            env: { PASTED_KEY: 'pasted_val' }
+          }
+        }
+      };
+
+      await fs.mkdir(path.dirname(catalogPath), { recursive: true });
+      await fs.writeFile(catalogPath, TOML.stringify(rawCatalog as any), 'utf8');
+
+      // Load catalog (should trigger conversion and cleanup)
+      const loaded = await loadCatalog();
+
+      // Assertions
+      assert.ok(loaded.mcps['pasted-mcp'], 'Pasted MCP should be normalized into mcps mapping');
+      assert.strictEqual(loaded.mcps['pasted-mcp']?.recipe.command, 'node');
+      assert.deepEqual(loaded.mcps['pasted-mcp']?.recipe.args, ['-v']);
+      assert.deepEqual(loaded.mcps['pasted-mcp']?.recipe.env, { PASTED_KEY: 'pasted_val' });
+
+      // Verify the atomic cleanup on catalog.toml
+      const savedRaw = await fs.readFile(catalogPath, 'utf8');
+      const savedObj = TOML.parse(savedRaw) as any;
+      assert.strictEqual(savedObj.mcpServers, undefined, 'Raw mcpServers block should be cleaned up from catalog.toml');
+    });
+  });
+
+  describe('Skill Drag-and-Drop Auto-Discovery', () => {
+    it('should automatically sync, register, and unregister skill folders on the fly', async () => {
+      const skillId = 'dragged-skill';
+      const skillDir = path.join(getCatalogDir(), 'skills', skillId);
+      const skillFilePath = path.join(skillDir, 'SKILL.md');
+
+      // Clean up folders first
+      await fs.rm(skillDir, { recursive: true, force: true });
+
+      // Call loadCatalog (index should not contain dragged-skill)
+      let loaded = await loadCatalog();
+      assert.strictEqual(loaded.skills[skillId], undefined);
+
+      // Write a SKILL.md file to drag-and-drop a skill folder manually
+      const skillContent = `---
+name: Dragged Skill
+description: A manually dropped skill folder
+license: MIT
+---
+# Instructions
+Do cool things.
+`;
+      await fs.mkdir(skillDir, { recursive: true });
+      await fs.writeFile(skillFilePath, skillContent, 'utf8');
+
+      // Load catalog (should trigger auto-discovery and synchronization)
+      loaded = await loadCatalog();
+
+      // Assertions
+      assert.ok(loaded.skills[skillId], 'Skill should be auto-discovered');
+      assert.strictEqual(loaded.skills[skillId]?.displayName, 'Dragged Skill');
+      assert.strictEqual(loaded.skills[skillId]?.description, 'A manually dropped skill folder');
+      assert.strictEqual(loaded.skills[skillId]?.license, 'MIT');
+
+      // Deleting the skill folder manually
+      await fs.rm(skillDir, { recursive: true, force: true });
+
+      // Load catalog again (should trigger unregistration)
+      loaded = await loadCatalog();
+
+      // Assertions
+      assert.strictEqual(loaded.skills[skillId], undefined, 'Skill should be automatically unregistered after directory deletion');
+    });
+
+    it('should support symbolic links in skill auto-discovery', async () => {
+      const targetSkillId = 'linked-target';
+      const symlinkSkillId = 'linked-symlink';
+      
+      const targetDir = path.join(os.tmpdir(), '.acsync-linked-target');
+      const symlinkDir = path.join(getCatalogDir(), 'skills', symlinkSkillId);
+      
+      await fs.rm(targetDir, { recursive: true, force: true });
+      await fs.rm(symlinkDir, { recursive: true, force: true });
+      
+      const skillContent = `---
+name: Linked Skill
+description: A skill behind a symlink
+license: Apache-2.0
+---
+# Body
+`;
+      await fs.mkdir(targetDir, { recursive: true });
+      await fs.writeFile(path.join(targetDir, 'SKILL.md'), skillContent, 'utf8');
+      
+      // Create symlink
+      await fs.mkdir(path.join(getCatalogDir(), 'skills'), { recursive: true });
+      await fs.symlink(targetDir, symlinkDir, 'dir');
+      
+      // Load catalog to discover
+      const loaded = await loadCatalog();
+      
+      assert.ok(loaded.skills[symlinkSkillId], 'Symlinked skill should be auto-discovered');
+      assert.strictEqual(loaded.skills[symlinkSkillId]?.displayName, 'Linked Skill');
+      assert.strictEqual(loaded.skills[symlinkSkillId]?.license, 'Apache-2.0');
+      
+      // Cleanup
+      await fs.rm(symlinkDir, { force: true });
+      await fs.rm(targetDir, { recursive: true, force: true });
+    });
+  });
+
+  describe('MCP Metadata Merging', () => {
+    it('should merge copy-pasted raw MCP server configuration with existing metadata', async () => {
+      const catalogPath = getCatalogPath();
+      
+      // Setup catalog with existing entry containing custom tags/displayName
+      const catalog: any = {
+        version: '1.0',
+        mcps: {
+          'merge-mcp': {
+            id: 'merge-mcp',
+            displayName: 'My Custom Display Name',
+            description: 'My custom description',
+            recipe: { transport: 'stdio', command: 'node', args: ['old'] },
+            addedAt: '2026-01-01T00:00:00.000Z',
+            tags: ['custom-tag']
+          }
+        },
+        skills: {}
+      };
+      await fs.mkdir(path.dirname(catalogPath), { recursive: true });
+      await fs.writeFile(catalogPath, TOML.stringify(catalog), 'utf8');
+
+      // Now load it, but simulate having raw mcpServers block with same ID
+      const withPasted: any = {
+        ...catalog,
+        mcpServers: {
+          'merge-mcp': {
+            command: 'node',
+            args: ['new-args'],
+            env: { SOME_VAR: 'val' }
+          }
+        }
+      };
+      await fs.writeFile(catalogPath, TOML.stringify(withPasted), 'utf8');
+
+      const loaded = await loadCatalog();
+
+      const entry = loaded.mcps['merge-mcp'];
+      assert.ok(entry);
+      // Recipe should be updated
+      assert.strictEqual(entry.recipe.command, 'node');
+      assert.deepEqual(entry.recipe.args, ['new-args']);
+      assert.deepEqual(entry.recipe.env, { SOME_VAR: 'val' });
+      // Metadata should be preserved
+      assert.strictEqual(entry.displayName, 'My Custom Display Name');
+      assert.strictEqual(entry.description, 'My custom description');
+      assert.strictEqual(entry.addedAt, '2026-01-01T00:00:00.000Z');
+      assert.deepEqual(entry.tags, ['custom-tag']);
     });
   });
 });

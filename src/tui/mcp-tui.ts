@@ -4,29 +4,26 @@
  * Manage MCP servers for the current project with visual status display.
  */
 
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-
-// @ts-ignore - enquirer uses CommonJS exports
-const { Select, prompt: enquirerPrompt } = require('enquirer');
 import type { TuiState, ScreenAction } from './tui-base.js';
+import { TuiBaseScreen } from './tui-base.js';
 import { getMcpServers } from '../config-adapters.js';
 import { discoverProject } from '../project-discovery.js';
 import { listMcps } from '../catalog.js';
 import type { TargetName } from '../types.js';
 import { join } from 'node:path';
-import { padRightWide } from '../table-utils.js';
+import { padRightWide, truncateWide } from '../table-utils.js';
+import { formatEnvMap, normalizeEnvMap, parseEnvEntriesText } from '../mcp-env.js';
 
 type McpAction = 'toggle' | 'add' | 'remove' | 'edit' | 'switch-target' | 'refresh' | 'back' | 'exit';
 
 /**
  * MCP TUI Screen
  */
-export class McpTuiScreen {
+export class McpTuiScreen extends TuiBaseScreen {
   name = 'mcp' as const;
 
   async render(state: TuiState): Promise<TuiState | null> {
-    // Main loop - header cleared/redrawn in renderMain
+    // Main loop
     while (true) {
       const action = await this.renderMain(state);
       if (action === 'exit') return null;
@@ -34,10 +31,8 @@ export class McpTuiScreen {
     }
   }
 
-  private renderHeader(): void {
-    console.log('╔═══════════════════════════════════════════════════════════════════╗');
-    console.log('║  🔧 Project MCPs                                                    ║');
-    console.log('╚═══════════════════════════════════════════════════════════════════╝');
+  private renderMcpHeader(): void {
+    this.renderHeader('Project MCPs', '🔧');
   }
 
   private getDefaultConfigPath(target: TargetName, projectRoot: string): string {
@@ -46,14 +41,14 @@ export class McpTuiScreen {
         return join(projectRoot, '.mcp.json');
       case 'codex':
         return join(projectRoot, '.codex', 'config.toml');
-      case 'gemini':
-        return join(projectRoot, '.gemini', 'settings.json');
+      case 'antigravity':
+        return join(projectRoot, '.gemini', 'antigravity', 'mcp_config.json');
     }
   }
 
   private async renderMain(state: TuiState): Promise<McpAction> {
-    console.clear();
-    this.renderHeader();
+    this.clear();
+    this.renderMcpHeader();
 
     const discovery = await discoverProject(undefined, { allowHome: state.allowHome });
     const currentTarget = state.target;
@@ -61,9 +56,8 @@ export class McpTuiScreen {
     // Get current status for all targets
     const allStatus: Record<TargetName, Record<string, { enabled: boolean; recipe?: any }>> = {} as any;
 
-    for (const target of ['claude', 'codex', 'gemini'] as TargetName[]) {
+    for (const target of ['claude', 'codex', 'antigravity'] as TargetName[]) {
       try {
-        // Get config path for target
         const configPath = this.getDefaultConfigPath(target, discovery.root);
         const servers = await getMcpServers(target, configPath);
         allStatus[target] = servers;
@@ -79,8 +73,8 @@ export class McpTuiScreen {
 
     // Get unique server names
     const serverNames = new Set<string>();
-    for (const target of ['claude', 'codex', 'gemini'] as TargetName[]) {
-      Object.keys(allStatus[target]).forEach(name => serverNames.add(name));
+    for (const target of ['claude', 'codex', 'antigravity'] as TargetName[]) {
+      Object.keys(allStatus[target] || {}).forEach(name => serverNames.add(name));
     }
 
     const choices = [
@@ -104,34 +98,21 @@ export class McpTuiScreen {
       choices.splice(1, 0, ...serverChoices);
     }
 
-    const prompt = new Select({
-      name: 'action',
-      message: 'Select MCP or action:',
-      choices,
-      actions: {
-        ctrl: { n: 'down', p: 'up' }
-      }
-    });
+    const selected = await this.select<string>('Select MCP or action:', choices);
 
-    try {
-      const selected = await prompt.run();
+    if (!selected || selected === '__exit__') return 'exit';
+    if (selected === '__add__') return await this.handleAdd(state);
+    if (selected === '__switch__') return await this.handleSwitchTarget(state);
 
-      if (selected === '__exit__') return 'exit';
-      if (selected === '__add__') return await this.handleAdd(state);
-      if (selected === '__switch__') return await this.handleSwitchTarget(state);
-
-      // Server selected
-      return await this.handleServerAction(selected as string, allStatus, currentTarget);
-    } catch {
-      return 'exit';
-    }
+    // Server selected
+    return await this.handleServerAction(selected, allStatus, currentTarget);
   }
 
   private renderStatusTable(
     allStatus: Record<TargetName, Record<string, { enabled: boolean; recipe?: any }>>,
     currentTarget: TargetName
   ): void {
-    const targets: TargetName[] = ['claude', 'codex', 'gemini'];
+    const targets: TargetName[] = ['claude', 'codex', 'antigravity'];
     const serverNames = new Set<string>();
 
     for (const target of targets) {
@@ -147,12 +128,12 @@ export class McpTuiScreen {
     const NAME_WIDTH = 30;
     const STATUS_WIDTH = 10;
 
-    const borderH = '  ┌' + '─'.repeat(NAME_WIDTH + 2) + '┬' + '─'.repeat(STATUS_WIDTH + 2) + '┬───┬───┬───┐';
-    const borderM = '  ├' + '─'.repeat(NAME_WIDTH + 2) + '┼' + '─'.repeat(STATUS_WIDTH + 2) + '┼───┼───┼───┤';
-    const borderF = '  └' + '─'.repeat(NAME_WIDTH + 2) + '┴' + '─'.repeat(STATUS_WIDTH + 2) + '┴───┴───┴───┘';
+    const borderH = '  ┌' + '─'.repeat(NAME_WIDTH + 2) + '┬' + '─'.repeat(STATUS_WIDTH + 2) + '┬────┬────┬────┐';
+    const borderM = '  ├' + '─'.repeat(NAME_WIDTH + 2) + '┼' + '─'.repeat(STATUS_WIDTH + 2) + '┼────┼────┼────┤';
+    const borderF = '  └' + '─'.repeat(NAME_WIDTH + 2) + '┴' + '─'.repeat(STATUS_WIDTH + 2) + '┴────┴────┴────┘';
 
     console.log('\n' + borderH);
-    console.log('  │ ' + padRightWide('Server', NAME_WIDTH) + ' │ ' + padRightWide('Status', STATUS_WIDTH) + ' │ C │ C │ G │');
+    console.log('  │ ' + padRightWide('Server', NAME_WIDTH) + ' │ ' + padRightWide('Status', STATUS_WIDTH) + ' │  C │  C │  A │');
     console.log(borderM);
 
     // Rows
@@ -160,20 +141,22 @@ export class McpTuiScreen {
       const status = allStatus[currentTarget]?.[name];
       const enabled = status?.enabled ?? false;
       const statusText = enabled ? '✅ On ' : '❌ Off';
+      const truncated = truncateWide(name, NAME_WIDTH);
 
-      console.log('  │ ' + padRightWide(name, NAME_WIDTH) + ' │ ' + padRightWide(statusText, STATUS_WIDTH) + ' │ ' +
+      console.log('  │ ' + padRightWide(truncated, NAME_WIDTH) + ' │ ' + padRightWide(statusText, STATUS_WIDTH) + ' │ ' +
                   (allStatus.claude?.[name]?.enabled ? '✅ ' : '❌ ') + '│ ' +
                   (allStatus.codex?.[name]?.enabled ? '✅ ' : '❌ ') + '│ ' +
-                  (allStatus.gemini?.[name]?.enabled ? '✅ ' : '❌ ') + '│');
+                  (allStatus.antigravity?.[name]?.enabled ? '✅ ' : '❌ ') + '│');
     }
 
     console.log(borderF);
-    console.log('  Legend: C=Claude, C=Codex, G=Gemini | ✅=Enabled, ❌=Disabled');
+    console.log('  Legend: C=Claude, C=Codex, A=Antigravity | ✅=Enabled, ❌=Disabled');
   }
 
   private async handleSwitchTarget(state: TuiState): Promise<McpAction> {
-    const targets: TargetName[] = ['claude', 'codex', 'gemini'];
+    const targets: TargetName[] = ['claude', 'codex', 'antigravity'];
 
+    const { Select } = require('enquirer');
     const prompt = new Select({
       name: 'target',
       message: 'Select target:',
@@ -207,7 +190,8 @@ export class McpTuiScreen {
       console.log('  1. Add from npm package');
       console.log('  2. Add custom configuration');
 
-      const prompt = new Select({
+      const { Select } = require('enquirer');
+    const prompt = new Select({
         name: 'option',
         message: 'Choose option:',
         choices: [
@@ -243,6 +227,7 @@ export class McpTuiScreen {
       { name: 'back', message: '← Back', hint: '' }
     );
 
+    const { Select } = require('enquirer');
     const prompt = new Select({
       name: 'mcp',
       message: 'Select MCP (or action):',
@@ -295,11 +280,14 @@ export class McpTuiScreen {
 
       if (!response.packageId) return 'back';
 
+      const env = await this.promptForEnv();
+
       const { mcpAdd } = await import('../cli-mcp.js');
       await mcpAdd({
         packageId: response.packageId,
         targets: [state.target],
-        noRegister: false
+        noRegister: false,
+        recipe: env ? { env } : undefined,
       });
       console.log('\n✅ Added to catalog and project!');
     } catch (error: any) {
@@ -311,52 +299,21 @@ export class McpTuiScreen {
   }
 
   private async addCustom(state: TuiState): Promise<McpAction> {
-    const { prompt } = await import('enquirer');
-
     try {
-      const response = await prompt([
-        {
-          type: 'input',
-          name: 'name',
-          message: 'Server name:'
-        },
-        {
-          type: 'select',
-          name: 'transport',
-          message: 'Transport type:',
-          choices: ['stdio', 'http']
-        }
-      ]) as { name: string; transport: 'stdio' | 'http' };
+      const response = await this.promptForServerBasics();
 
       if (!response.name) return 'back';
-
-      let url: string | undefined;
-      let command: string | undefined;
-      let args: string[] | undefined;
-
-      if (response.transport === 'http') {
-        const urlResponse = await prompt({
-          type: 'input',
-          name: 'url',
-          message: 'HTTP URL:'
-        }) as { url: string };
-        url = urlResponse.url;
-      } else {
-        const cmdResponse = await prompt({
-          type: 'input',
-          name: 'command',
-          message: 'Command (e.g., npx):'
-        }) as { command: string };
-        command = cmdResponse.command;
-      }
+      const recipe = await this.promptForRecipe(response.transport);
 
       // Add to catalog first
       const { catalogMcpAdd } = await import('../cli-catalog.js');
       await catalogMcpAdd({
         packageId: response.name,
-        url,
-        command,
-        args
+        url: recipe.url,
+        command: recipe.command,
+        args: recipe.args,
+        cwd: recipe.cwd,
+        env: recipe.env,
       });
 
       // Then add to project
@@ -364,7 +321,8 @@ export class McpTuiScreen {
       await mcpAdd({
         packageId: response.name,
         targets: [state.target],
-        noRegister: true
+        noRegister: true,
+        recipe,
       });
 
       console.log('\n✅ Added to catalog and project!');
@@ -382,15 +340,19 @@ export class McpTuiScreen {
     currentTarget: TargetName
   ): Promise<McpAction> {
     const isEnabled = allStatus[currentTarget]?.[serverName]?.enabled ?? false;
+    const recipe = allStatus[currentTarget]?.[serverName]?.recipe;
 
     console.log(`\n🔧 ${serverName}`);
     console.log('─'.repeat(60));
+    this.renderRecipeSummary(recipe);
 
+    const { Select } = require('enquirer');
     const prompt = new Select({
       name: 'action',
       message: `Server is ${isEnabled ? 'enabled' : 'disabled'}. What would you like to do?`,
       choices: [
         { name: 'toggle', message: isEnabled ? '❌ Disable' : '✅ Enable' },
+        { name: 'edit', message: '✏️  Edit configuration' },
         { name: 'remove', message: '🗑️  Remove from project' },
         { name: 'back', message: '← Back' }
       ],
@@ -404,6 +366,7 @@ export class McpTuiScreen {
 
       if (action === 'back') return 'refresh';
       if (action === 'toggle') return await this.toggleServer(serverName, currentTarget, isEnabled);
+      if (action === 'edit') return await this.editServer(serverName, currentTarget, recipe);
       if (action === 'remove') return await this.removeServer(serverName, currentTarget);
     } catch {
       return 'refresh';
@@ -446,11 +409,32 @@ export class McpTuiScreen {
         initial: false
       }) as { confirm: boolean };
 
-      if (!confirmed) return 'refresh';
+      if (!confirmed || !confirmed.confirm) return 'refresh';
 
       const { mcpRemove } = await import('../cli-mcp.js');
       await mcpRemove({ serverName, targets: [target] });
       console.log(`\n✅ Removed ${serverName}`);
+    } catch (error: any) {
+      if (error instanceof Error && error.message.includes('User force closed')) {
+        throw error;
+      }
+      console.error(`\n❌ Error: ${error.message}`);
+    }
+
+    await this.pressEnter();
+    return 'refresh';
+  }
+
+  private async editServer(serverName: string, target: TargetName, recipe?: any): Promise<McpAction> {
+    try {
+      const nextRecipe = await this.promptForRecipe(this.detectTransport(recipe), recipe);
+      const { mcpEdit } = await import('../cli-mcp.js');
+      await mcpEdit({
+        serverName,
+        targets: [target],
+        recipe: nextRecipe,
+      });
+      console.log(`\n✅ Updated ${serverName}`);
     } catch (error: any) {
       console.error(`\n❌ Error: ${error.message}`);
     }
@@ -459,13 +443,120 @@ export class McpTuiScreen {
     return 'refresh';
   }
 
-  private pressEnter(): Promise<void> {
-    return new Promise(resolve => {
-      process.stdin.once('data', () => resolve());
-    });
+  private renderRecipeSummary(recipe?: any): void {
+    if (!recipe) {
+      console.log('  No recipe details available.\n');
+      return;
+    }
+
+    const transport = this.detectTransport(recipe);
+    console.log(`  Transport: ${transport}`);
+    if (recipe.command) console.log(`  Command: ${recipe.command}`);
+    if (recipe.args?.length) console.log(`  Args: ${JSON.stringify(recipe.args)}`);
+    if (recipe.url) console.log(`  URL: ${recipe.url}`);
+    if (recipe.cwd) console.log(`  CWD: ${recipe.cwd}`);
+    console.log(`  Env: ${formatEnvMap(recipe.env)}\n`);
   }
 
-  handleAction(state: TuiState, action: ScreenAction): Promise<TuiState> {
-    return Promise.resolve(state);
+  private detectTransport(recipe?: any): 'stdio' | 'http' {
+    return recipe?.url ? 'http' : 'stdio';
+  }
+
+  private async promptForServerBasics(): Promise<{ name: string; transport: 'stdio' | 'http' }> {
+    const { prompt } = await import('enquirer');
+    return await prompt([
+      {
+        type: 'input',
+        name: 'name',
+        message: 'Server name:'
+      },
+      {
+        type: 'select',
+        name: 'transport',
+        message: 'Transport type:',
+        choices: ['stdio', 'http']
+      }
+    ]) as { name: string; transport: 'stdio' | 'http' };
+  }
+
+  private async promptForRecipe(
+    transport: 'stdio' | 'http',
+    initial: { command?: string; args?: string[]; url?: string; cwd?: string; env?: Record<string, string> } = {}
+  ): Promise<{ command?: string; args?: string[]; url?: string; cwd?: string; env?: Record<string, string> }> {
+    const { prompt } = await import('enquirer');
+    const recipe: { command?: string; args?: string[]; url?: string; cwd?: string; env?: Record<string, string> } = {};
+
+    if (transport === 'http') {
+      const response = await prompt({
+        type: 'input',
+        name: 'url',
+        message: 'HTTP URL:',
+        initial: initial.url ?? '',
+      }) as { url: string };
+      recipe.url = response.url;
+    } else {
+      const response = await prompt([
+        {
+          type: 'input',
+          name: 'command',
+          message: 'Command (e.g., npx):',
+          initial: initial.command ?? '',
+        },
+        {
+          type: 'input',
+          name: 'args',
+          message: 'Args (JSON array, optional):',
+          initial: initial.args?.length ? JSON.stringify(initial.args) : '',
+        },
+        {
+          type: 'input',
+          name: 'cwd',
+          message: 'Working directory (optional):',
+          initial: initial.cwd ?? '',
+        }
+      ]) as { command: string; args: string; cwd: string };
+
+      recipe.command = response.command;
+      if (response.args.trim()) {
+        recipe.args = JSON.parse(response.args);
+      }
+      if (response.cwd.trim()) {
+        recipe.cwd = response.cwd.trim();
+      }
+    }
+
+    const env = await this.promptForEnv(initial.env);
+    if (env) {
+      recipe.env = env;
+    }
+
+    return recipe;
+  }
+
+  private async promptForEnv(initial?: Record<string, string>): Promise<Record<string, string> | undefined> {
+    const { prompt } = await import('enquirer');
+    const response = await prompt({
+      type: 'input',
+      name: 'env',
+      message: 'Environment variables (KEY=value, comma-separated, or JSON; blank for none):',
+      initial: this.envPromptInitialValue(initial),
+    }) as { env: string };
+
+    if (!response.env.trim()) {
+      return undefined;
+    }
+
+    return normalizeEnvMap(parseEnvEntriesText(response.env));
+  }
+
+  private envPromptInitialValue(env?: Record<string, string>): string {
+    if (!env || Object.keys(env).length === 0) {
+      return '';
+    }
+
+    return Object.entries(env)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, value]) => `${key}=${value}`)
+      .join(', ');
   }
 }

@@ -1,14 +1,15 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import TOML from '@iarna/toml';
+import { normalizeEnvMap, validateEnvMap } from './mcp-env.js';
 import type {
   TargetName,
   ClaudeMcpConfig,
   ClaudeMcpServer,
   CodexConfig,
   CodexMcpServer,
-  GeminiSettings,
-  GeminiMcpServer,
+  AntigravitySettings,
+  AntigravityMcpServer,
   McpRecipe,
   ConfigReadResult,
 } from './types.js';
@@ -19,6 +20,8 @@ import type {
 
 /** Valid MCP server name pattern (allows npm scoped packages like @scope/package) */
 const SERVER_NAME_PATTERN = /^(@[a-zA-Z0-9._-]+\/)?[a-zA-Z0-9._-]+$/;
+/** Codex mcp_servers table keys must be simple identifiers. */
+const CODEX_SERVER_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 
 /** Valid command pattern: basename only, no path separators (except npx, node, etc.) */
 const COMMAND_PATTERN = /^[a-zA-Z0-9._-]+$/;
@@ -92,6 +95,26 @@ function validateArgs(args: string[]): void {
   }
 }
 
+function validateRecipe(recipe: McpRecipe): void {
+  if (recipe.command) {
+    validateCommand(recipe.command);
+  }
+  if (recipe.args && recipe.args.length > 0) {
+    validateArgs(recipe.args);
+  }
+  if (recipe.url) {
+    try {
+      const url = new URL(recipe.url);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        throw new Error('URL must use http or https protocol');
+      }
+    } catch {
+      throw new Error('Invalid URL format');
+    }
+  }
+  validateEnvMap(recipe.env);
+}
+
 // ============================================================================
 // Config Reading
 // ============================================================================
@@ -108,8 +131,8 @@ export async function readNativeConfig(target: TargetName, configPath: string): 
         return parseClaudeConfig(raw);
       case 'codex':
         return parseCodexConfig(raw);
-      case 'gemini':
-        return parseGeminiConfig(raw);
+      case 'antigravity':
+        return parseAntigravityConfig(raw);
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -137,9 +160,9 @@ function parseCodexConfig(raw: string): ConfigReadResult<CodexConfig> {
   }
 }
 
-function parseGeminiConfig(raw: string): ConfigReadResult<GeminiSettings> {
+function parseAntigravityConfig(raw: string): ConfigReadResult<AntigravitySettings> {
   try {
-    const config = JSON.parse(raw) as GeminiSettings;
+    const config = JSON.parse(raw) as AntigravitySettings;
     return { config, exists: true };
   } catch {
     return { config: null, exists: true, raw };
@@ -168,7 +191,7 @@ export async function writeNativeConfig(
     case 'codex':
       content = TOML.stringify(config as any);
       break;
-    case 'gemini':
+    case 'antigravity':
       content = JSON.stringify(config, null, 2);
       break;
   }
@@ -190,28 +213,10 @@ export async function addMcpToConfig(
   configPath: string,
   serverName: string,
   recipe: McpRecipe
-): Promise<void> {
+): Promise<string> {
   // Validate server name
   validateServerName(serverName);
-
-  // Validate recipe content
-  if (recipe.command) {
-    validateCommand(recipe.command);
-  }
-  if (recipe.args && recipe.args.length > 0) {
-    validateArgs(recipe.args);
-  }
-  if (recipe.url) {
-    // Basic URL validation - ensure it starts with http:// or https://
-    try {
-      const url = new URL(recipe.url);
-      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-        throw new Error('URL must use http or https protocol');
-      }
-    } catch {
-      throw new Error('Invalid URL format');
-    }
-  }
+  validateRecipe(recipe);
 
   const result = await readNativeConfig(target, configPath);
 
@@ -223,13 +228,50 @@ export async function addMcpToConfig(
     case 'codex':
       config = result.config ?? { mcp_servers: {} };
       break;
-    case 'gemini':
+    case 'antigravity':
       config = result.config ?? { mcpServers: {} };
       break;
   }
 
-  await addMcpServer(target, config, serverName, recipe);
+  const actualServerName = await addMcpServer(target, config, serverName, recipe);
   await writeNativeConfig(target, configPath, config);
+  return actualServerName;
+}
+
+export async function updateMcpInConfig(
+  target: TargetName,
+  configPath: string,
+  serverName: string,
+  recipe: McpRecipe
+): Promise<string> {
+  validateServerName(serverName);
+
+  const result = await readNativeConfig(target, configPath);
+  const existingServers = await getMcpServers(target, configPath);
+  const existingRecipe = existingServers[serverName]?.recipe;
+  const mergedRecipe: McpRecipe = {
+    ...(existingRecipe ?? {}),
+    ...recipe,
+    env: recipe.env ?? existingRecipe?.env,
+  };
+  validateRecipe(mergedRecipe);
+
+  let config: any;
+  switch (target) {
+    case 'claude':
+      config = result.config ?? { mcpServers: {} };
+      break;
+    case 'codex':
+      config = result.config ?? { mcp_servers: {} };
+      break;
+    case 'antigravity':
+      config = result.config ?? { mcpServers: {} };
+      break;
+  }
+
+  const actualServerName = await addMcpServer(target, config, serverName, mergedRecipe);
+  await writeNativeConfig(target, configPath, config);
+  return actualServerName;
 }
 
 /**
@@ -304,7 +346,7 @@ async function addMcpServer(
   config: any,
   serverName: string,
   recipe: McpRecipe
-): Promise<void> {
+): Promise<string> {
   switch (target) {
     case 'claude': {
       const server: ClaudeMcpServer = {};
@@ -316,9 +358,12 @@ async function addMcpServer(
         server.command = recipe.command;
         if (recipe.args) server.args = recipe.args;
       }
-      if (recipe.env) server.env = recipe.env;
+      const claudeEnv = normalizeEnvMap(recipe.env);
+      if (claudeEnv) server.env = claudeEnv;
+      
+      if (!config.mcpServers) config.mcpServers = {};
       (config as ClaudeMcpConfig).mcpServers[serverName] = server;
-      break;
+      return serverName;
     }
 
     case 'codex': {
@@ -330,22 +375,30 @@ async function addMcpServer(
         if (recipe.args) server.args = recipe.args;
       }
       if (recipe.cwd) server.cwd = recipe.cwd;
-      if (recipe.env) server.env = recipe.env;
-      (config as CodexConfig).mcp_servers![serverName] = server;
-      break;
+      const codexEnv = normalizeEnvMap(recipe.env);
+      if (codexEnv) server.env = codexEnv;
+
+      const codexServerName = getCodexServerKey(config as CodexConfig, serverName);
+      if (!config.mcp_servers) config.mcp_servers = {};
+      (config as CodexConfig).mcp_servers![codexServerName] = server;
+      return codexServerName;
     }
 
-    case 'gemini': {
-      const server: GeminiMcpServer = {};
+    case 'antigravity': {
+      const server: AntigravityMcpServer = {};
       if (recipe.url) {
-        server.url = recipe.url;
+        server.serverUrl = recipe.url;
       } else if (recipe.command) {
         server.command = recipe.command;
         if (recipe.args) server.args = recipe.args;
       }
       if (recipe.cwd) server.cwd = recipe.cwd;
-      (config as GeminiSettings).mcpServers![serverName] = server;
-      break;
+      const antigravityEnv = normalizeEnvMap(recipe.env);
+      if (antigravityEnv) server.env = antigravityEnv;
+      
+      if (!config.mcpServers) config.mcpServers = {};
+      (config as AntigravitySettings).mcpServers![serverName] = server;
+      return serverName;
     }
   }
 }
@@ -360,13 +413,15 @@ async function removeMcpServer(
       delete (config as ClaudeMcpConfig).mcpServers[serverName];
       break;
 
-    case 'codex':
-      if (config.mcp_servers) {
-        delete config.mcp_servers[serverName];
+    case 'codex': {
+      const codexServerName = resolveCodexServerKey(config as CodexConfig, serverName);
+      if (config.mcp_servers && codexServerName) {
+        delete config.mcp_servers[codexServerName];
       }
       break;
+    }
 
-    case 'gemini':
+    case 'antigravity':
       if (config.mcpServers) {
         delete config.mcpServers[serverName];
       }
@@ -388,16 +443,18 @@ async function setMcpEnabled(
       }
       break;
 
-    case 'codex':
-      if (config.mcp_servers?.[serverName]) {
-        (config.mcp_servers[serverName] as CodexMcpServer).enabled = enabled;
+    case 'codex': {
+      const codexServerName = resolveCodexServerKey(config as CodexConfig, serverName);
+      if (codexServerName && config.mcp_servers?.[codexServerName]) {
+        (config.mcp_servers[codexServerName] as CodexMcpServer).enabled = enabled;
       }
       break;
+    }
 
-    case 'gemini':
-      // Gemini doesn't support enabled flag - remove when disabled
+    case 'antigravity':
+      // Antigravity doesn't support enabled flag - remove when disabled
       if (!enabled) {
-        delete (config as GeminiSettings).mcpServers?.[serverName];
+        delete (config as AntigravitySettings).mcpServers?.[serverName];
       }
       break;
   }
@@ -448,6 +505,7 @@ export async function getMcpServers(
       const servers: Record<string, { enabled: boolean; recipe?: McpRecipe }> = {};
       if (config.mcp_servers) {
         for (const [name, server] of Object.entries(config.mcp_servers)) {
+          const resolvedName = inferCanonicalServerName(name, server);
           const recipe: McpRecipe = {};
           if (server.httpUrl) {
             recipe.url = server.httpUrl;
@@ -459,7 +517,7 @@ export async function getMcpServers(
           }
           if (server.cwd) recipe.cwd = server.cwd;
           if (server.env) recipe.env = server.env;
-          servers[name] = {
+          servers[resolvedName] = {
             enabled: server.enabled !== false,
             recipe: server.enabled !== false ? recipe : undefined,
           };
@@ -468,14 +526,14 @@ export async function getMcpServers(
       return servers;
     }
 
-    case 'gemini': {
-      const config = result.config as GeminiSettings;
+    case 'antigravity': {
+      const config = result.config as AntigravitySettings;
       const servers: Record<string, { enabled: boolean; recipe?: McpRecipe }> = {};
       if (config.mcpServers) {
         for (const [name, server] of Object.entries(config.mcpServers)) {
           const recipe: McpRecipe = {};
-          if (server.url) {
-            recipe.url = server.url;
+          if (server.serverUrl) {
+            recipe.url = server.serverUrl;
             recipe.transport = 'http';
           } else if (server.command) {
             recipe.command = server.command;
@@ -483,6 +541,7 @@ export async function getMcpServers(
             recipe.transport = 'stdio';
           }
           if (server.cwd) recipe.cwd = server.cwd;
+          if (server.env) recipe.env = server.env;
           servers[name] = {
             enabled: true,
             recipe,
@@ -492,4 +551,77 @@ export async function getMcpServers(
       return servers;
     }
   }
+}
+
+function inferCanonicalServerName(name: string, server: CodexMcpServer): string {
+  return inferPackageIdFromRecipe(server.command, server.args) ?? name;
+}
+
+function resolveCodexServerKey(config: CodexConfig, requestedName: string): string | null {
+  if (!config.mcp_servers) return null;
+  if (config.mcp_servers[requestedName]) return requestedName;
+
+  for (const [name, server] of Object.entries(config.mcp_servers)) {
+    if (inferCanonicalServerName(name, server) === requestedName) {
+      return name;
+    }
+  }
+
+  return null;
+}
+
+function getCodexServerKey(config: CodexConfig, serverName: string): string {
+  const existing = resolveCodexServerKey(config, serverName);
+  if (existing) {
+    return existing;
+  }
+
+  const baseName = sanitizeCodexServerName(serverName);
+  if (!config.mcp_servers?.[baseName]) {
+    return baseName;
+  }
+
+  let suffix = 2;
+  while (config.mcp_servers[`${baseName}_${suffix}`]) {
+    suffix++;
+  }
+
+  return `${baseName}_${suffix}`;
+}
+
+function sanitizeCodexServerName(serverName: string): string {
+  if (CODEX_SERVER_NAME_PATTERN.test(serverName)) {
+    return serverName;
+  }
+
+  const packageName = serverName.split('/').pop() ?? serverName;
+  const normalized = packageName
+    .replace(/^server-/, '')
+    .replace(/-mcp$/, '')
+    .replace(/[^a-zA-Z0-9_-]+/g, '_')
+    .replace(/-+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  return normalized || 'server';
+}
+
+function inferPackageIdFromRecipe(command?: string, args?: string[]): string | null {
+  if (!command || !args || args.length === 0) {
+    return null;
+  }
+
+  if (!['npx', 'npm', 'pnpm', 'yarn', 'bunx'].includes(command)) {
+    return null;
+  }
+
+  for (const arg of args) {
+    if (arg.startsWith('-')) continue;
+    if (arg === 'exec' || arg === 'dlx') continue;
+    if (SERVER_NAME_PATTERN.test(arg)) {
+      return arg;
+    }
+  }
+
+  return null;
 }

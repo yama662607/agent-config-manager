@@ -45,7 +45,7 @@ describe('TUI Integration Tests', { concurrency: false }, () => {
 
     // Create test config files
     await fs.mkdir(path.join(TEST_PROJECT_DIR, '.codex'), { recursive: true });
-    await fs.mkdir(path.join(TEST_PROJECT_DIR, '.gemini'), { recursive: true });
+    await fs.mkdir(path.join(TEST_PROJECT_DIR, '.gemini', 'antigravity'), { recursive: true });
 
     await fs.writeFile(
       path.join(TEST_PROJECT_DIR, '.mcp.json'),
@@ -58,7 +58,7 @@ describe('TUI Integration Tests', { concurrency: false }, () => {
     );
 
     await fs.writeFile(
-      path.join(TEST_PROJECT_DIR, '.gemini', 'settings.json'),
+      path.join(TEST_PROJECT_DIR, '.gemini', 'antigravity', 'mcp_config.json'),
       JSON.stringify({ mcpServers: {} }, null, 2)
     );
 
@@ -224,11 +224,11 @@ describe('TUI Integration Tests', { concurrency: false }, () => {
       assert.ok(exists, 'Codex config should exist');
     });
 
-    it('should resolve Gemini config path', async () => {
-      const configPath = path.join(TEST_PROJECT_DIR, '.gemini', 'settings.json');
+    it('should resolve Antigravity config path', async () => {
+      const configPath = path.join(TEST_PROJECT_DIR, '.gemini', 'antigravity', 'mcp_config.json');
       const exists = await fs.access(configPath).then(() => true).catch(() => false);
 
-      assert.ok(exists, 'Gemini config should exist');
+      assert.ok(exists, 'Antigravity config should exist');
     });
   });
 
@@ -256,31 +256,38 @@ describe('TUI Integration Tests', { concurrency: false }, () => {
     it('should handle non-existent MCP server gracefully', async () => {
       const { stderr } = await execAsync(`node "${CLI_PATH}" mcp remove non-existent-server --targets claude`);
 
-      // Should show error message
+      // Should show error message or complete
       assert.ok(
-        stderr.includes('not found') || stderr.includes('error') || stderr.includes('Error') || stderr.includes(''),
+        stderr.includes('not found') || stderr.includes('error') || stderr.includes('Error') || stderr === '',
         'Should handle error gracefully'
       );
     });
 
     it('should handle invalid target gracefully', async () => {
-      const { stderr } = await execAsync(`node "${CLI_PATH}" mcp add test-server --targets invalid-target`);
-
-      // Should show error or validation message
-      assert.ok(
-        stderr.includes('Invalid') || stderr.includes('target') || stderr.includes('error') || stderr.includes(''),
-        'Should validate targets'
-      );
+      try {
+        await execAsync(`node "${CLI_PATH}" mcp add test-server --targets invalid-target`);
+        assert.fail('Should have exited with non-zero code');
+      } catch (error: any) {
+        const stderr = error.stderr || '';
+        assert.ok(
+          stderr.includes('Invalid') || stderr.includes('target'),
+          'Should show validation error'
+        );
+      }
     });
 
     it('should handle missing catalog entries gracefully', async () => {
-      const { stderr } = await execAsync(`node "${CLI_PATH}" catalog mcp show non-existent-package-12345`);
-
-      // Should show not found message
-      assert.ok(
-        stderr.includes('not found') || stderr.includes('not in catalog') || stderr.includes('') || stderr.includes('error'),
-        'Should handle missing entries'
-      );
+      try {
+        await execAsync(`node "${CLI_PATH}" catalog mcp show non-existent-package-12345`);
+        assert.fail('Should have exited with non-zero code');
+      } catch (error: any) {
+        const stderr = error.stderr || '';
+        const stdout = error.stdout || '';
+        assert.ok(
+          stderr.includes('not found') || stdout.includes('not found') || stdout.includes('available entries'),
+          'Should show not found message'
+        );
+      }
     });
   });
 
@@ -345,7 +352,7 @@ describe('TUI Integration Tests', { concurrency: false }, () => {
 describe('TUI Screen Transitions', () => {
   describe('Screen Navigation', () => {
     it('should support target switching', () => {
-      const targets = ['claude', 'codex', 'gemini'] as const;
+      const targets = ['claude', 'codex', 'antigravity'] as const;
 
       for (const target of targets) {
         assert.ok(targets.includes(target), `Target ${target} should be valid`);
@@ -401,7 +408,7 @@ describe('TUI Screen Transitions', () => {
         currentScreen: 'catalog' as const,
         selectedItem: null,
         filter: '',
-        target: 'gemini' as const,
+        target: 'antigravity' as const,
         lastAction: 'add' as string | null,
       };
 

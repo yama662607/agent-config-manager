@@ -1,7 +1,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { exec } from 'node:child_process';
+import { promisify } from 'node:util';
 import { discoverProject } from './project-discovery.js';
 import { loadCatalog } from './catalog.js';
+
+const execAsync = promisify(exec);
 
 // ============================================================================
 // Validate Command
@@ -93,31 +97,43 @@ export async function validate(options: ValidateOptions): Promise<void> {
 
 export interface DoctorOptions {
   fix: boolean;
+  strict?: boolean;
+  allowHome?: boolean;
 }
 
 /**
  * Run diagnostics and health checks.
  */
-export async function doctor(options: DoctorOptions): Promise<void> {
+export async function doctor(options: DoctorOptions): Promise<{ hasErrors: boolean; hasWarnings: boolean }> {
   console.log('acsync Diagnostics\n');
   console.log('='.repeat(50));
+
+  let hasErrors = false;
+  let hasWarnings = false;
+
+  const allowHome = options.allowHome ?? false;
 
   // 1. Project discovery
   console.log('\n[Project Discovery]');
   try {
-    const discovery = await discoverProject();
+    const discovery = await discoverProject(process.cwd(), { allowHome });
     console.log(`  ✓ Project root: ${discovery.root}`);
     console.log(`  ✓ Detected targets:`);
     for (const [target, configPath] of discovery.targets.entries()) {
       const status = configPath.exists ? '✓' : '✗';
       console.log(`      ${status} ${target}: ${configPath.path}`);
+      if (!configPath.exists) {
+        hasWarnings = true;
+      }
     }
   } catch (error) {
     console.log(`  ✗ ${(error as Error).message}`);
+    hasErrors = true;
   }
 
   // 2. Catalog health
   console.log('\n[Catalog Health]');
+  let catalogFixed = false;
   try {
     const catalog = await loadCatalog();
     const entryCount = Object.keys(catalog.mcps).length;
@@ -132,36 +148,56 @@ export async function doctor(options: DoctorOptions): Promise<void> {
         const { initCatalog } = await import('./catalog.js');
         await initCatalog();
         console.log('  ✓ Catalog initialized');
+        catalogFixed = true;
       } catch (fixError) {
         console.log(`  ✗ Fix failed: ${(fixError as Error).message}`);
+        hasErrors = true;
       }
+    } else {
+      hasErrors = true;
     }
   }
 
   // 3. Environment checks
   console.log('\n[Environment]');
-  await checkCommand('node', 'Node.js');
-  await checkCommand('npm', 'npm');
-  await checkCommand('npx', 'npx');
+  const hasNode = await checkCommand('node', 'Node.js');
+  const hasNpm = await checkCommand('npm', 'npm');
+  const hasNpx = await checkCommand('npx', 'npx');
+  if (!hasNode || !hasNpm || !hasNpx) {
+    hasWarnings = true;
+  }
 
   // 4. Target readiness
   console.log('\n[Target Readiness]');
   try {
-    const discovery = await discoverProject();
+    const discovery = await discoverProject(process.cwd(), { allowHome });
     for (const [target, configPath] of discovery.targets.entries()) {
       if (configPath.exists) {
         const size = (await fs.stat(configPath.path)).size;
         console.log(`  ✓ ${target}: config exists (${size} bytes)`);
       } else {
         console.log(`  ⚠ ${target}: config not found (run \`acsync mcp init\`)`);
+        hasWarnings = true;
       }
     }
   } catch (error) {
     console.log(`  ✗ ${(error as Error).message}`);
+    hasErrors = true;
   }
 
   console.log('\n' + '='.repeat(50));
-  console.log('\nFor more help, run `acsync --help` or visit the documentation.\n');
+  
+  if (hasErrors) {
+    console.error('\nDiagnostics failed with errors.');
+    process.exitCode = 1;
+  } else if (hasWarnings && options.strict) {
+    console.error('\nDiagnostics failed with warnings (strict mode).');
+    process.exitCode = 1;
+  } else {
+    console.log('\nFor more help, run `acsync --help` or visit the documentation.\n');
+  }
+
+  return { hasErrors, hasWarnings };
 }
 
 async function getCatalogPath(): Promise<string> {
@@ -169,24 +205,28 @@ async function getCatalogPath(): Promise<string> {
   return getPath();
 }
 
-async function checkCommand(command: string, name: string): Promise<void> {
+async function checkCommand(command: string, name: string): Promise<boolean> {
   try {
     const result = await commandExists(command);
     if (result) {
       console.log(`  ✓ ${name}: found`);
+      return true;
     } else {
       console.log(`  ⚠ ${name}: not found (may be required for some MCP servers)`);
+      return false;
     }
   } catch (error) {
     console.log(`  ⚠ ${name}: unable to check`);
+    return false;
   }
 }
 
 async function commandExists(command: string): Promise<boolean> {
   try {
     const isWindows = process.platform === 'win32';
-    const result = await (isWindows ? `where ${command}` : `which ${command}`);
-    return !!result;
+    const cmd = isWindows ? `where ${command}` : `which ${command}`;
+    await execAsync(cmd);
+    return true;
   } catch {
     return false;
   }

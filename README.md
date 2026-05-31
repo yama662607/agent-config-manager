@@ -145,15 +145,53 @@ acsync doctor --fix # Attempt auto-fix
 |--------|-------------|-----|--------|
 | Claude Code | `.mcp.json` | ✓ | ✓ |
 | Codex | `.codex/config.toml` | ✓ | ✓ |
-| Gemini CLI | `.gemini/settings.json` | ✓ | ✓ |
+| Antigravity CLI | `.gemini/antigravity/mcp_config.json` | ✓ | ✓ |
+
+## Manual Catalog Editing & Advanced Features
+
+The `acsync` catalog database (`~/.acsync/catalog.toml`) is saved in TOML format, making it incredibly easy for developers to open and edit manually in any text editor, or to import configuration blocks directly.
+
+### 1. Copy-Paste Import of Claude/Codex Configurations (MCP Server Auto-Normalization)
+You can copy raw `mcpServers` (or `mcp_servers`) blocks directly from existing Claude Code or Codex configuration files and paste them right into the root level of your `~/.acsync/catalog.toml` file:
+
+```toml
+# Paste this directly into ~/.acsync/catalog.toml!
+[mcpServers.sqlite]
+command = "uvx"
+args = [
+  "mcp-server-sqlite",
+  "--db-path",
+  "/path/to/db.sqlite"
+]
+
+[mcpServers.sqlite.env]
+SOME_ENV_VAR = "value"
+```
+
+**Merging and Normalization Process:**
+- The next time any `acsync` command runs or the catalog is loaded, it automatically detects this raw block.
+- The raw configuration is converted and normalized into standard `acsync` catalog entries (`catalog.mcps`) automatically.
+- During normalization, **existing metadata (such as `displayName`, `tags`, `description`) will NOT be destructively overwritten.** The tool safely merges the new execution recipe into your existing catalog entry, preserving your user-edited metadata.
+- Once migration and normalization complete, the pasted raw `mcpServers` block is automatically cleaned up and removed from `catalog.toml`.
+
+### 2. Drag-and-Drop Skill Auto-Discovery & Symlink Support
+You can manage skills effortlessly by dropping folders containing a `SKILL.md` directly into the `~/.acsync/skills/` directory.
+
+- **Drag-and-Drop Folders:** Simply copy or move a skill directory (e.g. `frontend-design`) into `~/.acsync/skills/`.
+- **Symbolic Link Support:** You can also link skills via symlinks (e.g., `ln -s /path/to/my-skill ~/.acsync/skills/my-skill`). `acsync` automatically resolves symlinks and scans the target directory's `SKILL.md` to register metadata (name, description, license) into the catalog index.
+- **Auto-Unregistration:** Deleting or removing a directory or symlink from `~/.acsync/skills/` will automatically sync with the catalog index upon the next run, safely unregistering the deleted skill to keep everything tidy and synchronized with the filesystem.
+- **Robust Metadata Extraction:** Frontmatter parser utilizes a native YAML parser under the hood, ensuring safe extraction even with multiline descriptions or complex YAML frontmatter structures in `SKILL.md`.
+
+### 3. File Locking & Concurrency Protection
+Any writes/mutations to the catalog are guarded using a lightweight file lock mechanism (`~/.acsync/catalog.lock`). This ensures that even when multiple agents or parallel processes access or mutate the catalog, write collisions and file corruption are completely prevented.
 
 ## Architecture
 
 ```
 ~/.acsync/                    # User-level catalog
-├── catalog.json              # Reusable MCP and skill definitions
+├── catalog.toml              # Reusable MCP and skill definitions (TOML format)
 ├── catalog-schema.json       # Schema versioning
-└── catalog.lock              # Concurrent access safety
+└── catalog.lock              # Concurrent access safety (created/deleted automatically)
 
 my-project/                   # Your project
 ├── .git/
@@ -163,7 +201,9 @@ my-project/                   # Your project
 ├── .codex/config.toml        # Codex config (edited directly)
 ├── .codex/skills/            # Codex skills
 │   └── <name>/SKILL.md
-└── .gemini/settings.json     # Gemini CLI config (edited directly)
+├── .gemini/antigravity/mcp_config.json  # Antigravity CLI config (edited directly)
+└── .agents/skills/           # Antigravity CLI skills
+    └── <name>/SKILL.md
 ```
 
 ## Benefits
@@ -172,7 +212,7 @@ my-project/                   # Your project
 - **Easy to explain** — "edits `.mcp.json`" vs "generates from manifest"
 - **Tool-agnostic** — remove `acsync` and your project still works
 - **CI-friendly** — `acsync validate` for checking, no drift detection needed
-- **Cross-agent** — manage MCP and skills across Claude Code, Codex, and Gemini CLI
+- **Cross-agent** — manage MCP and skills across Claude Code, Codex, and Antigravity CLI
 
 ## License
 

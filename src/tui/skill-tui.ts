@@ -4,12 +4,8 @@
  * Manage skills for the current project.
  */
 
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-
-// @ts-ignore - enquirer uses CommonJS exports
-const { Select } = require('enquirer');
 import type { TuiState, ScreenAction } from './tui-base.js';
+import { TuiBaseScreen } from './tui-base.js';
 import { listSkills } from '../catalog.js';
 import type { TargetName } from '../types.js';
 import { join } from 'node:path';
@@ -25,11 +21,11 @@ interface SkillStatus {
 /**
  * Skill TUI Screen
  */
-export class SkillTuiScreen {
+export class SkillTuiScreen extends TuiBaseScreen {
   name = 'skill' as const;
 
   async render(state: TuiState): Promise<TuiState | null> {
-    // Main loop - header cleared/redrawn in renderMain
+    // Main loop
     while (true) {
       const action = await this.renderMain(state);
       if (action === 'exit') return null;
@@ -37,10 +33,8 @@ export class SkillTuiScreen {
     }
   }
 
-  private renderHeader(): void {
-    console.log('╔═══════════════════════════════════════════════════════════════════╗');
-    console.log('║  🎯 Project Skills                                                  ║');
-    console.log('╚═══════════════════════════════════════════════════════════════════╝');
+  private renderSkillHeader(): void {
+    this.renderHeader('Project Skills', '🎯');
   }
 
   private getDefaultConfigPath(target: TargetName, projectRoot: string): string {
@@ -49,14 +43,14 @@ export class SkillTuiScreen {
         return join(projectRoot, '.mcp.json');
       case 'codex':
         return join(projectRoot, '.codex', 'config.toml');
-      case 'gemini':
-        return join(projectRoot, '.gemini', 'settings.json');
+      case 'antigravity':
+        return join(projectRoot, '.gemini', 'antigravity', 'mcp_config.json');
     }
   }
 
   private async renderMain(state: TuiState): Promise<SkillAction> {
-    console.clear();
-    this.renderHeader();
+    this.clear();
+    this.renderSkillHeader();
 
     const currentTarget = state.target;
 
@@ -85,32 +79,19 @@ export class SkillTuiScreen {
       choices.splice(1, 0, ...skillChoices);
     }
 
-    const prompt = new Select({
-      name: 'action',
-      message: 'Select skill or action:',
-      choices,
-      actions: {
-        ctrl: { n: 'down', p: 'up' }
-      }
-    });
+    const selected = await this.select<string>('Select skill or action:', choices);
 
-    try {
-      const selected = await prompt.run();
+    if (!selected || selected === '__exit__') return 'exit';
+    if (selected === '__add__') return await this.handleAdd(state);
+    if (selected === '__install__') return await this.handleInstall(state);
+    if (selected === '__switch__') return await this.handleSwitchTarget(state);
 
-      if (selected === '__exit__') return 'exit';
-      if (selected === '__add__') return await this.handleAdd(state);
-      if (selected === '__install__') return await this.handleInstall(state);
-      if (selected === '__switch__') return await this.handleSwitchTarget(state);
-
-      // Skill selected
-      return await this.handleSkillAction(selected as string, state);
-    } catch {
-      return 'exit';
-    }
+    // Skill selected
+    return await this.handleSkillAction(selected, state);
   }
 
   private async renderStatusTable(installedSkills: SkillStatus[], currentTarget: TargetName, allowHome?: boolean): Promise<void> {
-    const targets: TargetName[] = ['claude', 'codex', 'gemini'];
+    const targets: TargetName[] = ['claude', 'codex', 'antigravity'];
 
     if (installedSkills.length === 0) {
       console.log('\n  No skills configured for this project.');
@@ -131,12 +112,12 @@ export class SkillTuiScreen {
 
     const NAME_WIDTH = 35;
 
-    const borderH = '  ┌' + '─'.repeat(NAME_WIDTH + 2) + '┬───┬───┬───┐';
-    const borderM = '  ├' + '─'.repeat(NAME_WIDTH + 2) + '┼───┼───┼───┤';
-    const borderF = '  └' + '─'.repeat(NAME_WIDTH + 2) + '┴───┴───┴───┘';
+    const borderH = '  ┌' + '─'.repeat(NAME_WIDTH + 2) + '┬────┬────┬────┐';
+    const borderM = '  ├' + '─'.repeat(NAME_WIDTH + 2) + '┼────┼────┼────┤';
+    const borderF = '  └' + '─'.repeat(NAME_WIDTH + 2) + '┴────┴────┴────┘';
 
     console.log('\n' + borderH);
-    console.log('  │ ' + padRightWide('Skill', NAME_WIDTH) + ' │ C │ C │ G │');
+    console.log('  │ ' + padRightWide('Skill', NAME_WIDTH) + ' │  C │  C │  A │');
     console.log(borderM);
 
     // Get skill descriptions
@@ -150,13 +131,13 @@ export class SkillTuiScreen {
       const truncated = truncateWide(displayName, NAME_WIDTH);
 
       console.log('  │ ' + padRightWide(truncated, NAME_WIDTH) + ' │ ' +
-                  (allSkills.claude?.find(s => s.name === name) ? '✅ ' : '   ') + '│ ' +
-                  (allSkills.codex?.find(s => s.name === name) ? '✅ ' : '   ') + '│ ' +
-                  (allSkills.gemini?.find(s => s.name === name) ? '✅ ' : '   ') + '│');
+                  (allSkills.claude?.find(s => s.name === name) ? '✅ ' : '    ') + '│ ' +
+                  (allSkills.codex?.find(s => s.name === name) ? '✅ ' : '    ') + '│ ' +
+                  (allSkills.antigravity?.find(s => s.name === name) ? '✅ ' : '    ') + '│');
     }
 
     console.log(borderF);
-    console.log('  Legend: C=Claude, C=Codex, G=Gemini | ✅=Installed');
+    console.log('  Legend: C=Claude, C=Codex, A=Antigravity | ✅=Installed');
   }
 
   private async getInstalledSkills(target: TargetName, allowHome?: boolean): Promise<SkillStatus[]> {
@@ -165,8 +146,7 @@ export class SkillTuiScreen {
       const discovery = await discoverProject(undefined, { allowHome });
 
       const { getSkills } = await import('../skill-adapters.js');
-      const configPath = this.getDefaultConfigPath(target, discovery.root);
-      const skills = await getSkills(target, configPath as any);
+      const skills = await getSkills(discovery.root, target);
 
       return Object.entries(skills).map(([name, _]) => ({ name, targets: [target] }));
     } catch {
@@ -175,8 +155,9 @@ export class SkillTuiScreen {
   }
 
   private async handleSwitchTarget(state: TuiState): Promise<SkillAction> {
-    const targets: TargetName[] = ['claude', 'codex', 'gemini'];
+    const targets: TargetName[] = ['claude', 'codex', 'antigravity'];
 
+    const { Select } = require('enquirer');
     const prompt = new Select({
       name: 'target',
       message: 'Select target:',
@@ -210,7 +191,8 @@ export class SkillTuiScreen {
       console.log('  1. Install from GitHub');
       console.log('  2. Import local skill');
 
-      const prompt = new Select({
+      const { Select } = require('enquirer');
+    const prompt = new Select({
         name: 'option',
         message: 'Choose option:',
         choices: [
@@ -246,6 +228,7 @@ export class SkillTuiScreen {
       { name: 'back', message: '← Back', hint: '' }
     );
 
+    const { Select } = require('enquirer');
     const prompt = new Select({
       name: 'skill',
       message: 'Select skill (or action):',
@@ -357,6 +340,7 @@ export class SkillTuiScreen {
     console.log(`\n📚 ${skillName}`);
     console.log('─'.repeat(60));
 
+    const { Select } = require('enquirer');
     const prompt = new Select({
       name: 'action',
       message: 'What would you like to do?',
@@ -394,12 +378,15 @@ export class SkillTuiScreen {
         initial: false
       }) as { confirm: boolean };
 
-      if (!confirmed) return 'refresh';
+      if (!confirmed || !confirmed.confirm) return 'refresh';
 
       const { skillRemove } = await import('../cli-skill.js');
       await skillRemove({ skillName, targets: [state.target] });
       console.log(`\n✅ Removed ${skillName}`);
     } catch (error: any) {
+      if (error instanceof Error && error.message.includes('User force closed')) {
+        throw error;
+      }
       console.error(`\n❌ Error: ${error.message}`);
     }
 
@@ -422,15 +409,5 @@ export class SkillTuiScreen {
 
     await this.pressEnter();
     return 'refresh';
-  }
-
-  private pressEnter(): Promise<void> {
-    return new Promise(resolve => {
-      process.stdin.once('data', () => resolve());
-    });
-  }
-
-  handleAction(state: TuiState, action: ScreenAction): Promise<TuiState> {
-    return Promise.resolve(state);
   }
 }

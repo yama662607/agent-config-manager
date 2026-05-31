@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import type { TargetName } from './types.js';
+import { mergeEnvMaps, parseEnvOptionValue } from './mcp-env.js';
+import path from 'node:path';
 
 // CLI command handlers
 import {
@@ -18,10 +20,12 @@ import {
   mcpRemove,
   mcpEnable,
   mcpDisable,
+  mcpEdit,
   type McpAddOptions,
   type McpRemoveOptions,
   type McpEnableOptions,
   type McpDisableOptions,
+  type McpEditOptions,
 } from './cli-mcp.js';
 import {
   skillStatus,
@@ -42,63 +46,60 @@ import { validate, doctor } from './cli-diagnostics.js';
 
 const HELP = `acsync - Agent configuration sync tool
 
-USAGE:
+Usage:
   acsync [COMMAND]
 
-COMMANDS:
+Commands:
   init        Interactive setup for the current project
-  catalog     Browse and manage catalog (TUI mode)
-  mcp         Manage MCP servers for the current project (TUI mode)
-  skill       Manage skills for the current project (TUI mode)
-  validate    Validate current project configuration
+  catalog     Browse and manage catalog (TUI mode) [DEPRECATED: Use "-g" or "--global" instead]
+  mcp         Manage MCP servers (TUI mode by default)
+  skill       Manage skills (TUI mode by default)
+  validate    Validate current project configuration [DEPRECATED: Use "acsync doctor --strict" instead]
   doctor      Run diagnostics and health checks
 
-OPTIONS:
+Options:
+  -g, --global  Operate on the global catalog (~/.acsync/) instead of current project
+  -t, --targets Comma-separated target list (claude, codex, antigravity; aliases: c, x, a, g)
+  -H, --home    Allow managing configs in home directory (global configs)
   -h, --help    Show this help message
   -V, --version Show version information
 
-TARGETS:
-  claude     Claude Code (.mcp.json, .claude/skills/)
-  codex      Codex (.codex/config.toml, .codex/skills/)
-  gemini     Gemini CLI (.gemini/settings.json, .gemini/skills/)
-
-ABOUT CATALOG:
-  Your personal catalog (~/.acsync/) stores reusable MCP and skill definitions.
-  Use "acsync catalog" to browse and manage the catalog interactively.
+Targets:
+  claude      Claude Code (.mcp.json, .claude/skills/) (alias: c)
+  codex       Codex (.codex/config.toml, .codex/skills/) (alias: x)
+  antigravity Antigravity CLI (.gemini/antigravity/mcp_config.json, .agents/skills/) (alias: a, g)
 
 EXAMPLES:
   acsync init                         Interactive setup for current project
-  acsync catalog                       Browse catalog in TUI mode
-  acsync mcp                           Manage MCPs in TUI mode
-  acsync skill                         Manage skills in TUI mode
-  acsync mcp status                    Show MCP status
-  acsync skill status                  Show skill status
-  acsync catalog mcp list              List all MCPs in catalog
-  acsync mcp add github --targets claude   Add GitHub MCP to Claude Code
-
-For more information, run: acsync <command> --help
+  acsync mcp                          Manage MCPs in TUI mode
+  acsync mcp list                     Show project MCP status
+  acsync mcp list -g                  List all MCPs in global catalog
+  acsync mcp add github -t c          Add GitHub MCP to Claude Code
+  acsync mcp add github -g            Add GitHub MCP to global catalog
+  acsync skill list -g                List all skills in global catalog
+  acsync doctor                       Run diagnostics and health checks
 `;
 
-const CATALOG_HELP = `acsync catalog - Manage reusable MCP and skill definitions
+const CATALOG_HELP = `acsync catalog - Manage reusable MCP and skill definitions [DEPRECATED: Use "-g" or "--global" flags instead]
 
-USAGE:
+Usage:
   acsync catalog <kind> <subcommand>
 
 ABOUT CATALOG:
-  Your personal catalog (~/.acsync/catalog.json) stores reusable MCP servers
+  Your personal catalog (~/.acsync/catalog.toml) stores reusable MCP servers
   and skills. Once added to the catalog, you can easily add them to any project.
 
 KINDS:
   mcp         Manage MCP definitions
   skill       Manage skill definitions
 
-MCP SUBCOMMANDS:
+MCP Subcommands:
   list        List all MCP entries in catalog
   show <id>   Show details of a specific MCP entry
   add <pkg>   Add a new MCP entry to catalog
   remove <id> Remove an MCP entry from catalog
 
-SKILL SUBCOMMANDS:
+SKILL Subcommands:
   list              List all skill entries in catalog
   show <id>         Show details of a specific skill entry
   add <name>        Add a new skill entry to catalog from file
@@ -106,180 +107,140 @@ SKILL SUBCOMMANDS:
   install <id>      Install a skill from skills.directory registry
   search <query>    Search the skills.directory registry
   remove <id>        Remove a skill entry from catalog
-
-OPTIONS (mcp add):
-  --url <url>           HTTP/SSE URL for the MCP server
-  --command <cmd>       Command to execute (stdio transport)
-  --args <json>         Arguments for command (JSON array)
-  --cwd <path>          Working directory for command
-  --display-name <name> Display name for the entry
-  --description <desc>  Description for the entry
-  --env <json>          Environment variables (JSON object)
-
-OPTIONS (skill install):
-  --force              Force reinstall if already exists
-
-OPTIONS (skill import):
-  --name <name>             Override skill name
-  --display-name <name>     Display name for the entry
-  --description <desc>       Description for the entry
-
-EXAMPLES:
-  # Catalog operations
-  acsync catalog mcp list
-  acsync catalog mcp show @modelcontextprotocol/server-github
-  acsync catalog mcp add @modelcontextprotocol/server-filesystem
-
-  # Skill catalog operations
-  acsync catalog skill list
-  acsync catalog skill install frontend-design
-  acsync catalog skill search typescript
-  acsync catalog skill import ~/.claude/skills/frontend-design
-  acsync catalog skill add my-skill --file ./my-skill/SKILL.md
-
-  # After adding to catalog, use with project commands:
-  acsync mcp add @modelcontextprotocol/server-github --targets claude
-  acsync skill add frontend-design --targets claude,codex
 `;
 
-const MCP_HELP = `acsync mcp - Manage MCP servers for the current project
+const MCP_HELP = `acsync mcp - Manage MCP servers for the current project or global catalog
 
-USAGE:
+Usage:
   acsync mcp [subcommand] [options]
 
-SUBCOMMANDS:
-  status                  Show MCP status (default)
-  add <package>           Add an MCP to the project (from catalog or npm)
-  remove <server>         Remove an MCP from the project
+Subcommands:
+  list, status            Show MCP status (default)
+  add <package>           Add an MCP to the project or catalog
+  edit <server>           Edit an MCP in the project
+  remove <server>         Remove an MCP from the project or catalog
   enable <server>         Enable a disabled MCP
   disable <server>        Disable an MCP
+  show <server>           Show details of an MCP server
 
-OPTIONS:
-  --targets <list>    Comma-separated target list (default: claude,codex,gemini)
-  --[no-]register      Auto-register to catalog (default: yes)
-  --allow-home         Allow managing configs in home directory (global configs)
-
-TARGETS:
-  claude     Claude Code (.mcp.json)
-  codex      Codex (.codex/config.toml)
-  gemini     Gemini CLI (.gemini/settings.json)
+Options:
+  -g, --global        Operate on the global catalog (~/.acsync/)
+  -t, --targets <l>   Comma-separated target list (default: claude,codex,antigravity; aliases: c,x,a,g)
+  --[no-]register     Auto-register to catalog (default: yes)
+  --url <url>         HTTP/SSE URL for custom MCP add/edit
+  --command <cmd>     Command for custom stdio MCP add/edit
+  --args <json>       Arguments for command (JSON array)
+  --cwd <path>        Working directory for command
+  --env <json|KEY=V>  Environment variables, repeatable
+  -H, --home          Allow managing configs in home directory (global configs)
 
 EXAMPLES:
-  # Show status
-  acsync mcp
-  acsync mcp status
+  # Show project MCP status
+  acsync mcp list
+  
+  # List all MCPs in global catalog
+  acsync mcp list -g
 
-  # Add from npm package (auto-registers to catalog)
-  acsync mcp add @modelcontextprotocol/server-github --targets claude
-  acsync mcp add @modelcontextprotocol/server-filesystem --targets claude,codex
+  # Add from npm package to Claude Code
+  acsync mcp add @modelcontextprotocol/server-github -t c
+  
+  # Register npm package directly to global catalog
+  acsync mcp add @modelcontextprotocol/server-filesystem -g
 
-  # Add with custom configuration
-  acsync mcp add custom-mcp --url "https://mcp.example.com" --targets claude
-  acsync mcp add local-mcp --command "node" --args '["server.js"]' --targets claude
-
-  # Enable/disable/remove
-  acsync mcp disable github --targets claude
-  acsync mcp enable github --targets codex
+  # Remove from project
   acsync mcp remove github
-
-  # Work with catalog
-  acsync catalog mcp list              # List catalog entries
-  acsync catalog mcp add <package>     # Add to catalog first
+  
+  # Remove from global catalog
+  acsync mcp remove github -g
 `;
 
-const SKILL_HELP = `acsync skill - Manage skills for the current project
+const SKILL_HELP = `acsync skill - Manage skills for the current project or global catalog
 
-USAGE:
+Usage:
   acsync skill [subcommand] [options]
 
-SUBCOMMANDS:
-  status                  Show skill status (default)
-  add <name>              Add a skill to the project from your catalog
-  install <github-url>   Install a skill directly from GitHub URL
-  remove <name>           Remove a skill from the project
+Subcommands:
+  list, status            Show skill status (default)
+  add <name>              Add a skill to the project from catalog
+  install <github-url>    Install a skill directly from GitHub
+  import <path>           Import a skill from local directory
+  search <query>          Search skills.directory registry
+  remove <name>           Remove a skill from the project or catalog
   enable <name>           Enable a skill (skills are always enabled if present)
   disable <name>          Disable a skill (equivalent to remove)
+  show <name>             Show details of a skill entry
 
-OPTIONS:
-  --targets <list>    Comma-separated target list (default: claude,codex,gemini)
-  --[no-]register      Auto-register to catalog (default: yes)
-  --allow-home         Allow managing configs in home directory (global configs)
-
-INSTALL OPTIONS (for GitHub install):
-  --name <name>             Override skill name from GitHub
-  --no-catalog              Don't add to catalog, only install to project
-
-TARGETS:
-  claude     Claude Code (.claude/skills/)
-  codex      Codex (.codex/skills/)
-  gemini     Gemini CLI (.gemini/antigravity/skills/)
-
-COMMAND DIFFERENCES:
-  add <name>              Add from your catalog (must exist in catalog first)
-  install <github-url>   Install directly from GitHub (adds to catalog + project)
+Options:
+  -g, --global        Operate on the global catalog (~/.acsync/)
+  -t, --targets <l>   Comma-separated target list (default: claude,codex,antigravity; aliases: c,x,a,g)
+  --[no-]register     Auto-register to catalog (default: yes)
+  -H, --home          Allow managing configs in home directory (global configs)
+  --name <name>       Override skill name from GitHub or import
+  --no-catalog        Don't add to catalog, only install to project
+  --file <path>       MD file path to register skill to catalog
 
 EXAMPLES:
-  # Show status
-  acsync skill
-  acsync skill status
+  # Show project skill status
+  acsync skill list
+  
+  # List all skills in global catalog
+  acsync skill list -g
 
-  # Add from catalog (requires catalog entry)
-  acsync skill add frontend-design --targets claude
-  acsync skill add skill-creator --targets claude,codex
+  # Add from catalog to Claude Code
+  acsync skill add frontend-design -t c
 
   # Install directly from GitHub (adds to catalog + project)
   acsync skill install https://github.com/anthropics/skills/tree/main/skill-creator
-  acsync skill install https://github.com/user/repo --name my-skill --targets claude
-
-  # Install without adding to catalog
-  acsync skill install <github-url> --no-catalog --targets claude
-
-  # Remove from project
-  acsync skill remove frontend-design
-
-  # Work with catalog
-  acsync catalog skill list              # List catalog entries
-  acsync catalog skill import <path>     # Import local skill to catalog
-  acsync catalog skill search <query>    # Search skills.directory registry
+  
+  # Import local skill to global catalog
+  acsync skill import ./my-skill -g
 `;
 
-const VALIDATE_HELP = `acsync validate - Validate current project configuration
+const VALIDATE_HELP = `acsync validate - Validate current project configuration [DEPRECATED: Use "acsync doctor --strict" instead]
 
-USAGE:
+Usage:
   acsync validate [options]
 
-OPTIONS:
+Options:
   --strict      Fail on warnings as well as errors
-
-DESCRIPTION:
-  Validates MCP and skill configurations across all target agents.
-  Checks for missing files, invalid configurations, and common issues.
-
-EXAMPLES:
-  acsync validate              # Show warnings but don't fail
-  acsync validate --strict     # Fail on any warnings or errors
 `;
 
 const DOCTOR_HELP = `acsync doctor - Run diagnostics and health checks
 
-USAGE:
+Usage:
   acsync doctor [options]
 
-OPTIONS:
-  --fix         Attempt to auto-fix issues
+Options:
+  --fix               Attempt to auto-fix issues
+  --strict            Fail on warnings as well as errors (strictly validate)
+  -H, --allow-home    Allow operations in the home directory
 
 DESCRIPTION:
   Runs comprehensive diagnostics on your acsync setup and project configurations.
   Checks catalog integrity, config file validity, and common issues.
+  Acts as both validation tool and interactive fixer.
 
 EXAMPLES:
   acsync doctor                  # Diagnose issues without fixing
   acsync doctor --fix            # Attempt to auto-fix found issues
+  acsync doctor --strict         # Fail on any warnings or errors (useful for CI)
+  acsync doctor --allow-home     # Allow diagnostics in the home directory
 `;
 
 // ============================================================================
 // Main
 // ============================================================================
+
+/**
+ * Check if the current environment is interactive (TTY and not CI).
+ */
+function isInteractive(): boolean {
+  return (
+    process.stdout.isTTY &&
+    !process.env.CI &&
+    process.env.NODE_ENV !== 'test'
+  );
+}
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
@@ -336,11 +297,17 @@ async function main(): Promise<void> {
 // ============================================================================
 
 async function handleCatalog(argv: string[]): Promise<void> {
+  process.stderr.write('[DEPRECATED] "acsync catalog" commands are deprecated. Please use commands with "-g" or "--global" flags instead.\n\n');
   if (argv.length === 0) {
+    // Check if we can run TUI
+    if (!isInteractive()) {
+      process.stdout.write(CATALOG_HELP);
+      return;
+    }
+
     // Launch Catalog TUI
-    const { CatalogTuiScreen } = await import('./tui/index.js');
-    const screen = new CatalogTuiScreen();
-    await screen.render({ currentScreen: 'catalog', selectedItem: null, filter: '', target: 'claude', lastAction: null });
+    const { launchCatalogTui } = await import('./tui-launcher.js');
+    await launchCatalogTui();
     return;
   }
 
@@ -546,29 +513,57 @@ async function handleCatalogSkillImport(argv: string[]): Promise<void> {
 }
 
 async function handleMcp(argv: string[]): Promise<void> {
-  // Parse flags before subcommand
-  const allowHome = parseFlag(argv, 'allow-home');
-  const verbose = parseFlag(argv, 'verbose', 'v');
+  // Robust argument parser for top-level flags (avoids parameter value leakages)
+  let isGlobal = false;
+  let allowHome = false;
+  let verbose = false;
+  const filteredArgs: string[] = [];
 
-  // Remove flags from argv for further parsing
-  const filteredArgs = argv.filter((arg) =>
-    arg !== '--allow-home' &&
-    arg !== '--verbose' &&
-    arg !== '-v'
-  );
+  let i = 0;
+  while (i < argv.length) {
+    const arg = argv[i];
+    if (arg === '-g' || arg === '--global') {
+      isGlobal = true;
+      i++;
+    } else if (arg === '-H' || arg === '--allow-home' || arg === '--allowHome') {
+      allowHome = true;
+      i++;
+    } else if (arg === '-v' || arg === '--verbose') {
+      verbose = true;
+      i++;
+    } else if (['--command', '--args', '--url', '--cwd', '--env', '--targets', '-t', '--file', '--display-name', '--description', '--name'].includes(arg)) {
+      filteredArgs.push(arg);
+      if (i + 1 < argv.length) {
+        filteredArgs.push(argv[++i]);
+      }
+      i++;
+    } else {
+      filteredArgs.push(arg);
+      i++;
+    }
+  }
 
   if (filteredArgs.length === 0) {
+    if (isGlobal) {
+      if (!isInteractive()) {
+        const { catalogMcpList } = await import('./cli-catalog.js');
+        await catalogMcpList();
+        return;
+      }
+      const { launchCatalogTui } = await import('./tui-launcher.js');
+      await launchCatalogTui();
+      return;
+    }
+
+    // Check if we can run TUI
+    if (!isInteractive()) {
+      await mcpStatus(verbose, allowHome);
+      return;
+    }
+
     // Launch MCP TUI
-    const { McpTuiScreen } = await import('./tui/index.js');
-    const screen = new McpTuiScreen();
-    await screen.render({
-      currentScreen: 'mcp',
-      selectedItem: null,
-      filter: '',
-      target: 'claude',
-      lastAction: null,
-      allowHome
-    });
+    const { launchMcpTui } = await import('./tui-launcher.js');
+    await launchMcpTui({ allowHome });
     return;
   }
 
@@ -580,8 +575,13 @@ async function handleMcp(argv: string[]): Promise<void> {
   const subcommand = filteredArgs[0];
 
   // Default to status if no subcommand or status
-  if (!subcommand || subcommand === 'status') {
-    await mcpStatus(verbose);
+  if (!subcommand || subcommand === 'status' || subcommand === 'list') {
+    if (isGlobal) {
+      const { catalogMcpList } = await import('./cli-catalog.js');
+      await catalogMcpList();
+    } else {
+      await mcpStatus(verbose, allowHome);
+    }
     return;
   }
 
@@ -594,10 +594,55 @@ async function handleMcp(argv: string[]): Promise<void> {
         process.exitCode = 1;
         return;
       }
-      await mcpAdd({
-        packageId: options.packageId!,
+      if (isGlobal) {
+        const { catalogMcpAdd } = await import('./cli-catalog.js');
+        await catalogMcpAdd({
+          packageId: options.packageId!,
+          url: options.url,
+          command: options.command,
+          args: options.args,
+          cwd: options.cwd,
+          env: options.env,
+          displayName: options.displayName,
+          description: options.description,
+        });
+      } else {
+        await mcpAdd({
+          packageId: options.packageId!,
+          targets: options.targets,
+          noRegister: options.noRegister,
+          recipe: buildRecipeFromMcpOptions(options),
+          allowHome,
+        });
+      }
+      break;
+
+    case 'show':
+      if (options.packageId === undefined) {
+        process.stderr.write('Usage: acsync mcp show <id>\n');
+        process.exitCode = 1;
+        return;
+      }
+      const { catalogMcpShow } = await import('./cli-catalog.js');
+      await catalogMcpShow(options.packageId!);
+      break;
+
+    case 'edit':
+      if (options.packageId === undefined) {
+        process.stderr.write('Usage: acsync mcp edit <server> [options]\n');
+        process.exitCode = 1;
+        return;
+      }
+      if (isGlobal) {
+        process.stderr.write('Global catalog MCP edit is not supported directly. Please edit catalog.toml manually or use catalog mcp add to overwrite.\n');
+        process.exitCode = 1;
+        return;
+      }
+      await mcpEdit({
+        serverName: options.packageId!,
         targets: options.targets,
-        noRegister: options.noRegister,
+        recipe: buildRecipeFromMcpOptions(options) ?? {},
+        allowHome,
       });
       break;
 
@@ -607,10 +652,16 @@ async function handleMcp(argv: string[]): Promise<void> {
         process.exitCode = 1;
         return;
       }
-      await mcpRemove({
-        serverName: options.packageId!,
-        targets: options.targets,
-      });
+      if (isGlobal) {
+        const { catalogMcpRemove } = await import('./cli-catalog.js');
+        await catalogMcpRemove(options.packageId!);
+      } else {
+        await mcpRemove({
+          serverName: options.packageId!,
+          targets: options.targets,
+          allowHome,
+        });
+      }
       break;
 
     case 'enable':
@@ -619,9 +670,15 @@ async function handleMcp(argv: string[]): Promise<void> {
         process.exitCode = 1;
         return;
       }
+      if (isGlobal) {
+        process.stderr.write('Enable command is not applicable for global catalog.\n');
+        process.exitCode = 1;
+        return;
+      }
       await mcpEnable({
         serverName: options.packageId!,
         targets: options.targets,
+        allowHome,
       });
       break;
 
@@ -631,9 +688,15 @@ async function handleMcp(argv: string[]): Promise<void> {
         process.exitCode = 1;
         return;
       }
+      if (isGlobal) {
+        process.stderr.write('Disable command is not applicable for global catalog.\n');
+        process.exitCode = 1;
+        return;
+      }
       await mcpDisable({
         serverName: options.packageId!,
         targets: options.targets,
+        allowHome,
       });
       break;
 
@@ -645,29 +708,57 @@ async function handleMcp(argv: string[]): Promise<void> {
 }
 
 async function handleSkill(argv: string[]): Promise<void> {
-  // Parse flags before subcommand
-  const allowHome = parseFlag(argv, 'allow-home');
-  const verbose = parseFlag(argv, 'verbose', 'v');
+  // Robust argument parser for top-level flags (avoids parameter value leakages)
+  let isGlobal = false;
+  let allowHome = false;
+  let verbose = false;
+  const filteredArgs: string[] = [];
 
-  // Remove flags from argv for further parsing
-  const filteredArgs = argv.filter((arg) =>
-    arg !== '--allow-home' &&
-    arg !== '--verbose' &&
-    arg !== '-v'
-  );
+  let i = 0;
+  while (i < argv.length) {
+    const arg = argv[i];
+    if (arg === '-g' || arg === '--global') {
+      isGlobal = true;
+      i++;
+    } else if (arg === '-H' || arg === '--allow-home' || arg === '--allowHome') {
+      allowHome = true;
+      i++;
+    } else if (arg === '-v' || arg === '--verbose') {
+      verbose = true;
+      i++;
+    } else if (['--command', '--args', '--url', '--cwd', '--env', '--targets', '-t', '--file', '--display-name', '--description', '--name'].includes(arg)) {
+      filteredArgs.push(arg);
+      if (i + 1 < argv.length) {
+        filteredArgs.push(argv[++i]);
+      }
+      i++;
+    } else {
+      filteredArgs.push(arg);
+      i++;
+    }
+  }
 
   if (filteredArgs.length === 0) {
+    if (isGlobal) {
+      if (!isInteractive()) {
+        const { catalogSkillList } = await import('./cli-catalog.js');
+        await catalogSkillList();
+        return;
+      }
+      const { launchCatalogTui } = await import('./tui-launcher.js');
+      await launchCatalogTui();
+      return;
+    }
+
+    // Check if we can run TUI
+    if (!isInteractive()) {
+      await skillStatus(verbose, allowHome);
+      return;
+    }
+
     // Launch Skill TUI
-    const { SkillTuiScreen } = await import('./tui/index.js');
-    const screen = new SkillTuiScreen();
-    await screen.render({
-      currentScreen: 'skill',
-      selectedItem: null,
-      filter: '',
-      target: 'claude',
-      lastAction: null,
-      allowHome
-    });
+    const { launchSkillTui } = await import('./tui-launcher.js');
+    await launchSkillTui({ allowHome });
     return;
   }
 
@@ -679,8 +770,13 @@ async function handleSkill(argv: string[]): Promise<void> {
   const subcommand = filteredArgs[0];
 
   // Default to status if no subcommand or status
-  if (!subcommand || subcommand === 'status') {
-    await skillStatus(verbose);
+  if (!subcommand || subcommand === 'status' || subcommand === 'list') {
+    if (isGlobal) {
+      const { catalogSkillList } = await import('./cli-catalog.js');
+      await catalogSkillList();
+    } else {
+      await skillStatus(verbose, allowHome);
+    }
     return;
   }
 
@@ -693,25 +789,104 @@ async function handleSkill(argv: string[]): Promise<void> {
         process.exitCode = 1;
         return;
       }
-      await skillAdd({
-        skillId: options.skillId!,
-        targets: options.targets,
-        noRegister: options.noRegister,
-      });
+      if (isGlobal) {
+        const { catalogSkillAdd } = await import('./cli-catalog.js');
+        await catalogSkillAdd({
+          skillId: options.skillId!,
+          file: options.file,
+          displayName: options.displayName,
+          description: options.description,
+        });
+      } else {
+        await skillAdd({
+          skillId: options.skillId!,
+          targets: options.targets,
+          noRegister: options.noRegister,
+          allowHome,
+        });
+      }
       break;
 
-    case 'install':
-      if (options.githubUrl === undefined) {
-        process.stderr.write('Usage: acsync skill install <github-url> [options]\n');
+    case 'show':
+      if (options.skillId === undefined) {
+        process.stderr.write('Usage: acsync skill show <name>\n');
         process.exitCode = 1;
         return;
       }
-      await (await import('./cli-skill.js')).skillInstallFromGitHub({
-        githubUrl: options.githubUrl!,
-        skillName: options.skillName,
-        targets: options.targets,
-        addToCatalog: options.addToCatalog,
-      });
+      const { catalogSkillShow } = await import('./cli-catalog.js');
+      await catalogSkillShow(options.skillId!);
+      break;
+
+    case 'install':
+      if (isGlobal) {
+        if (options.skillId === undefined) {
+          process.stderr.write('Usage: acsync skill install <skill-id> -g [--force]\n');
+          process.exitCode = 1;
+          return;
+        }
+        const { catalogSkillInstall } = await import('./cli-catalog.js');
+        await catalogSkillInstall({
+          skillId: options.skillId!,
+          force: options.force,
+        });
+      } else {
+        const githubUrl = options.githubUrl || options.skillId;
+        if (githubUrl === undefined || !githubUrl.startsWith('http')) {
+          process.stderr.write('Usage: acsync skill install <github-url> [options] or acsync skill install <skill-id> -g [--force]\n');
+          process.exitCode = 1;
+          return;
+        }
+        await (await import('./cli-skill.js')).skillInstallFromGitHub({
+          githubUrl: githubUrl,
+          skillName: options.skillName,
+          targets: options.targets,
+          addToCatalog: options.addToCatalog,
+          allowHome,
+        });
+      }
+      break;
+
+    case 'import':
+      if (options.skillId === undefined) {
+        process.stderr.write('Usage: acsync skill import <path> [options]\n');
+        process.exitCode = 1;
+        return;
+      }
+      if (isGlobal) {
+        const { catalogSkillImport } = await import('./cli-catalog.js');
+        await catalogSkillImport({
+          path: options.skillId!,
+          skillId: options.skillName,
+          displayName: options.displayName,
+          description: options.description,
+        });
+      } else {
+        // Local project import: import to catalog first, then add to project
+        const { catalogSkillImport } = await import('./cli-catalog.js');
+        await catalogSkillImport({
+          path: options.skillId!,
+          skillId: options.skillName,
+          displayName: options.displayName,
+          description: options.description,
+        });
+        const skillName = options.skillName || path.basename(options.skillId!) || 'imported-skill';
+        await skillAdd({
+          skillId: skillName,
+          targets: options.targets,
+          noRegister: true,
+          allowHome,
+        });
+      }
+      break;
+
+    case 'search':
+      if (options.skillId === undefined) {
+        process.stderr.write('Usage: acsync skill search <query>\n');
+        process.exitCode = 1;
+        return;
+      }
+      const { catalogSkillSearch } = await import('./cli-catalog.js');
+      await catalogSkillSearch(options.skillId!);
       break;
 
     case 'remove':
@@ -720,10 +895,16 @@ async function handleSkill(argv: string[]): Promise<void> {
         process.exitCode = 1;
         return;
       }
-      await skillRemove({
-        skillName: options.skillId!,
-        targets: options.targets,
-      });
+      if (isGlobal) {
+        const { catalogSkillRemove } = await import('./cli-catalog.js');
+        await catalogSkillRemove(options.skillId!);
+      } else {
+        await skillRemove({
+          skillName: options.skillId!,
+          targets: options.targets,
+          allowHome,
+        });
+      }
       break;
 
     case 'enable':
@@ -747,6 +928,7 @@ async function handleSkill(argv: string[]): Promise<void> {
       await skillDisable({
         skillName: options.skillId!,
         targets: options.targets,
+        allowHome,
       });
       break;
 
@@ -758,6 +940,7 @@ async function handleSkill(argv: string[]): Promise<void> {
 }
 
 async function handleValidate(argv: string[]): Promise<void> {
+  process.stderr.write('[DEPRECATED] "acsync validate" is deprecated. Please use "acsync doctor --strict" instead.\n\n');
   if (argv.includes('--help') || argv.includes('-h')) {
     process.stdout.write(VALIDATE_HELP);
     return;
@@ -774,7 +957,9 @@ async function handleDoctor(argv: string[]): Promise<void> {
   }
 
   const fix = parseFlag(argv, 'fix');
-  await doctor({ fix });
+  const strict = parseFlag(argv, 'strict');
+  const allowHome = parseFlag(argv, 'allow-home', 'H') || parseFlag(argv, 'allowHome');
+  await doctor({ fix, strict, allowHome });
 }
 
 // ============================================================================
@@ -783,10 +968,10 @@ async function handleDoctor(argv: string[]): Promise<void> {
 
 const INIT_HELP = `acsync init - Interactive setup for the current project
 
-USAGE:
+Usage:
   acsync init [options]
 
-OPTIONS:
+Options:
   --targets <list>    Pre-select targets (e.g., claude,codex)
 
 DESCRIPTION:
@@ -801,6 +986,14 @@ EXAMPLES:
 async function handleInit(argv: string[]): Promise<void> {
   if (argv.includes('--help') || argv.includes('-h')) {
     process.stdout.write(INIT_HELP);
+    return;
+  }
+
+  // Check if we can run interactive init
+  if (!isInteractive()) {
+    process.stderr.write('Error: Interactive init is not supported in non-TTY or CI environments.\n');
+    process.stderr.write('Use explicit commands like "acsync mcp add" and "acsync skill add" instead.\n');
+    process.exitCode = 1;
     return;
   }
 
@@ -819,7 +1012,8 @@ function parseInitOptions(argv: string[]): InitOptions {
     const arg = argv[i];
     switch (arg) {
       case '--targets':
-        options.targets = argv[++i].split(',').map(t => t.trim()) as TargetName[];
+        options.targets = nextVal(argv, i, arg).split(',').map(t => t.trim()) as TargetName[];
+        i++;
         break;
       default:
         process.stderr.write(`Unknown option: ${arg}\n`);
@@ -853,6 +1047,13 @@ interface McpOptions {
   targets: TargetName[];
   noRegister: boolean;
   verbose?: boolean;
+  command?: string;
+  args?: string[];
+  url?: string;
+  cwd?: string;
+  env?: Record<string, string>;
+  displayName?: string;
+  description?: string;
 }
 
 function parseMcpOptions(argv: string[], subcommand?: string): McpOptions {
@@ -867,7 +1068,9 @@ function parseMcpOptions(argv: string[], subcommand?: string): McpOptions {
 
     switch (arg) {
       case '--targets':
-        options.targets = parseTargets(argv[++i]);
+      case '-t':
+        options.targets = parseTargets(nextVal(argv, i, arg));
+        i++;
         break;
       case '--no-register':
         options.noRegister = true;
@@ -878,6 +1081,34 @@ function parseMcpOptions(argv: string[], subcommand?: string): McpOptions {
       case '--verbose':
       case '-v':
         options.verbose = true;
+        break;
+      case '--command':
+        options.command = nextVal(argv, i, arg);
+        i++;
+        break;
+      case '--args':
+        options.args = JSON.parse(nextVal(argv, i, arg));
+        i++;
+        break;
+      case '--url':
+        options.url = nextVal(argv, i, arg);
+        i++;
+        break;
+      case '--cwd':
+        options.cwd = nextVal(argv, i, arg);
+        i++;
+        break;
+      case '--env':
+        options.env = mergeEnvMaps(options.env, parseEnvOptionValue(nextVal(argv, i, arg)));
+        i++;
+        break;
+      case '--display-name':
+        options.displayName = nextVal(argv, i, arg);
+        i++;
+        break;
+      case '--description':
+        options.description = nextVal(argv, i, arg);
+        i++;
         break;
       default:
         // Treat as package/server name (except for status subcommand which doesn't need it)
@@ -911,25 +1142,32 @@ function parseCatalogMcpAddOptions(argv: string[]): CatalogMcpAddOptions {
 
     switch (arg) {
       case '--display-name':
-        options.displayName = argv[++i];
+        options.displayName = nextVal(argv, i, arg);
+        i++;
         break;
       case '--description':
-        options.description = argv[++i];
+        options.description = nextVal(argv, i, arg);
+        i++;
         break;
       case '--command':
-        options.command = argv[++i];
+        options.command = nextVal(argv, i, arg);
+        i++;
         break;
       case '--args':
-        options.args = JSON.parse(argv[++i]);
+        options.args = JSON.parse(nextVal(argv, i, arg));
+        i++;
         break;
       case '--url':
-        options.url = argv[++i];
+        options.url = nextVal(argv, i, arg);
+        i++;
         break;
       case '--cwd':
-        options.cwd = argv[++i];
+        options.cwd = nextVal(argv, i, arg);
+        i++;
         break;
       case '--env':
-        options.env = JSON.parse(argv[++i]);
+        options.env = mergeEnvMaps(options.env, parseEnvOptionValue(nextVal(argv, i, arg)));
+        i++;
         break;
       default:
         process.stderr.write(`Unknown option: ${arg}\n`);
@@ -940,6 +1178,18 @@ function parseCatalogMcpAddOptions(argv: string[]): CatalogMcpAddOptions {
   }
 
   return options;
+}
+
+function buildRecipeFromMcpOptions(options: McpOptions): McpAddOptions['recipe'] | McpEditOptions['recipe'] | undefined {
+  const recipe: NonNullable<McpAddOptions['recipe']> = {};
+
+  if (options.url) recipe.url = options.url;
+  if (options.command) recipe.command = options.command;
+  if (options.args) recipe.args = options.args;
+  if (options.cwd) recipe.cwd = options.cwd;
+  if (options.env && Object.keys(options.env).length > 0) recipe.env = options.env;
+
+  return Object.keys(recipe).length > 0 ? recipe : undefined;
 }
 
 interface CatalogSkillAddOptions {
@@ -957,13 +1207,16 @@ function parseCatalogSkillAddOptions(argv: string[]): CatalogSkillAddOptions {
 
     switch (arg) {
       case '--file':
-        options.file = argv[++i];
+        options.file = nextVal(argv, i, arg);
+        i++;
         break;
       case '--display-name':
-        options.displayName = argv[++i];
+        options.displayName = nextVal(argv, i, arg);
+        i++;
         break;
       case '--description':
-        options.description = argv[++i];
+        options.description = nextVal(argv, i, arg);
+        i++;
         break;
       default:
         process.stderr.write(`Unknown option: ${arg}\n`);
@@ -991,13 +1244,16 @@ function parseCatalogSkillImportOptions(argv: string[]): CatalogSkillImportOptio
 
     switch (arg) {
       case '--name':
-        options.skillId = argv[++i];
+        options.skillId = nextVal(argv, i, arg);
+        i++;
         break;
       case '--display-name':
-        options.displayName = argv[++i];
+        options.displayName = nextVal(argv, i, arg);
+        i++;
         break;
       case '--description':
-        options.description = argv[++i];
+        options.description = nextVal(argv, i, arg);
+        i++;
         break;
       default:
         process.stderr.write(`Unknown option: ${arg}\n`);
@@ -1011,13 +1267,24 @@ function parseCatalogSkillImportOptions(argv: string[]): CatalogSkillImportOptio
 }
 
 function parseTargets(input: string): TargetName[] {
-  const validTargets: TargetName[] = ['claude', 'codex', 'gemini'];
-  const targets = input.split(',').map((t) => t.trim().toLowerCase() as TargetName);
+  const validTargets: TargetName[] = ['claude', 'codex', 'antigravity'];
+  
+  const aliasMap: Record<string, TargetName> = {
+    c: 'claude',
+    x: 'codex',
+    a: 'antigravity',
+    g: 'antigravity'
+  };
+
+  const targets = input.split(',').map((t) => {
+    const raw = t.trim().toLowerCase();
+    return aliasMap[raw] || (raw as TargetName);
+  });
 
   for (const target of targets) {
     if (!validTargets.includes(target)) {
       process.stderr.write(`Invalid target: ${target}\n`);
-      process.stderr.write(`Valid targets: ${validTargets.join(', ')}\n`);
+      process.stderr.write(`Valid targets: ${validTargets.join(', ')} (aliases: c, x, a, g)\n`);
       process.exit(1);
     }
   }
@@ -1034,6 +1301,11 @@ interface SkillOptions {
   githubUrl?: string;
   skillName?: string;
   addToCatalog?: boolean;
+  // Global catalog skill options
+  file?: string;
+  displayName?: string;
+  description?: string;
+  force?: boolean;
 }
 
 function parseSkillOptions(argv: string[], subcommand?: string): SkillOptions {
@@ -1048,7 +1320,9 @@ function parseSkillOptions(argv: string[], subcommand?: string): SkillOptions {
 
     switch (arg) {
       case '--targets':
-        options.targets = parseTargets(argv[++i]);
+      case '-t':
+        options.targets = parseTargets(nextVal(argv, i, arg));
+        i++;
         break;
       case '--no-register':
         options.noRegister = true;
@@ -1062,13 +1336,30 @@ function parseSkillOptions(argv: string[], subcommand?: string): SkillOptions {
         break;
       case '--from-github':
       case '--github':
-        options.githubUrl = argv[++i];
+        options.githubUrl = nextVal(argv, i, arg);
+        i++;
         break;
       case '--name':
-        options.skillName = argv[++i];
+        options.skillName = nextVal(argv, i, arg);
+        i++;
         break;
       case '--no-catalog':
         options.addToCatalog = false;
+        break;
+      case '--file':
+        options.file = nextVal(argv, i, arg);
+        i++;
+        break;
+      case '--display-name':
+        options.displayName = nextVal(argv, i, arg);
+        i++;
+        break;
+      case '--description':
+        options.description = nextVal(argv, i, arg);
+        i++;
+        break;
+      case '--force':
+        options.force = true;
         break;
       default:
         // Treat as skill name or GitHub URL (except for status subcommand)
@@ -1087,6 +1378,14 @@ function parseSkillOptions(argv: string[], subcommand?: string): SkillOptions {
 
 function parseFlag(argv: string[], longName: string, shortName?: string): boolean {
   return argv.includes(`--${longName}`) || (shortName ? argv.includes(`-${shortName}`) : false);
+}
+
+function nextVal(argv: string[], i: number, option: string): string {
+  if (i + 1 < argv.length) {
+    return argv[i + 1];
+  }
+  process.stderr.write(`Error: Option '${option}' requires a value.\n`);
+  process.exit(1);
 }
 
 // ============================================================================

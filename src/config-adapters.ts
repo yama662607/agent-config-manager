@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import TOML from '@iarna/toml';
+import * as TOML from 'smol-toml';
 import { normalizeEnvMap, validateEnvMap } from './mcp-env.js';
 import type {
   TargetName,

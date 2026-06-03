@@ -21,6 +21,16 @@ export function stripAnsi(str: string): string {
 function getCharWidth(char: string): number {
   const code = char.codePointAt(0) ?? 0;
 
+  // Zero-width characters (Variation Selectors, Zero-Width Space/Joiner, etc.)
+  if (
+    (code >= 0xFE00 && code <= 0xFE0F) || // Variation Selectors
+    (code >= 0x200B && code <= 0x200D) || // Zero-Width Space, Non-Joiner, Joiner
+    code === 0x2060 ||                    // Word Joiner
+    code === 0xFEFF                       // Zero Width No-Break Space
+  ) {
+    return 0;
+  }
+
   // Full-width characters (CJK Unified Ideographs, Hangul, Katakana, Hiragana, etc.)
   if (
     (code >= 0x1100 && code <= 0x115F) || // Hangul Jamo
@@ -32,6 +42,7 @@ function getCharWidth(char: string): number {
     (code >= 0xFE30 && code <= 0xFE6F) || // CJK Compatibility Forms
     (code >= 0xFF00 && code <= 0xFF60) || // Fullwidth Forms
     (code >= 0xFFE0 && code <= 0xFFE6) || // Fullwidth Forms
+    (code >= 0x2600 && code <= 0x27BF) || // Miscellaneous Symbols & Dingbats (✅, ❌, ➕, ✏️, etc.)
     (code >= 0x1F000 && code <= 0x1F9FF) || // Emoji & Symbols
     (code >= 0x20000 && code <= 0x2FFFD) || // CJK Extension
     (code >= 0x30000 && code <= 0x3FFFD) || // CJK Extension

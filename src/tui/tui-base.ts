@@ -4,8 +4,11 @@
  * Provides state management and screen navigation for TUI applications.
  */
 
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
+import { getStringWidth } from '../table-utils.js';
+// @ts-ignore
+import enquirerImport from 'enquirer';
+const enquirer = enquirerImport as any;
+const { prompt, Select } = enquirer;
 
 export type ScreenName = 'catalog' | 'mcp' | 'skill';
 
@@ -51,7 +54,7 @@ export abstract class TuiBaseScreen implements TuiScreen {
   protected renderHeader(title: string, icon: string): void {
     const width = 67;
     const content = `  ${icon}  ${title}`;
-    const padding = ' '.repeat(Math.max(0, width - content.length - 1));
+    const padding = ' '.repeat(Math.max(0, width - getStringWidth(content)));
 
     console.log('╔═══════════════════════════════════════════════════════════════════╗');
     console.log(`║${content}${padding}║`);
@@ -59,7 +62,6 @@ export abstract class TuiBaseScreen implements TuiScreen {
   }
 
   protected async pressEnter(): Promise<void> {
-    const { prompt } = require('enquirer');
     try {
       await prompt({
         type: 'input',
@@ -72,8 +74,7 @@ export abstract class TuiBaseScreen implements TuiScreen {
   }
 
   protected async select<T = string>(message: string, choices: any[]): Promise<T | null> {
-    const { Select } = require('enquirer');
-    const prompt = new Select({
+    const instance = new Select({
       name: 'choice',
       message,
       choices,
@@ -83,7 +84,7 @@ export abstract class TuiBaseScreen implements TuiScreen {
     });
 
     try {
-      return await prompt.run() as T;
+      return await instance.run() as T;
     } catch {
       return null;
     }

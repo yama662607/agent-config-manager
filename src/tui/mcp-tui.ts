@@ -78,9 +78,9 @@ export class McpTuiScreen extends TuiBaseScreen {
     }
 
     const choices = [
-      { name: 'add', message: '➕ Add MCP to project', value: '__add__', hint: '' },
-      { name: 'switch-target', message: `🔄 Switch target (current: ${currentTarget})`, value: '__switch__', hint: '' },
-      { name: 'exit', message: '🚪 Exit', value: '__exit__', hint: '' },
+      { name: '__add__', message: '➕ Add MCP to project', hint: '' },
+      { name: '__switch__', message: `🔄 Switch target (current: ${currentTarget})`, hint: '' },
+      { name: '__exit__', message: '🚪 Exit', hint: '' },
     ];
 
     // Add server actions
@@ -105,7 +105,8 @@ export class McpTuiScreen extends TuiBaseScreen {
     if (selected === '__switch__') return await this.handleSwitchTarget(state);
 
     // Server selected
-    return await this.handleServerAction(selected, allStatus, currentTarget);
+    const serverName = selected.startsWith('server:') ? selected.slice(7) : selected;
+    return await this.handleServerAction(serverName, allStatus, currentTarget, state);
   }
 
   private renderStatusTable(
@@ -156,26 +157,17 @@ export class McpTuiScreen extends TuiBaseScreen {
   private async handleSwitchTarget(state: TuiState): Promise<McpAction> {
     const targets: TargetName[] = ['claude', 'codex', 'antigravity'];
 
-    const { Select } = require('enquirer');
-    const prompt = new Select({
-      name: 'target',
-      message: 'Select target:',
-      choices: targets.map(t => ({
-        name: t,
-        message: t === state.target ? `${t} (current)` : t
-      })),
-      actions: {
-        ctrl: { n: 'down', p: 'up' }
-      }
-    });
+    const choices = targets.map(t => ({
+      name: t,
+      message: t === state.target ? `${t} (current)` : t
+    }));
 
-    try {
-      const selected = await prompt.run() as TargetName;
+    const selected = await this.select<TargetName>('Select target:', choices);
+    if (selected) {
       state.target = selected;
       return 'refresh';
-    } catch {
-      return 'back';
     }
+    return 'back';
   }
 
   private async handleAdd(state: TuiState): Promise<McpAction> {
@@ -190,35 +182,24 @@ export class McpTuiScreen extends TuiBaseScreen {
       console.log('  1. Add from npm package');
       console.log('  2. Add custom configuration');
 
-      const { Select } = require('enquirer');
-    const prompt = new Select({
-        name: 'option',
-        message: 'Choose option:',
-        choices: [
-          { name: 'npm', message: 'Add from npm package' },
-          { name: 'custom', message: 'Add custom configuration' },
-          { name: 'back', message: '← Back' }
-        ],
-        actions: {
-          ctrl: { n: 'down', p: 'up' }
-        }
-      });
+      const choices = [
+        { name: 'npm', message: 'Add from npm package' },
+        { name: 'custom', message: 'Add custom configuration' },
+        { name: 'back', message: '← Back' }
+      ];
 
-      try {
-        const choice = await prompt.run();
-        if (choice === 'back') return 'back';
-        if (choice === 'npm') return await this.addFromNpm(state);
-        if (choice === 'custom') return await this.addCustom(state);
-      } catch {
-        return 'back';
-      }
+      const choice = await this.select('Choose option:', choices);
+      if (!choice || choice === 'back') return 'back';
+      if (choice === 'npm') return await this.addFromNpm(state);
+      if (choice === 'custom') return await this.addCustom(state);
+      return 'back';
     }
 
     // Show catalog entries
     const choices = mcps.map(mcp => ({
-      name: mcp.id,
-      message: `📦 ${mcp.displayName || mcp.id}`,
-      hint: mcp.description?.slice(0, 50)
+      name: mcp?.id || 'Unknown',
+      message: `📦 ${mcp?.displayName || mcp?.id || 'Unknown'}`,
+      hint: mcp?.description?.slice(0, 50)
     }));
 
     choices.push(
@@ -227,27 +208,13 @@ export class McpTuiScreen extends TuiBaseScreen {
       { name: 'back', message: '← Back', hint: '' }
     );
 
-    const { Select } = require('enquirer');
-    const prompt = new Select({
-      name: 'mcp',
-      message: 'Select MCP (or action):',
-      choices,
-      actions: {
-        ctrl: { n: 'down', p: 'up' }
-      }
-    });
+    const selected = await this.select<string>('Select MCP (or action):', choices);
+    if (!selected || selected === 'back') return 'back';
+    if (selected === 'npm') return await this.addFromNpm(state);
+    if (selected === 'custom') return await this.addCustom(state);
 
-    try {
-      const selected = await prompt.run();
-      if (selected === 'back') return 'back';
-      if (selected === 'npm') return await this.addFromNpm(state);
-      if (selected === 'custom') return await this.addCustom(state);
-
-      // Add from catalog
-      return await this.addToProject(selected, state);
-    } catch {
-      return 'back';
-    }
+    // Add from catalog
+    return await this.addToProject(selected, state);
   }
 
   private async addToProject(mcpId: string, state: TuiState): Promise<McpAction> {
@@ -257,7 +224,8 @@ export class McpTuiScreen extends TuiBaseScreen {
       await mcpAdd({
         packageId: mcpId,
         targets: [state.target],
-        noRegister: true
+        noRegister: true,
+        allowHome: state.allowHome,
       });
       console.log('\n✅ Added to project!');
     } catch (error: any) {
@@ -269,7 +237,7 @@ export class McpTuiScreen extends TuiBaseScreen {
   }
 
   private async addFromNpm(state: TuiState): Promise<McpAction> {
-    const { prompt } = await import('enquirer');
+    const { prompt } = (await import('enquirer')).default as any;
 
     try {
       const response = await prompt({
@@ -288,6 +256,7 @@ export class McpTuiScreen extends TuiBaseScreen {
         targets: [state.target],
         noRegister: false,
         recipe: env ? { env } : undefined,
+        allowHome: state.allowHome,
       });
       console.log('\n✅ Added to catalog and project!');
     } catch (error: any) {
@@ -323,6 +292,7 @@ export class McpTuiScreen extends TuiBaseScreen {
         targets: [state.target],
         noRegister: true,
         recipe,
+        allowHome: state.allowHome,
       });
 
       console.log('\n✅ Added to catalog and project!');
@@ -337,7 +307,8 @@ export class McpTuiScreen extends TuiBaseScreen {
   private async handleServerAction(
     serverName: string,
     allStatus: Record<TargetName, Record<string, { enabled: boolean; recipe?: any }>>,
-    currentTarget: TargetName
+    currentTarget: TargetName,
+    state: TuiState
   ): Promise<McpAction> {
     const isEnabled = allStatus[currentTarget]?.[serverName]?.enabled ?? false;
     const recipe = allStatus[currentTarget]?.[serverName]?.recipe;
@@ -346,31 +317,22 @@ export class McpTuiScreen extends TuiBaseScreen {
     console.log('─'.repeat(60));
     this.renderRecipeSummary(recipe);
 
-    const { Select } = require('enquirer');
-    const prompt = new Select({
-      name: 'action',
-      message: `Server is ${isEnabled ? 'enabled' : 'disabled'}. What would you like to do?`,
-      choices: [
-        { name: 'toggle', message: isEnabled ? '❌ Disable' : '✅ Enable' },
-        { name: 'edit', message: '✏️  Edit configuration' },
-        { name: 'remove', message: '🗑️  Remove from project' },
-        { name: 'back', message: '← Back' }
-      ],
-      actions: {
-        ctrl: { n: 'down', p: 'up' }
-      }
-    });
+    const choices = [
+      { name: 'toggle', message: isEnabled ? '❌ Disable' : '✅ Enable' },
+      { name: 'edit', message: '✏️  Edit configuration' },
+      { name: 'remove', message: '🗑️  Remove from project' },
+      { name: 'back', message: '← Back' }
+    ];
 
-    try {
-      const action = await prompt.run();
+    const action = await this.select<string>(
+      `Server is ${isEnabled ? 'enabled' : 'disabled'}. What would you like to do?`,
+      choices
+    );
 
-      if (action === 'back') return 'refresh';
-      if (action === 'toggle') return await this.toggleServer(serverName, currentTarget, isEnabled);
-      if (action === 'edit') return await this.editServer(serverName, currentTarget, recipe);
-      if (action === 'remove') return await this.removeServer(serverName, currentTarget);
-    } catch {
-      return 'refresh';
-    }
+    if (!action || action === 'back') return 'refresh';
+    if (action === 'toggle') return await this.toggleServer(serverName, currentTarget, isEnabled, state);
+    if (action === 'edit') return await this.editServer(serverName, currentTarget, recipe, state);
+    if (action === 'remove') return await this.removeServer(serverName, currentTarget, state);
 
     return 'refresh';
   }
@@ -378,16 +340,17 @@ export class McpTuiScreen extends TuiBaseScreen {
   private async toggleServer(
     serverName: string,
     target: TargetName,
-    currentEnabled: boolean
+    currentEnabled: boolean,
+    state: TuiState
   ): Promise<McpAction> {
     const { mcpEnable, mcpDisable } = await import('../cli-mcp.js');
 
     try {
       if (currentEnabled) {
-        await mcpDisable({ serverName, targets: [target] });
+        await mcpDisable({ serverName, targets: [target], allowHome: state.allowHome });
         console.log(`\n✅ Disabled ${serverName}`);
       } else {
-        await mcpEnable({ serverName, targets: [target] });
+        await mcpEnable({ serverName, targets: [target], allowHome: state.allowHome });
         console.log(`\n✅ Enabled ${serverName}`);
       }
     } catch (error: any) {
@@ -398,8 +361,8 @@ export class McpTuiScreen extends TuiBaseScreen {
     return 'refresh';
   }
 
-  private async removeServer(serverName: string, target: TargetName): Promise<McpAction> {
-    const { prompt } = await import('enquirer');
+  private async removeServer(serverName: string, target: TargetName, state: TuiState): Promise<McpAction> {
+    const { prompt } = (await import('enquirer')).default as any;
 
     try {
       const confirmed = await prompt({
@@ -412,7 +375,7 @@ export class McpTuiScreen extends TuiBaseScreen {
       if (!confirmed || !confirmed.confirm) return 'refresh';
 
       const { mcpRemove } = await import('../cli-mcp.js');
-      await mcpRemove({ serverName, targets: [target] });
+      await mcpRemove({ serverName, targets: [target], allowHome: state.allowHome });
       console.log(`\n✅ Removed ${serverName}`);
     } catch (error: any) {
       if (error instanceof Error && error.message.includes('User force closed')) {
@@ -425,7 +388,7 @@ export class McpTuiScreen extends TuiBaseScreen {
     return 'refresh';
   }
 
-  private async editServer(serverName: string, target: TargetName, recipe?: any): Promise<McpAction> {
+  private async editServer(serverName: string, target: TargetName, recipe: any | undefined, state: TuiState): Promise<McpAction> {
     try {
       const nextRecipe = await this.promptForRecipe(this.detectTransport(recipe), recipe);
       const { mcpEdit } = await import('../cli-mcp.js');
@@ -433,6 +396,7 @@ export class McpTuiScreen extends TuiBaseScreen {
         serverName,
         targets: [target],
         recipe: nextRecipe,
+        allowHome: state.allowHome,
       });
       console.log(`\n✅ Updated ${serverName}`);
     } catch (error: any) {
@@ -463,7 +427,7 @@ export class McpTuiScreen extends TuiBaseScreen {
   }
 
   private async promptForServerBasics(): Promise<{ name: string; transport: 'stdio' | 'http' }> {
-    const { prompt } = await import('enquirer');
+    const { prompt } = (await import('enquirer')).default as any;
     return await prompt([
       {
         type: 'input',
@@ -483,7 +447,7 @@ export class McpTuiScreen extends TuiBaseScreen {
     transport: 'stdio' | 'http',
     initial: { command?: string; args?: string[]; url?: string; cwd?: string; env?: Record<string, string> } = {}
   ): Promise<{ command?: string; args?: string[]; url?: string; cwd?: string; env?: Record<string, string> }> {
-    const { prompt } = await import('enquirer');
+    const { prompt } = (await import('enquirer')).default as any;
     const recipe: { command?: string; args?: string[]; url?: string; cwd?: string; env?: Record<string, string> } = {};
 
     if (transport === 'http') {
@@ -534,7 +498,7 @@ export class McpTuiScreen extends TuiBaseScreen {
   }
 
   private async promptForEnv(initial?: Record<string, string>): Promise<Record<string, string> | undefined> {
-    const { prompt } = await import('enquirer');
+    const { prompt } = (await import('enquirer')).default as any;
     const response = await prompt({
       type: 'input',
       name: 'env',

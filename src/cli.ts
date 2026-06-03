@@ -68,7 +68,7 @@ Options:
 Targets:
   claude      Claude Code (.mcp.json, .claude/skills/) (alias: c)
   codex       Codex (.codex/config.toml, .codex/skills/) (alias: x)
-  agy         Antigravity CLI (.gemini/antigravity/mcp_config.json, .agents/skills/) (alias: a, g)
+  agy         Antigravity CLI (.agents/mcp_config.json, .agents/skills/) (alias: a, g)
 
 EXAMPLES:
   acm init                         Interactive setup for current project
@@ -179,6 +179,15 @@ Options:
   --name <name>       Override skill name from GitHub or import
   --no-catalog        Don't add to catalog, only install to project
   --file <path>       MD file path to register skill to catalog
+
+  Catalog Filter Options (with -g/--global):
+  --plugin <name>     Filter by plugin name (e.g., vercel, slack, zoom)
+  --agent <name>      Filter by agent (claude, codex, antigravity)
+  --source-type <t>   Filter by source type (user, plugin, curated, system, bundled)
+  --category <cat>    Filter by category (ai-ml, cloud-platform, communication, etc.)
+  --search <text>     Free-text search in name/description
+  --pinned            Show only pinned (favorite) skills
+  --deprecated        Show only deprecated skills
 
 EXAMPLES:
   # Show project skill status
@@ -355,9 +364,11 @@ async function handleCatalogMcp(subcommand: string | undefined, args: string[]):
   }
 
   switch (subcommand) {
-    case 'list':
-      await catalogMcpList();
+    case 'list': {
+      const filter = parseMcpListFilter(args);
+      await catalogMcpList(Object.keys(filter).length > 0 ? filter : undefined);
       break;
+    }
 
     case 'show':
       if (args.length === 0) {
@@ -418,9 +429,11 @@ async function handleCatalogSkill(subcommand: string | undefined, args: string[]
   }
 
   switch (subcommand) {
-    case 'list':
-      await (await import('./cli-catalog.js')).catalogSkillList();
+    case 'list': {
+      const filter = parseSkillListFilter(args);
+      await (await import('./cli-catalog.js')).catalogSkillList(Object.keys(filter).length > 0 ? filter : undefined);
       break;
+    }
 
     case 'show':
       if (args.length === 0) {
@@ -536,11 +549,14 @@ async function handleMcp(argv: string[]): Promise<void> {
     } else if (arg === '-v' || arg === '--verbose') {
       verbose = true;
       i++;
-    } else if (['--command', '--args', '--url', '--cwd', '--env', '--targets', '-t', '--file', '--display-name', '--description', '--name'].includes(arg)) {
+    } else if (['--command', '--args', '--url', '--cwd', '--env', '--targets', '-t', '--file', '--display-name', '--description', '--name', '--category', '--language', '--popularity', '--source-type'].includes(arg)) {
       filteredArgs.push(arg);
       if (i + 1 < argv.length) {
         filteredArgs.push(argv[++i]);
       }
+      i++;
+    } else if (['--pinned', '--deprecated'].includes(arg)) {
+      filteredArgs.push(arg);
       i++;
     } else {
       filteredArgs.push(arg);
@@ -583,7 +599,8 @@ async function handleMcp(argv: string[]): Promise<void> {
   if (!subcommand || subcommand === 'status' || subcommand === 'list') {
     if (isGlobal) {
       const { catalogMcpList } = await import('./cli-catalog.js');
-      await catalogMcpList();
+      const filter = parseMcpListFilter(filteredArgs.slice(1));
+      await catalogMcpList(Object.keys(filter).length > 0 ? filter : undefined);
     } else {
       await mcpStatus(verbose, allowHome);
     }
@@ -731,11 +748,14 @@ async function handleSkill(argv: string[]): Promise<void> {
     } else if (arg === '-v' || arg === '--verbose') {
       verbose = true;
       i++;
-    } else if (['--command', '--args', '--url', '--cwd', '--env', '--targets', '-t', '--file', '--display-name', '--description', '--name'].includes(arg)) {
+    } else if (['--command', '--args', '--url', '--cwd', '--env', '--targets', '-t', '--file', '--display-name', '--description', '--name', '--plugin', '--agent', '--source-type', '--category', '--search'].includes(arg)) {
       filteredArgs.push(arg);
       if (i + 1 < argv.length) {
         filteredArgs.push(argv[++i]);
       }
+      i++;
+    } else if (['--pinned', '--deprecated'].includes(arg)) {
+      filteredArgs.push(arg);
       i++;
     } else {
       filteredArgs.push(arg);
@@ -778,7 +798,8 @@ async function handleSkill(argv: string[]): Promise<void> {
   if (!subcommand || subcommand === 'status' || subcommand === 'list') {
     if (isGlobal) {
       const { catalogSkillList } = await import('./cli-catalog.js');
-      await catalogSkillList();
+      const filter = parseSkillListFilter(filteredArgs.slice(1));
+      await catalogSkillList(Object.keys(filter).length > 0 ? filter : undefined);
     } else {
       await skillStatus(verbose, allowHome);
     }
@@ -1387,6 +1408,37 @@ function parseSkillOptions(argv: string[], subcommand?: string): SkillOptions {
 
 function parseFlag(argv: string[], longName: string, shortName?: string): boolean {
   return argv.includes(`--${longName}`) || (shortName ? argv.includes(`-${shortName}`) : false);
+}
+
+function parseSkillListFilter(argv: string[]): Record<string, string | boolean> {
+  const filter: Record<string, string | boolean> = {};
+  for (let i = 0; i < argv.length; i++) {
+    switch (argv[i]) {
+      case '--plugin':      filter.plugin = nextVal(argv, i++, '--plugin'); break;
+      case '--agent':       filter.agent = nextVal(argv, i++, '--agent'); break;
+      case '--source-type': filter.sourceType = nextVal(argv, i++, '--source-type'); break;
+      case '--category':    filter.category = nextVal(argv, i++, '--category'); break;
+      case '--search':      filter.search = nextVal(argv, i++, '--search'); break;
+      case '--pinned':      filter.pinned = true; break;
+      case '--deprecated':  filter.deprecated = true; break;
+    }
+  }
+  return filter;
+}
+
+function parseMcpListFilter(argv: string[]): Record<string, string | boolean> {
+  const filter: Record<string, string | boolean> = {};
+  for (let i = 0; i < argv.length; i++) {
+    switch (argv[i]) {
+      case '--category':    filter.category = nextVal(argv, i++, '--category'); break;
+      case '--language':    filter.language = nextVal(argv, i++, '--language'); break;
+      case '--popularity':  filter.popularity = nextVal(argv, i++, '--popularity'); break;
+      case '--source-type': filter.sourceType = nextVal(argv, i++, '--source-type'); break;
+      case '--pinned':      filter.pinned = true; break;
+      case '--deprecated':  filter.deprecated = true; break;
+    }
+  }
+  return filter;
 }
 
 function nextVal(argv: string[], i: number, option: string): string {

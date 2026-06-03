@@ -45,7 +45,7 @@ describe('TUI Integration Tests', { concurrency: false }, () => {
 
     // Create test config files
     await fs.mkdir(path.join(TEST_PROJECT_DIR, '.codex'), { recursive: true });
-    await fs.mkdir(path.join(TEST_PROJECT_DIR, '.gemini', 'antigravity'), { recursive: true });
+    await fs.mkdir(path.join(TEST_PROJECT_DIR, '.agents'), { recursive: true });
 
     await fs.writeFile(
       path.join(TEST_PROJECT_DIR, '.mcp.json'),
@@ -58,7 +58,7 @@ describe('TUI Integration Tests', { concurrency: false }, () => {
     );
 
     await fs.writeFile(
-      path.join(TEST_PROJECT_DIR, '.gemini', 'antigravity', 'mcp_config.json'),
+      path.join(TEST_PROJECT_DIR, '.agents', 'mcp_config.json'),
       JSON.stringify({ mcpServers: {} }, null, 2)
     );
 
@@ -225,7 +225,7 @@ describe('TUI Integration Tests', { concurrency: false }, () => {
     });
 
     it('should resolve Antigravity config path', async () => {
-      const configPath = path.join(TEST_PROJECT_DIR, '.gemini', 'antigravity', 'mcp_config.json');
+      const configPath = path.join(TEST_PROJECT_DIR, '.agents', 'mcp_config.json');
       const exists = await fs.access(configPath).then(() => true).catch(() => false);
 
       assert.ok(exists, 'Antigravity config should exist');

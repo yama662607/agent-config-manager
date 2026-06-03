@@ -8,7 +8,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import type { TargetName, McpRecipe } from './types.js';
+import type { TargetName, McpRecipe, DecomposedSource } from './types.js';
 
 // ============================================================================
 // Types
@@ -49,6 +49,62 @@ interface SkillScanPath {
   agent: TargetName;
   /** Skip directories matching these names */
   skipDirs?: string[];
+}
+
+// ============================================================================
+// Source Decomposition
+// ============================================================================
+
+/**
+ * Decompose a scanned source string into structured fields.
+ *
+ * Source format: <sourceType>:<agent>[:<plugin>...]
+ * Special case: "plugin:codex-bundled" → sourceType="bundled", agent="codex"
+ *
+ * Examples:
+ *   "user:claude"           → { sourceType: "user", agent: "claude" }
+ *   "plugin:codex:vercel"   → { sourceType: "plugin", agent: "codex", plugin: "vercel" }
+ *   "plugin:codex-bundled:stripe" → { sourceType: "bundled", agent: "codex", plugin: "stripe" }
+ *   "system:codex"          → { sourceType: "system", agent: "codex" }
+ *   "curated:codex"         → { sourceType: "curated", agent: "codex" }
+ *   "user:antigravity"      → { sourceType: "user", agent: "antigravity" }
+ */
+export function decomposeSource(source: string): DecomposedSource {
+  const parts = source.split(':');
+
+  if (parts.length < 2) {
+    return { sourceType: parts[0], agent: undefined, plugin: undefined };
+  }
+
+  let sourceType: string;
+  let agent: string | undefined;
+  let plugin: string | undefined;
+
+  if (parts[0] === 'plugin' && parts[1] === 'codex-bundled') {
+    // "plugin:codex-bundled" → sourceType="bundled"
+    // "plugin:codex-bundled:stripe" → sourceType="bundled", plugin="stripe"
+    sourceType = 'bundled';
+    agent = 'codex';
+    plugin = parts.length > 2 ? parts[2] : undefined;
+  } else if (parts[0] === 'plugin' && parts[1] === 'claude') {
+    // "plugin:claude:official" → agent="claude", plugin from last segment
+    // "plugin:claude:codex:stripe" → agent="claude", plugin="stripe"
+    sourceType = 'plugin';
+    agent = 'claude';
+    plugin = parts.length > 2 ? parts[parts.length - 1] : undefined;
+  } else if (parts[0] === 'plugin') {
+    // "plugin:codex:vercel" → agent="codex", plugin="vercel"
+    sourceType = 'plugin';
+    agent = parts[1];
+    plugin = parts.length > 2 ? parts[parts.length - 1] : undefined;
+  } else {
+    // "user:claude", "curated:codex", "system:codex", "user:antigravity"
+    sourceType = parts[0];
+    agent = parts[1];
+    plugin = undefined;
+  }
+
+  return { sourceType, agent, plugin };
 }
 
 // ============================================================================
@@ -338,28 +394,190 @@ async function scanNestedDeepPath(scanPath: SkillScanPath): Promise<ScannedSkill
 // ============================================================================
 
 /**
- * Scan all agents for configured MCP servers.
+ * Scan all agents and their plugins for configured MCP servers.
  */
 export async function scanAllMcps(): Promise<ScannedMcp[]> {
   const results: ScannedMcp[] = [];
   const seenIds = new Set<string>();
   const home = getHome();
 
-  const sources: ScannedMcp[] = [
-    // Claude first (typically the most up-to-date config)
+  // ---- Main config files ----
+  const mainSources: ScannedMcp[] = [
     ...(await scanClaudeMcps(path.join(home, '.mcp.json'))),
     ...(await scanCodexMcps(path.join(home, '.codex', 'config.toml'))),
+    ...(await scanAntigravityMcps(path.join(home, '.gemini', 'antigravity-cli', 'mcp_config.json'))),
     ...(await scanAntigravityMcps(path.join(home, '.gemini', 'antigravity', 'mcp_config.json'))),
+    ...(await scanAntigravityMcps(path.join(home, '.gemini', 'antigravity-ide', 'mcp_config.json'))),
+    // Raw antigravity config dir
+    ...(await scanPluginDirMcps(path.join(home, '.gemini', 'config'), 'antigravity')),
   ];
 
-  for (const mcp of sources) {
-    if (!seenIds.has(mcp.id)) {
+  for (const mcp of mainSources) {
+    if (!seenIds.has(mcp.id) && (mcp.recipe.command || mcp.recipe.url)) {
       seenIds.add(mcp.id);
       results.push(mcp);
     }
   }
 
+  // ---- Plugin .mcp.json files ----
+
+  // Claude plugin cache: ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/.mcp.json
+  await scanPluginMcpsDir(home, '.claude/plugins/cache', 'claude', 3, results, seenIds);
+
+  // Claude plugin marketplaces (external_plugins): ~/.claude/plugins/marketplaces/*/external_plugins/*/.mcp.json
+  await scanPluginMcpsDir(home, '.claude/plugins/marketplaces', 'claude', null, results, seenIds);
+
+  // Codex plugins: ~/.codex/.tmp/plugins/plugins/*/.mcp.json
+  await scanPluginMcpsDir(home, '.codex/.tmp/plugins/plugins', 'codex', 1, results, seenIds);
+
+  // Codex bundled marketplaces: ~/.codex/.tmp/bundled-marketplaces/*/plugins/*/.mcp.json
+  await scanPluginMcpsDir(home, '.codex/.tmp/bundled-marketplaces', 'codex', null, results, seenIds);
+
+  // Codex plugin cache
+  await scanPluginMcpsDir(home, '.codex/plugins/cache', 'codex', null, results, seenIds);
+
+  // Antigravity plugins: ~/.gemini/config/plugins/*/.mcp.json
+  await scanPluginMcpsDir(home, '.gemini/config/plugins', 'antigravity', 1, results, seenIds);
+
   return results.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/**
+ * Recursively scan a directory tree for .mcp.json files and extract MCP configs.
+ * `depth` = number of directory levels to search under baseDir (null = full depth).
+ */
+async function scanPluginMcpsDir(
+  home: string,
+  relativePath: string,
+  agent: TargetName,
+  depth: number | null,
+  results: ScannedMcp[],
+  seenIds: Set<string>,
+): Promise<void> {
+  const baseDir = path.join(home, ...relativePath.split('/'));
+
+  try {
+    await fs.access(baseDir);
+  } catch {
+    return;
+  }
+
+  // Walk the directory tree
+  const discovered = await walkForMcpJson(baseDir, depth, 0);
+  for (const mcpPath of discovered) {
+    const mcps = await parseMcpJsonFile(mcpPath, agent);
+    for (const mcp of mcps) {
+      if (!seenIds.has(mcp.id) && (mcp.recipe.command || mcp.recipe.url)) {
+        seenIds.add(mcp.id);
+        results.push(mcp);
+      }
+    }
+  }
+}
+
+/**
+ * Walk a directory tree looking for .mcp.json files.
+ */
+async function walkForMcpJson(dir: string, maxDepth: number | null, currentDepth: number): Promise<string[]> {
+  const results: string[] = [];
+  if (maxDepth !== null && currentDepth > maxDepth + 2) return results; // +2 for plugin/version levels
+
+  let entries;
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return results;
+  }
+
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue;
+    const fullPath = path.join(dir, entry.name);
+
+    if (entry.isDirectory()) {
+      // Check for .mcp.json in this dir
+      const mcpJsonPath = path.join(fullPath, '.mcp.json');
+      try {
+        await fs.access(mcpJsonPath);
+        results.push(mcpJsonPath);
+      } catch {
+        // No .mcp.json here, continue walking
+      }
+
+      // Continue walking (with depth limit for cache dirs that go deep)
+      if (maxDepth === null || currentDepth < maxDepth) {
+        const subResults = await walkForMcpJson(fullPath, maxDepth, currentDepth + 1);
+        results.push(...subResults);
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Parse a .mcp.json file and return MCP entries.
+ * Handles both formats:
+ *   1. { "mcpServers": { "name": { ... } } }  (standard)
+ *   2. { "name": { "command": ..., "args": ... } }  (direct, plugin style)
+ */
+async function parseMcpJsonFile(filePath: string, agent: TargetName): Promise<ScannedMcp[]> {
+  const results: ScannedMcp[] = [];
+
+  try {
+    const raw = await fs.readFile(filePath, 'utf8');
+    const config = JSON.parse(raw);
+
+    // Determine format
+    const servers: Record<string, any> = config.mcpServers || config;
+
+    for (const [name, server] of Object.entries(servers)) {
+      // Skip top-level keys that aren't MCP server configs
+      if (name === 'mcpServers') continue;
+      if (!server || typeof server !== 'object') continue;
+      if (!server.command && !server.url) continue;
+
+      const recipe: McpRecipe = {};
+
+      if (server.url) {
+        recipe.transport = server.type === 'stdio' ? 'stdio' : 'http';
+        recipe.url = server.url;
+      } else if (server.command) {
+        recipe.transport = 'stdio';
+        recipe.command = server.command;
+        if (server.args) recipe.args = server.args;
+      } else {
+        continue; // Neither command nor url
+      }
+
+      if (server.cwd) recipe.cwd = server.cwd;
+      if (server.env) recipe.env = server.env;
+
+      results.push({
+        id: name,
+        recipe,
+        source: `plugin:${agent}`,
+        agent,
+        enabled: server.enabled !== false,
+      });
+    }
+  } catch {
+    // Parse error, skip
+  }
+
+  return results;
+}
+
+/**
+ * Scan a single directory for .mcp.json and return MCPs (used for antigravity config dir).
+ */
+async function scanPluginDirMcps(dir: string, agent: TargetName): Promise<ScannedMcp[]> {
+  const mcpJsonPath = path.join(dir, '.mcp.json');
+  try {
+    await fs.access(mcpJsonPath);
+    return parseMcpJsonFile(mcpJsonPath, agent);
+  } catch {
+    return [];
+  }
 }
 
 async function scanClaudeMcps(configPath: string): Promise<ScannedMcp[]> {

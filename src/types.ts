@@ -102,6 +102,96 @@ export interface SkillCatalogEntry {
 }
 
 // ============================================================================
+// Enhanced Skill Metadata (skills-metadata.toml)
+// ============================================================================
+
+/** Result of decomposing a scanned source string into structured fields */
+export interface DecomposedSource {
+  /** Source type: "user", "plugin", "curated", "system", "bundled" */
+  sourceType?: string;
+  /** Which agent this skill belongs to: "claude", "codex", "antigravity" */
+  agent?: string;
+  /** Plugin name if sourced from a plugin (e.g. "vercel", "stripe") */
+  plugin?: string;
+}
+
+/** Enhanced per-skill metadata stored in skills-metadata.toml */
+export interface EnhancedSkillMetadata {
+  /** Source type: "user", "plugin", "curated", "system", "bundled" */
+  sourceType?: string;
+  /** Which agent this skill belongs to */
+  agent?: string;
+  /** Plugin name if from a plugin */
+  plugin?: string;
+  /** Functional category */
+  category?: string;
+  /** Version string (from frontmatter or manual) */
+  version?: string;
+  /** Author name (from frontmatter or manual) */
+  author?: string;
+  /** ISO 8601 timestamp of last file modification (auto-detected) */
+  updatedAt?: string;
+  /** User favorite flag (manual) */
+  pinned?: boolean;
+  /** Deprecation flag (manual) */
+  deprecated?: boolean;
+  /** Flexible user-defined tags */
+  tags?: string[];
+}
+
+/** Top-level structure of skills-metadata.toml */
+export interface SkillsMetadataFile {
+  version: string;
+  skills: Record<string, EnhancedSkillMetadata>;
+}
+
+// ============================================================================
+// Enhanced MCP Metadata (mcps-metadata.toml)
+// ============================================================================
+
+/** Enhanced per-MCP metadata stored in mcps-metadata.toml */
+export interface EnhancedMcpMetadata {
+  /** Human-readable display name */
+  displayName?: string;
+  /** Japanese description */
+  descriptionJa?: string;
+  /** English description */
+  descriptionEn?: string;
+  /** Functional category */
+  category?: string;
+  /** Primary implementation language */
+  language?: string;
+  /** Transport type */
+  transport?: TransportType;
+  /** npm package name (if applicable) */
+  package?: string;
+  /** GitHub repository (owner/repo format) */
+  github?: string;
+  /** Official website URL */
+  website?: string;
+  /** Popularity tier: "high", "medium", "low" */
+  popularity?: string;
+  /** Source type: "config" (main config), "plugin" (plugin directory) */
+  sourceType?: string;
+  /** Which agent this MCP belongs to: "claude", "codex", "antigravity" */
+  agent?: string;
+  /** ISO 8601 timestamp of when this entry was added */
+  addedAt?: string;
+  /** User favorite flag (manual) */
+  pinned?: boolean;
+  /** Deprecation flag (manual) */
+  deprecated?: boolean;
+  /** Flexible user-defined tags */
+  tags?: string[];
+}
+
+/** Top-level structure of mcps-metadata.toml */
+export interface McpsMetadataFile {
+  version: string;
+  mcps: Record<string, EnhancedMcpMetadata>;
+}
+
+// ============================================================================
 // Native Config Types
 // ============================================================================
 
@@ -132,7 +222,7 @@ export interface CodexMcpServer {
   enabled?: boolean;
 }
 
-/** Antigravity CLI .gemini/antigravity/mcp_config.json structure (partial) */
+/** Antigravity CLI .agents/mcp_config.json structure (partial) */
 export interface AntigravitySettings {
   mcpServers?: Record<string, AntigravityMcpServer>;
 }

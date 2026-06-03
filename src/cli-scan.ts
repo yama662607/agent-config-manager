@@ -7,6 +7,7 @@
 import { scanAllSkills, scanAllMcps, type ScannedSkill, type ScannedMcp } from './scanner.js';
 import { addSkill, normalizeSkillPackage, getSkill, addMcp, normalizeMcpPackage, getMcp } from './catalog.js';
 import { padRightWide, truncateWide } from './table-utils.js';
+import type { McpRecipe } from './types.js';
 
 // ============================================================================
 // Helpers
@@ -173,6 +174,11 @@ async function importMcpsToCatalog(mcps: ScannedMcp[]): Promise<ImportResult> {
   let skipped = 0;
   let errors = 0;
 
+  // Load existing enhanced metadata for enrichment
+  const { loadMcpsMetadata, saveMcpsMetadata } = await import('./mcps-metadata.js');
+  const metaFile = await loadMcpsMetadata();
+  let metaChanged = false;
+
   for (const mcp of mcps) {
     try {
       // Check if already in catalog
@@ -182,13 +188,43 @@ async function importMcpsToCatalog(mcps: ScannedMcp[]): Promise<ImportResult> {
         continue;
       }
 
-      // Normalize and add
+      // Normalize and add to catalog
       const entry = normalizeMcpPackage(mcp.id, {
         recipe: mcp.recipe,
         tags: ['scanned', mcp.source],
       });
 
       await addMcp(entry);
+
+      // Also add to enhanced metadata if not already there
+      if (!metaFile.mcps[mcp.id]) {
+        // Try fuzzy match for existing metadata
+        let found = false;
+        for (const [key, meta] of Object.entries(metaFile.mcps)) {
+          if (key.includes(mcp.id) || mcp.id.includes(key) ||
+              (meta.package && mcp.id.includes(meta.package))) {
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          const isPlugin = mcp.source.startsWith('plugin:');
+          metaFile.mcps[mcp.id] = {
+            displayName: entry.displayName,
+            descriptionJa: entry.description,
+            category: guessMcpCategory(mcp.id),
+            language: guessMcpLanguage(mcp.id, mcp.recipe),
+            transport: mcp.recipe.transport || 'stdio',
+            package: detectNpmPackage(mcp.recipe),
+            sourceType: isPlugin ? 'plugin' : 'config',
+            agent: mcp.agent,
+            addedAt: new Date().toISOString(),
+            tags: ['scanned'],
+          };
+          metaChanged = true;
+        }
+      }
+
       console.log(`  ✅ ${mcp.id} (from ${mcp.source})`);
       added++;
     } catch (error: any) {
@@ -197,7 +233,51 @@ async function importMcpsToCatalog(mcps: ScannedMcp[]): Promise<ImportResult> {
     }
   }
 
+  if (metaChanged) {
+    await saveMcpsMetadata(metaFile);
+  }
+
   return { added, skipped, errors };
+
+function guessMcpCategory(id: string): string {
+  const lower = id.toLowerCase();
+  if (/github|gitlab|bitbucket|git\b|code-review|coderabbit|sentry|xcode/i.test(lower)) return 'development';
+  if (/browser|playwright|chrome|puppeteer|selenium/i.test(lower)) return 'browser';
+  if (/search|brave|tavily|exa|perplexity|context7/i.test(lower)) return 'search';
+  if (/postgres|mysql|sqlite|database|duckdb|neon|supabase|clickhouse|airtable/i.test(lower)) return 'database';
+  if (/slack|teams|discord|zoom|twilio|gmail|email|calendar/i.test(lower)) return 'communication';
+  if (/notion|linear|jira|asana|todo|task|zapier/i.test(lower)) return 'productivity';
+  if (/docker|kubernetes|terraform|vercel|netlify|cloudflare|aws|datadog|prometheus/i.test(lower)) return 'infrastructure';
+  if (/figma|blender|canva|excalidraw|remotion|design/i.test(lower)) return 'design';
+  if (/arxiv|paper|research|scholar|crossref|openalex|zotero|reference|typst/i.test(lower)) return 'academic';
+  if (/memory|sequential|thinking|superpowers|agent/i.test(lower)) return 'ai-tool';
+  if (/anki|obsidian|note|knowledge|apple-note/i.test(lower)) return 'knowledge';
+  if (/finance|stripe|payment|solana|crypto|trading/i.test(lower)) return 'finance';
+  if (/home-assistant|arduino|esp32|iot|hardware|device/i.test(lower)) return 'hardware';
+  if (/unity|unreal|godot|game/i.test(lower)) return 'gamedev';
+  if (/file|filesystem/i.test(lower)) return 'system';
+  return 'development';
+}
+
+function guessMcpLanguage(id: string, recipe: McpRecipe): string {
+  const lower = id.toLowerCase();
+  if (/python|jupyter|blender|\.py\b/i.test(lower)) return 'Python';
+  if (/go-|golang|kubernetes|docker|daytona|terraform/i.test(lower)) return 'Go';
+  if (/unity|unreal/i.test(lower)) return 'C#';
+  if (recipe.command === 'uv' || recipe.command === 'python' || recipe.command === 'python3') return 'Python';
+  if (recipe.command === 'go' || recipe.command === 'golang') return 'Go';
+  return 'TypeScript';
+}
+
+function detectNpmPackage(recipe: McpRecipe): string | undefined {
+  if (recipe.command === 'npx' && recipe.args?.length) {
+    for (const arg of recipe.args) {
+      if (arg.startsWith('-')) continue;
+      if (arg.startsWith('@') || arg.includes('/')) return arg.replace(/@latest$/, '');
+    }
+  }
+  return undefined;
+}
 }
 
 function printImportSummary(result: ImportResult): void {

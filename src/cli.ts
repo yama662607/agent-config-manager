@@ -39,6 +39,7 @@ import {
   type SkillDisableOptions,
 } from './cli-skill.js';
 import { validate, doctor } from './cli-diagnostics.js';
+import { scanCommand } from './cli-scan.js';
 
 // ============================================================================
 // Constants
@@ -283,6 +284,10 @@ async function main(): Promise<void> {
 
     case 'doctor':
       await handleDoctor(argv.slice(1));
+      break;
+
+    case 'scan':
+      await scanCommand(argv.slice(1));
       break;
 
     default:

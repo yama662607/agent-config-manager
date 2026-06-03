@@ -42,7 +42,7 @@ export async function promptTargets(preselected: TargetName[] = []): Promise<Tar
       {
         name: 'antigravity',
         message: 'Antigravity CLI',
-        hint: '.gemini/antigravity/mcp_config.json',
+        hint: '.agents/mcp_config.json',
         enabled: preselected.includes('antigravity') || allSelected
       }
     ],

@@ -1,4 +1,3 @@
-import type { McpCatalogEntry } from './types.js';
 import {
   getMcp,
   listMcps,
@@ -12,42 +11,123 @@ import { padRightWide, truncateWide } from './table-utils.js';
 // List Command
 // ============================================================================
 
-/**
- * List all MCP entries in the catalog.
- */
-export async function catalogMcpList(): Promise<void> {
-  const entries = await listMcps();
+export interface McpListFilter {
+  category?: string;
+  language?: string;
+  popularity?: string;
+  sourceType?: string;
+  pinned?: boolean;
+  deprecated?: boolean;
+}
 
-  if (entries.length === 0) {
-    console.log('No MCP entries in catalog.\n');
-    console.log('Run `acm catalog mcp add <package>` to add an entry.');
+/**
+ * List all MCP entries in the catalog with enhanced metadata.
+ */
+export async function catalogMcpList(filter?: McpListFilter): Promise<void> {
+  const entries = await listMcps();
+  const { loadMcpsMetadata } = await import('./mcps-metadata.js');
+  const metaFile = await loadMcpsMetadata();
+
+  // Merge catalog entries with enhanced metadata (with fuzzy matching)
+  let enriched = entries.map(entry => {
+    // Try exact match first, then fuzzy
+    let meta = metaFile.mcps[entry.id];
+    if (!meta) {
+      for (const [key, m] of Object.entries(metaFile.mcps)) {
+        if (key.includes(entry.id) || entry.id.includes(key) ||
+            (m.package && (m.package === entry.id || entry.id.includes(m.package) || m.package.includes(entry.id)))) {
+          meta = m;
+          break;
+        }
+      }
+    }
+    return {
+      id: entry.id,
+      displayName: meta?.displayName || entry.displayName,
+      description: meta?.descriptionJa || entry.description,
+      category: meta?.category,
+      language: meta?.language,
+      popularity: meta?.popularity,
+      sourceType: meta?.sourceType,
+      agent: meta?.agent,
+      pinned: meta?.pinned,
+      deprecated: meta?.deprecated,
+    };
+  });
+
+  // Apply filters
+  if (filter) {
+    enriched = enriched.filter(e => {
+      if (filter.category !== undefined && e.category !== filter.category) return false;
+      if (filter.language !== undefined && e.language !== filter.language) return false;
+      if (filter.sourceType !== undefined && e.sourceType !== filter.sourceType) return false;
+      if (filter.popularity !== undefined && e.popularity !== filter.popularity) return false;
+      if (filter.pinned !== undefined && e.pinned !== filter.pinned) return false;
+      if (filter.deprecated !== undefined && e.deprecated !== filter.deprecated) return false;
+      return true;
+    });
+  }
+
+  if (enriched.length === 0) {
+    console.log('No matching MCP entries.\n');
     return;
   }
 
-  console.log(`MCP Catalog (${entries.length} entries):\n`);
+  const filterDesc = filter ? `, filter: ${describeMcpFilter(filter)}` : '';
+  console.log(`MCP Catalog (${enriched.length} entries${filterDesc}):\n`);
 
-  const ID_WIDTH = 45;
-  const NAME_WIDTH = 25;
-  const DESC_WIDTH = 35;
+  const ID_WIDTH = 34;
+  const NAME_WIDTH = 18;
+  const CAT_WIDTH = 12;
+  const SRC_WIDTH = 7;
+  const LANG_WIDTH = 9;
+  const POP_WIDTH = 6;
 
-  const borderH = '┌' + '─'.repeat(ID_WIDTH + 2) + '┬' + '─'.repeat(NAME_WIDTH + 2) + '┬' + '─'.repeat(DESC_WIDTH + 2) + '┐';
-  const borderM = '├' + '─'.repeat(ID_WIDTH + 2) + '┼' + '─'.repeat(NAME_WIDTH + 2) + '┼' + '─'.repeat(DESC_WIDTH + 2) + '┤';
-  const borderF = '└' + '─'.repeat(ID_WIDTH + 2) + '┴' + '─'.repeat(NAME_WIDTH + 2) + '┴' + '─'.repeat(DESC_WIDTH + 2) + '┘';
+  const borderH = '┌' + '─'.repeat(ID_WIDTH + 2) + '┬' + '─'.repeat(NAME_WIDTH + 2) + '┬' + '─'.repeat(CAT_WIDTH + 2) + '┬' + '─'.repeat(SRC_WIDTH + 2) + '┬' + '─'.repeat(LANG_WIDTH + 2) + '┬' + '─'.repeat(POP_WIDTH + 2) + '┐';
+  const borderM = '├' + '─'.repeat(ID_WIDTH + 2) + '┼' + '─'.repeat(NAME_WIDTH + 2) + '┼' + '─'.repeat(CAT_WIDTH + 2) + '┼' + '─'.repeat(SRC_WIDTH + 2) + '┼' + '─'.repeat(LANG_WIDTH + 2) + '┼' + '─'.repeat(POP_WIDTH + 2) + '┤';
+  const borderF = '└' + '─'.repeat(ID_WIDTH + 2) + '┴' + '─'.repeat(NAME_WIDTH + 2) + '┴' + '─'.repeat(CAT_WIDTH + 2) + '┴' + '─'.repeat(SRC_WIDTH + 2) + '┴' + '─'.repeat(LANG_WIDTH + 2) + '┴' + '─'.repeat(POP_WIDTH + 2) + '┘';
 
   console.log(borderH);
-  console.log('│ ' + padRightWide('ID', ID_WIDTH) + ' │ ' + padRightWide('Display Name', NAME_WIDTH) + ' │ ' + padRightWide('Description', DESC_WIDTH) + ' │');
+  console.log('│ ' + padRightWide('ID', ID_WIDTH) + ' │ ' + padRightWide('Name', NAME_WIDTH) + ' │ ' + padRightWide('Category', CAT_WIDTH) + ' │ ' + padRightWide('Source', SRC_WIDTH) + ' │ ' + padRightWide('Lang', LANG_WIDTH) + ' │ ' + padRightWide('Pop', POP_WIDTH) + ' │');
   console.log(borderM);
 
-  for (const entry of entries) {
-    const id = truncateWide(entry.id, ID_WIDTH);
-    const name = truncateWide(entry.displayName, NAME_WIDTH);
-    const desc = truncateWide(entry.description, DESC_WIDTH);
-    console.log('│ ' + padRightWide(id, ID_WIDTH) + ' │ ' + padRightWide(name, NAME_WIDTH) + ' │ ' + padRightWide(desc, DESC_WIDTH) + ' │');
+  for (const e of enriched) {
+    const id = truncateWide(e.id, ID_WIDTH);
+    const name = truncateWide(e.displayName, NAME_WIDTH);
+    const cat = truncateWide(e.category || '-', CAT_WIDTH);
+    const src = sourceAbbr(e.sourceType, e.agent);
+    const lang = truncateWide(e.language || '-', LANG_WIDTH);
+    const pop = popularityIcon(e.popularity);
+    console.log('│ ' + padRightWide(id, ID_WIDTH) + ' │ ' + padRightWide(name, NAME_WIDTH) + ' │ ' + padRightWide(cat, CAT_WIDTH) + ' │ ' + padRightWide(src, SRC_WIDTH) + ' │ ' + padRightWide(lang, LANG_WIDTH) + ' │ ' + padRightWide(pop, POP_WIDTH) + ' │');
   }
 
   console.log(borderF);
   console.log();
   console.log('Run `acm catalog mcp show <id>` for details.');
+  console.log('Filter: --category <cat>  --language <lang>  --popularity <high|medium|low>  --pinned  --deprecated');
+}
+
+function sourceAbbr(sourceType?: string, agent?: string): string {
+  if (!sourceType) return '-';
+  const a = agent === 'claude' ? 'Cl' : agent === 'codex' ? 'Cx' : agent === 'antigravity' ? 'Ag' : (agent || '??');
+  return sourceType === 'plugin' ? `p:${a}` : sourceType === 'config' ? `c:${a}` : sourceType;
+}
+
+function popularityIcon(pop?: string): string {
+  switch (pop) {
+    case 'high': return '★★★';
+    case 'medium': return '★★';
+    case 'low': return '★';
+    default: return '-';
+  }
+}
+
+function describeMcpFilter(filter: McpListFilter): string {
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(filter)) {
+    if (v !== undefined) parts.push(`${k}=${v}`);
+  }
+  return parts.join(', ');
 }
 
 // ============================================================================
@@ -55,7 +135,7 @@ export async function catalogMcpList(): Promise<void> {
 // ============================================================================
 
 /**
- * Show details of a specific catalog entry.
+ * Show details of a specific catalog entry with enhanced metadata.
  */
 export async function catalogMcpShow(id: string): Promise<void> {
   const entry = await getMcp(id);
@@ -67,10 +147,25 @@ export async function catalogMcpShow(id: string): Promise<void> {
     return;
   }
 
+  // Load enhanced metadata
+  const { getMcpMetadata } = await import('./mcps-metadata.js');
+  const meta = await getMcpMetadata(id);
+
   console.log(`MCP Entry: ${entry.id}\n`);
-  console.log(`  Display Name: ${entry.displayName}`);
-  console.log(`  Description: ${entry.description}`);
-  console.log(`  Recipe:`);
+  console.log(`  Display Name: ${meta?.displayName || entry.displayName}`);
+  console.log(`  Description: ${meta?.descriptionJa || entry.description}`);
+  if (meta?.descriptionEn) console.log(`  Description (EN): ${meta.descriptionEn}`);
+
+  // Enhanced metadata
+  if (meta?.category) console.log(`  Category: ${meta.category}`);
+  if (meta?.sourceType) console.log(`  Source: ${meta.sourceType} (${meta.agent || 'unknown'})`);
+  if (meta?.language) console.log(`  Language: ${meta.language}`);
+  if (meta?.popularity) console.log(`  Popularity: ${meta.popularity} ${popularityIcon(meta.popularity)}`);
+  if (meta?.package) console.log(`  Package: ${meta.package}`);
+  if (meta?.github) console.log(`  GitHub: https://github.com/${meta.github}`);
+  if (meta?.website) console.log(`  Website: ${meta.website}`);
+
+  console.log(`\n  Recipe:`);
 
   if (entry.recipe.url) {
     console.log(`    Transport: http`);
@@ -92,8 +187,11 @@ export async function catalogMcpShow(id: string): Promise<void> {
     console.log(`    Env: ${JSON.stringify(entry.recipe.env)}`);
   }
   console.log(`  Added: ${entry.addedAt}`);
-  if (entry.tags && entry.tags.length > 0) {
-    console.log(`  Tags: ${entry.tags.join(', ')}`);
+  if (meta?.addedAt) console.log(`  Metadata Updated: ${meta.addedAt}`);
+  if (meta?.pinned === true) console.log(`  Pinned: yes`);
+  if (meta?.deprecated === true) console.log(`  Deprecated: yes`);
+  if (meta?.tags && meta.tags.length > 0) {
+    console.log(`  Tags: ${meta.tags.join(', ')}`);
   }
   console.log();
 }
@@ -407,40 +505,106 @@ export async function catalogSkillImport(options: CatalogSkillImportOptions): Pr
 /**
  * List all skill entries in the catalog.
  */
-export async function catalogSkillList(): Promise<void> {
-  const { listSkills } = await import('./catalog.js');
-  const entries = await listSkills();
+export interface SkillListFilter {
+  plugin?: string;
+  agent?: string;
+  sourceType?: string;
+  category?: string;
+  pinned?: boolean;
+  deprecated?: boolean;
+}
 
-  if (entries.length === 0) {
-    console.log('No skill entries in catalog.\n');
+export async function catalogSkillList(filter?: SkillListFilter): Promise<void> {
+  const { listSkills } = await import('./catalog.js');
+  const { loadSkillsMetadata } = await import('./skills-metadata.js');
+
+  const catalogEntries = await listSkills();
+  const metaFile = await loadSkillsMetadata();
+
+  // Merge catalog entries with metadata
+  let enriched = catalogEntries.map(entry => {
+    const meta = metaFile.skills[entry.id];
+    return {
+      id: entry.id,
+      displayName: entry.displayName,
+      description: entry.description,
+      agent: meta?.agent,
+      plugin: meta?.plugin,
+      sourceType: meta?.sourceType,
+      category: meta?.category,
+      pinned: meta?.pinned,
+      deprecated: meta?.deprecated,
+      tags: entry.tags,
+    };
+  });
+
+  // Apply filters
+  if (filter) {
+    enriched = enriched.filter(e => {
+      if (filter.plugin !== undefined && e.plugin !== filter.plugin) return false;
+      if (filter.agent !== undefined && e.agent !== filter.agent) return false;
+      if (filter.sourceType !== undefined && e.sourceType !== filter.sourceType) return false;
+      if (filter.category !== undefined && e.category !== filter.category) return false;
+      if (filter.pinned !== undefined && e.pinned !== filter.pinned) return false;
+      if (filter.deprecated !== undefined && e.deprecated !== filter.deprecated) return false;
+      return true;
+    });
+  }
+
+  if (enriched.length === 0) {
+    const filterDesc = filter ? describeFilter(filter) : '';
+    console.log(`No matching skill entries${filterDesc}.\n`);
     console.log('Run `acm catalog skill add <name>` to add an entry.');
     return;
   }
 
-  console.log(`Skill Catalog (${entries.length} entries):\n`);
+  const filterDesc = filter ? `, filter: ${describeFilter(filter)}` : '';
+  console.log(`Skill Catalog (${enriched.length} entries${filterDesc}):\n`);
 
-  const ID_WIDTH = 45;
-  const NAME_WIDTH = 25;
-  const DESC_WIDTH = 35;
+  const ID_WIDTH = 35;
+  const NAME_WIDTH = 20;
+  const AGENT_WIDTH = 10;
+  const CAT_WIDTH = 16;
+  const DESC_WIDTH = 30;
 
-  const borderH = '┌' + '─'.repeat(ID_WIDTH + 2) + '┬' + '─'.repeat(NAME_WIDTH + 2) + '┬' + '─'.repeat(DESC_WIDTH + 2) + '┐';
-  const borderM = '├' + '─'.repeat(ID_WIDTH + 2) + '┼' + '─'.repeat(NAME_WIDTH + 2) + '┼' + '─'.repeat(DESC_WIDTH + 2) + '┤';
-  const borderF = '└' + '─'.repeat(ID_WIDTH + 2) + '┴' + '─'.repeat(NAME_WIDTH + 2) + '┴' + '─'.repeat(DESC_WIDTH + 2) + '┘';
+  const borderH = '┌' + '─'.repeat(ID_WIDTH + 2) + '┬' + '─'.repeat(NAME_WIDTH + 2) + '┬' + '─'.repeat(AGENT_WIDTH + 2) + '┬' + '─'.repeat(CAT_WIDTH + 2) + '┬' + '─'.repeat(DESC_WIDTH + 2) + '┐';
+  const borderM = '├' + '─'.repeat(ID_WIDTH + 2) + '┼' + '─'.repeat(NAME_WIDTH + 2) + '┼' + '─'.repeat(AGENT_WIDTH + 2) + '┼' + '─'.repeat(CAT_WIDTH + 2) + '┼' + '─'.repeat(DESC_WIDTH + 2) + '┤';
+  const borderF = '└' + '─'.repeat(ID_WIDTH + 2) + '┴' + '─'.repeat(NAME_WIDTH + 2) + '┴' + '─'.repeat(AGENT_WIDTH + 2) + '┴' + '─'.repeat(CAT_WIDTH + 2) + '┴' + '─'.repeat(DESC_WIDTH + 2) + '┘';
 
   console.log(borderH);
-  console.log('│ ' + padRightWide('ID', ID_WIDTH) + ' │ ' + padRightWide('Display Name', NAME_WIDTH) + ' │ ' + padRightWide('Description', DESC_WIDTH) + ' │');
+  console.log('│ ' + padRightWide('ID', ID_WIDTH) + ' │ ' + padRightWide('Display Name', NAME_WIDTH) + ' │ ' + padRightWide('Agent', AGENT_WIDTH) + ' │ ' + padRightWide('Category', CAT_WIDTH) + ' │ ' + padRightWide('Description', DESC_WIDTH) + ' │');
   console.log(borderM);
 
-  for (const entry of entries) {
-    const id = truncateWide(entry.id, ID_WIDTH);
-    const name = truncateWide(entry.displayName, NAME_WIDTH);
-    const desc = truncateWide(entry.description, DESC_WIDTH);
-    console.log('│ ' + padRightWide(id, ID_WIDTH) + ' │ ' + padRightWide(name, NAME_WIDTH) + ' │ ' + padRightWide(desc, DESC_WIDTH) + ' │');
+  for (const e of enriched) {
+    const id = truncateWide(e.id, ID_WIDTH);
+    const name = truncateWide(e.displayName, NAME_WIDTH);
+    const agent = padRightWide(agentAbbr(e.agent), AGENT_WIDTH);
+    const cat = truncateWide(e.category || '-', CAT_WIDTH);
+    const desc = truncateWide(e.description, DESC_WIDTH);
+    console.log('│ ' + padRightWide(id, ID_WIDTH) + ' │ ' + padRightWide(name, NAME_WIDTH) + ' │ ' + agent + ' │ ' + padRightWide(cat, CAT_WIDTH) + ' │ ' + padRightWide(desc, DESC_WIDTH) + ' │');
   }
 
   console.log(borderF);
   console.log();
   console.log('Run `acm catalog skill show <id>` for details.');
+  console.log('Filter: --plugin <name>  --agent <name>  --source-type <type>  --category <cat>  --pinned  --deprecated');
+}
+
+function agentAbbr(agent?: string): string {
+  switch (agent) {
+    case 'claude': return 'claude';
+    case 'codex': return 'codex';
+    case 'antigravity': return 'antigrav';
+    default: return agent || '-';
+  }
+}
+
+function describeFilter(filter: SkillListFilter): string {
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(filter)) {
+    if (v !== undefined) parts.push(`${k}=${v}`);
+  }
+  return parts.join(', ');
 }
 
 // ============================================================================
@@ -452,6 +616,8 @@ export async function catalogSkillList(): Promise<void> {
  */
 export async function catalogSkillShow(id: string): Promise<void> {
   const { getSkillWithContent } = await import('./catalog.js');
+  const { getSkillMetadata } = await import('./skills-metadata.js');
+
   const skillWithData = await getSkillWithContent(id);
 
   if (!skillWithData) {
@@ -462,11 +628,30 @@ export async function catalogSkillShow(id: string): Promise<void> {
   }
 
   const { entry, content } = skillWithData;
+  const meta = await getSkillMetadata(id);
 
   console.log(`Skill Entry: ${entry.id}\n`);
   console.log(`  Display Name: ${entry.displayName}`);
   console.log(`  Description: ${entry.description}`);
-  console.log(`  Content:\n`);
+
+  // Enhanced metadata
+  if (meta?.sourceType) console.log(`  Source Type: ${meta.sourceType}`);
+  if (meta?.agent) console.log(`  Agent: ${meta.agent}`);
+  if (meta?.plugin) console.log(`  Plugin: ${meta.plugin}`);
+  if (meta?.category) console.log(`  Category: ${meta.category}`);
+  if (meta?.version) console.log(`  Version: ${meta.version}`);
+  if (meta?.author) console.log(`  Author: ${meta.author}`);
+
+  console.log(`  Added: ${entry.addedAt}`);
+  if (meta?.updatedAt) console.log(`  Updated: ${meta.updatedAt}`);
+  if (meta?.pinned === true) console.log(`  Pinned: yes`);
+  if (meta?.deprecated === true) console.log(`  Deprecated: yes`);
+  if (entry.license) console.log(`  License: ${entry.license}`);
+  if (entry.tags && entry.tags.length > 0) {
+    console.log(`  Tags: ${entry.tags.join(', ')}`);
+  }
+
+  console.log(`\n  Content:\n`);
 
   // Show preview of skill content
   const lines = content.split('\n');
@@ -475,11 +660,6 @@ export async function catalogSkillShow(id: string): Promise<void> {
 
   if (lines.length > 20) {
     console.log(`\n... (${lines.length - 20} more lines)`);
-  }
-
-  console.log(`\n  Added: ${entry.addedAt}`);
-  if (entry.tags && entry.tags.length > 0) {
-    console.log(`  Tags: ${entry.tags.join(', ')}`);
   }
   console.log();
 }

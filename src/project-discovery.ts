@@ -11,7 +11,7 @@ import type { ProjectDiscovery, NativeConfigPath, TargetName } from './types.js'
 const TARGET_CONFIG_PATHS: Record<TargetName, string> = {
   claude: '.mcp.json',
   codex: path.join('.codex', 'config.toml'),
-  antigravity: path.join('.gemini', 'antigravity', 'mcp_config.json'),
+  antigravity: path.join('.agents', 'mcp_config.json'),
 };
 
 /** Skills directory paths for each target relative to project root */

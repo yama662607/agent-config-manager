@@ -42,7 +42,7 @@ export class McpTuiScreen extends TuiBaseScreen {
       case 'codex':
         return join(projectRoot, '.codex', 'config.toml');
       case 'antigravity':
-        return join(projectRoot, '.gemini', 'antigravity', 'mcp_config.json');
+        return join(projectRoot, '.agents', 'mcp_config.json');
     }
   }
 

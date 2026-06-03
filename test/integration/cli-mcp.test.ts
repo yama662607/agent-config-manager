@@ -40,7 +40,7 @@ describe('MCP CLI Integration Tests', () => {
 
     // Create test config files
     await fs.mkdir(path.join(TEST_PROJECT_DIR, '.codex'), { recursive: true });
-    await fs.mkdir(path.join(TEST_PROJECT_DIR, '.gemini', 'antigravity'), { recursive: true });
+    await fs.mkdir(path.join(TEST_PROJECT_DIR, '.agents'), { recursive: true });
 
     // Claude .mcp.json
     await fs.writeFile(
@@ -55,7 +55,7 @@ describe('MCP CLI Integration Tests', () => {
     );
 
     await fs.writeFile(
-      path.join(TEST_PROJECT_DIR, '.gemini', 'antigravity', 'mcp_config.json'),
+      path.join(TEST_PROJECT_DIR, '.agents', 'mcp_config.json'),
       JSON.stringify({ mcpServers: {} }, null, 2)
     );
 
@@ -165,7 +165,7 @@ describe('MCP CLI Integration Tests', () => {
       );
 
       const claudeConfig = JSON.parse(await fs.readFile(path.join(TEST_PROJECT_DIR, '.mcp.json'), 'utf8'));
-      const antigravityConfig = JSON.parse(await fs.readFile(path.join(TEST_PROJECT_DIR, '.gemini', 'antigravity', 'mcp_config.json'), 'utf8'));
+      const antigravityConfig = JSON.parse(await fs.readFile(path.join(TEST_PROJECT_DIR, '.agents', 'mcp_config.json'), 'utf8'));
       const codexToml = await fs.readFile(path.join(TEST_PROJECT_DIR, '.codex', 'config.toml'), 'utf8');
 
       assert.strictEqual(

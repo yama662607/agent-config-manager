@@ -1,8 +1,5 @@
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-
 // @ts-ignore - enquirer uses CommonJS exports
-const Confirm = require('enquirer/lib/prompts/confirm.js');
+import Confirm from 'enquirer/lib/prompts/confirm.js';
 import type { TargetName } from '../types.js';
 
 /**

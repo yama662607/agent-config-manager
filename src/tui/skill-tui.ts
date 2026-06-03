@@ -63,10 +63,10 @@ export class SkillTuiScreen extends TuiBaseScreen {
     console.log();
 
     const choices = [
-      { name: 'add', message: '➕ Add skill to project', value: '__add__' },
-      { name: 'install', message: '🔍 Install skill from GitHub', value: '__install__' },
-      { name: 'switch-target', message: `🔄 Switch target (current: ${currentTarget})`, value: '__switch__' },
-      { name: 'exit', message: '🚪 Exit', value: '__exit__' },
+      { name: '__add__', message: '➕ Add skill to project' },
+      { name: '__install__', message: '🔍 Install skill from GitHub' },
+      { name: '__switch__', message: `🔄 Switch target (current: ${currentTarget})` },
+      { name: '__exit__', message: '🚪 Exit' },
     ];
 
     // Add skill actions
@@ -87,7 +87,8 @@ export class SkillTuiScreen extends TuiBaseScreen {
     if (selected === '__switch__') return await this.handleSwitchTarget(state);
 
     // Skill selected
-    return await this.handleSkillAction(selected, state);
+    const skillName = selected.startsWith('skill:') ? selected.slice(6) : selected;
+    return await this.handleSkillAction(skillName, state);
   }
 
   private async renderStatusTable(installedSkills: SkillStatus[], currentTarget: TargetName, allowHome?: boolean): Promise<void> {
@@ -131,9 +132,9 @@ export class SkillTuiScreen extends TuiBaseScreen {
       const truncated = truncateWide(displayName, NAME_WIDTH);
 
       console.log('  │ ' + padRightWide(truncated, NAME_WIDTH) + ' │ ' +
-                  (allSkills.claude?.find(s => s.name === name) ? '✅ ' : '    ') + '│ ' +
-                  (allSkills.codex?.find(s => s.name === name) ? '✅ ' : '    ') + '│ ' +
-                  (allSkills.antigravity?.find(s => s.name === name) ? '✅ ' : '    ') + '│');
+                  (allSkills.claude?.find(s => s.name === name) ? '✅ ' : '   ') + '│ ' +
+                  (allSkills.codex?.find(s => s.name === name) ? '✅ ' : '   ') + '│ ' +
+                  (allSkills.antigravity?.find(s => s.name === name) ? '✅ ' : '   ') + '│');
     }
 
     console.log(borderF);
@@ -157,26 +158,17 @@ export class SkillTuiScreen extends TuiBaseScreen {
   private async handleSwitchTarget(state: TuiState): Promise<SkillAction> {
     const targets: TargetName[] = ['claude', 'codex', 'antigravity'];
 
-    const { Select } = require('enquirer');
-    const prompt = new Select({
-      name: 'target',
-      message: 'Select target:',
-      choices: targets.map(t => ({
-        name: t,
-        message: t === state.target ? `${t} (current)` : t
-      })),
-      actions: {
-        ctrl: { n: 'down', p: 'up' }
-      }
-    });
+    const choices = targets.map(t => ({
+      name: t,
+      message: t === state.target ? `${t} (current)` : t
+    }));
 
-    try {
-      const selected = await prompt.run() as TargetName;
+    const selected = await this.select<TargetName>('Select target:', choices);
+    if (selected) {
       state.target = selected;
       return 'refresh';
-    } catch {
-      return 'back';
     }
+    return 'back';
   }
 
   private async handleAdd(state: TuiState): Promise<SkillAction> {
@@ -191,35 +183,24 @@ export class SkillTuiScreen extends TuiBaseScreen {
       console.log('  1. Install from GitHub');
       console.log('  2. Import local skill');
 
-      const { Select } = require('enquirer');
-    const prompt = new Select({
-        name: 'option',
-        message: 'Choose option:',
-        choices: [
-          { name: 'github', message: 'Install from GitHub' },
-          { name: 'import', message: 'Import local skill' },
-          { name: 'back', message: '← Back' }
-        ],
-        actions: {
-          ctrl: { n: 'down', p: 'up' }
-        }
-      });
+      const choices = [
+        { name: 'github', message: 'Install from GitHub' },
+        { name: 'import', message: 'Import local skill' },
+        { name: 'back', message: '← Back' }
+      ];
 
-      try {
-        const choice = await prompt.run();
-        if (choice === 'back') return 'back';
-        if (choice === 'github') return await this.installFromGithub(state);
-        if (choice === 'import') return await this.importLocal(state);
-      } catch {
-        return 'back';
-      }
+      const choice = await this.select('Choose option:', choices);
+      if (!choice || choice === 'back') return 'back';
+      if (choice === 'github') return await this.installFromGithub(state);
+      if (choice === 'import') return await this.importLocal(state);
+      return 'back';
     }
 
     // Show catalog entries
     const choices = skills.map(skill => ({
-      name: skill.id,
-      message: `📚 ${skill.displayName || skill.id}`,
-      hint: skill.description?.slice(0, 50)
+      name: skill?.id || 'Unknown',
+      message: `📚 ${skill?.displayName || skill?.id || 'Unknown'}`,
+      hint: skill?.description?.slice(0, 50)
     }));
 
     choices.push(
@@ -228,27 +209,13 @@ export class SkillTuiScreen extends TuiBaseScreen {
       { name: 'back', message: '← Back', hint: '' }
     );
 
-    const { Select } = require('enquirer');
-    const prompt = new Select({
-      name: 'skill',
-      message: 'Select skill (or action):',
-      choices,
-      actions: {
-        ctrl: { n: 'down', p: 'up' }
-      }
-    });
+    const selected = await this.select<string>('Select skill (or action):', choices);
+    if (!selected || selected === 'back') return 'back';
+    if (selected === 'github') return await this.installFromGithub(state);
+    if (selected === 'import') return await this.importLocal(state);
 
-    try {
-      const selected = await prompt.run();
-      if (selected === 'back') return 'back';
-      if (selected === 'github') return await this.installFromGithub(state);
-      if (selected === 'import') return await this.importLocal(state);
-
-      // Add from catalog
-      return await this.addToProject(selected, state);
-    } catch {
-      return 'back';
-    }
+    // Add from catalog
+    return await this.addToProject(selected, state);
   }
 
   private async handleInstall(state: TuiState): Promise<SkillAction> {
@@ -262,7 +229,8 @@ export class SkillTuiScreen extends TuiBaseScreen {
       await skillAdd({
         skillId,
         targets: [state.target],
-        noRegister: true
+        noRegister: true,
+        allowHome: state.allowHome,
       });
       console.log('\n✅ Added to project!');
     } catch (error: any) {
@@ -274,7 +242,7 @@ export class SkillTuiScreen extends TuiBaseScreen {
   }
 
   private async installFromGithub(state: TuiState): Promise<SkillAction> {
-    const { prompt } = await import('enquirer');
+    const { prompt } = (await import('enquirer')).default as any;
 
     try {
       const response = await prompt({
@@ -289,7 +257,8 @@ export class SkillTuiScreen extends TuiBaseScreen {
       await skillInstallFromGitHub({
         githubUrl: response.url,
         targets: [state.target],
-        addToCatalog: true
+        addToCatalog: true,
+        allowHome: state.allowHome,
       });
       console.log('\n✅ Installed from GitHub and added to project!');
     } catch (error: any) {
@@ -301,7 +270,7 @@ export class SkillTuiScreen extends TuiBaseScreen {
   }
 
   private async importLocal(state: TuiState): Promise<SkillAction> {
-    const { prompt } = await import('enquirer');
+    const { prompt } = (await import('enquirer')).default as any;
 
     try {
       const response = await prompt({
@@ -324,7 +293,8 @@ export class SkillTuiScreen extends TuiBaseScreen {
       await skillAdd({
         skillId,
         targets: [state.target],
-        noRegister: true
+        noRegister: true,
+        allowHome: state.allowHome,
       });
 
       console.log('\n✅ Imported to catalog and added to project!');
@@ -340,35 +310,23 @@ export class SkillTuiScreen extends TuiBaseScreen {
     console.log(`\n📚 ${skillName}`);
     console.log('─'.repeat(60));
 
-    const { Select } = require('enquirer');
-    const prompt = new Select({
-      name: 'action',
-      message: 'What would you like to do?',
-      choices: [
-        { name: 'remove', message: '🗑️  Remove from project' },
-        { name: 'details', message: '📄 View details' },
-        { name: 'back', message: '← Back' }
-      ],
-      actions: {
-        ctrl: { n: 'down', p: 'up' }
-      }
-    });
+    const choices = [
+      { name: 'remove', message: '🗑️  Remove from project' },
+      { name: 'details', message: '📄 View details' },
+      { name: 'back', message: '← Back' }
+    ];
 
-    try {
-      const action = await prompt.run();
+    const action = await this.select<string>('What would you like to do?', choices);
 
-      if (action === 'back') return 'refresh';
-      if (action === 'remove') return await this.removeSkill(skillName, state);
-      if (action === 'details') return await this.showSkillDetails(skillName);
-    } catch {
-      return 'refresh';
-    }
+    if (!action || action === 'back') return 'refresh';
+    if (action === 'remove') return await this.removeSkill(skillName, state);
+    if (action === 'details') return await this.showSkillDetails(skillName);
 
     return 'refresh';
   }
 
   private async removeSkill(skillName: string, state: TuiState): Promise<SkillAction> {
-    const { prompt } = await import('enquirer');
+    const { prompt } = (await import('enquirer')).default as any;
 
     try {
       const confirmed = await prompt({
@@ -381,7 +339,7 @@ export class SkillTuiScreen extends TuiBaseScreen {
       if (!confirmed || !confirmed.confirm) return 'refresh';
 
       const { skillRemove } = await import('../cli-skill.js');
-      await skillRemove({ skillName, targets: [state.target] });
+      await skillRemove({ skillName, targets: [state.target], allowHome: state.allowHome });
       console.log(`\n✅ Removed ${skillName}`);
     } catch (error: any) {
       if (error instanceof Error && error.message.includes('User force closed')) {

@@ -1,8 +1,6 @@
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-
 // @ts-ignore - enquirer uses CommonJS exports
-const MultiSelectBase = require('enquirer/lib/prompts/multiselect.js');
+import MultiSelectBaseImport from 'enquirer/lib/prompts/multiselect.js';
+const MultiSelectBase = MultiSelectBaseImport as any;
 
 /**
  * Custom MultiSelect prompt with emacs-style Ctrl+n/p navigation.

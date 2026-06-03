@@ -81,16 +81,16 @@ export class CatalogTuiScreen extends TuiBaseScreen {
 
       // Create choices with actions
       const choices = mcps.map(mcp => ({
-        name: mcp.id,
-        message: `📦 ${mcp.displayName || mcp.id}`,
-        value: mcp.id,
-        hint: mcp.description?.slice(0, 40)
+        name: mcp?.id || 'Unknown',
+        message: `📦 ${mcp?.displayName || mcp?.id || 'Unknown'}`,
+        value: mcp?.id || 'Unknown',
+        hint: mcp?.description?.slice(0, 40)
       }));
 
       choices.push(
-        { name: 'add', message: '➕ Add new MCP to catalog', value: '__add__', hint: '' },
-        { name: 'back', message: '← Back to tabs', value: '__back__', hint: '' },
-        { name: 'exit', message: '🚪 Exit', value: '__exit__', hint: '' }
+        { name: '__add__', message: '➕ Add new MCP to catalog', value: '__add__', hint: '' },
+        { name: '__back__', message: '← Back to tabs', value: '__back__', hint: '' },
+        { name: '__exit__', message: '🚪 Exit', value: '__exit__', hint: '' }
       );
 
       const selected = await this.select('Select MCP (or action):', choices);
@@ -102,8 +102,14 @@ export class CatalogTuiScreen extends TuiBaseScreen {
         continue; // Refresh list
       }
 
-      // Show MCP details and actions
-      const action = await this.showMcpDetails(selected, mcps.find(m => m.id === selected)!, state);
+      const selectedMcp = mcps.find(m => m?.id === selected);
+      if (!selectedMcp) {
+        console.log(`\n❌ Error: Selected MCP "${selected}" not found in catalog.`);
+        await this.pressEnter();
+        continue;
+      }
+
+      const action = await this.showMcpDetails(selected, selectedMcp, state);
       if (action === 'exit') return 'exit';
       // If action is 'back', the loop continues and shows the list again
     }
@@ -125,16 +131,16 @@ export class CatalogTuiScreen extends TuiBaseScreen {
       }
 
       const choices = skills.map(skill => ({
-        name: skill.id,
-        message: `📚 ${skill.displayName || skill.id}`,
-        value: skill.id,
-        hint: skill.description?.slice(0, 40)
+        name: skill?.id || 'Unknown',
+        message: `📚 ${skill?.displayName || skill?.id || 'Unknown'}`,
+        value: skill?.id || 'Unknown',
+        hint: skill?.description?.slice(0, 40)
       }));
 
       choices.push(
-        { name: 'import', message: '📥 Import local skill', value: '__import__', hint: '' },
-        { name: 'back', message: '← Back to tabs', value: '__back__', hint: '' },
-        { name: 'exit', message: '🚪 Exit', value: '__exit__', hint: '' }
+        { name: '__import__', message: '📥 Import local skill', value: '__import__', hint: '' },
+        { name: '__back__', message: '← Back to tabs', value: '__back__', hint: '' },
+        { name: '__exit__', message: '🚪 Exit', value: '__exit__', hint: '' }
       );
 
       const selected = await this.select('Select skill (or action):', choices);
@@ -146,14 +152,20 @@ export class CatalogTuiScreen extends TuiBaseScreen {
         continue;
       }
 
-      // Show skill details and actions
-      const action = await this.showSkillDetails(selected, skills.find(s => s.id === selected)!, state);
+      const selectedSkill = skills.find(s => s?.id === selected);
+      if (!selectedSkill) {
+        console.log(`\n❌ Error: Selected skill "${selected}" not found in catalog.`);
+        await this.pressEnter();
+        continue;
+      }
+
+      const action = await this.showSkillDetails(selected, selectedSkill, state);
       if (action === 'exit') return 'exit';
     }
   }
 
   private async renderRegistry(state: TuiState): Promise<CatalogAction> {
-    const { prompt } = require('enquirer');
+    const { prompt } = (await import('enquirer')).default as any;
 
     this.clear();
     this.renderCatalogHeader();
@@ -183,12 +195,12 @@ export class CatalogTuiScreen extends TuiBaseScreen {
   private async showMcpDetails(id: string, mcp: McpCatalogEntry, state: TuiState): Promise<CatalogAction> {
     this.clear();
     this.renderCatalogHeader();
-    console.log(`\n📦 ${mcp.displayName || id}`);
+    console.log(`\n📦 ${mcp?.displayName || id}`);
     console.log('─'.repeat(60));
-    console.log(`ID: ${mcp.id}`);
-    console.log(`Description: ${mcp.description || 'No description'}`);
+    console.log(`ID: ${mcp?.id || id}`);
+    console.log(`Description: ${mcp?.description || 'No description'}`);
 
-    if (mcp.recipe) {
+    if (mcp?.recipe) {
       console.log('\nConfiguration:');
       if (mcp.recipe.url) {
         console.log(`  Transport: HTTP/SSE`);
@@ -225,10 +237,10 @@ export class CatalogTuiScreen extends TuiBaseScreen {
   private async showSkillDetails(id: string, skill: SkillCatalogEntry, state: TuiState): Promise<CatalogAction> {
     this.clear();
     this.renderCatalogHeader();
-    console.log(`\n📚 ${skill.displayName || id}`);
+    console.log(`\n📚 ${skill?.displayName || id}`);
     console.log('─'.repeat(60));
-    console.log(`ID: ${skill.id}`);
-    console.log(`Description: ${skill.description || 'No description'}`);
+    console.log(`ID: ${skill?.id || id}`);
+    console.log(`Description: ${skill?.description || 'No description'}`);
 
     console.log('\n' + '─'.repeat(60));
 
@@ -253,7 +265,7 @@ export class CatalogTuiScreen extends TuiBaseScreen {
   }
 
   private async addMcpToCatalog(): Promise<void> {
-    const { prompt } = await import('enquirer');
+    const { prompt } = (await import('enquirer')).default as any;
 
     try {
       const response = await prompt({
@@ -275,7 +287,7 @@ export class CatalogTuiScreen extends TuiBaseScreen {
   }
 
   private async importSkill(): Promise<void> {
-    const { prompt } = await import('enquirer');
+    const { prompt } = (await import('enquirer')).default as any;
 
     try {
       const response = await prompt({
@@ -297,6 +309,12 @@ export class CatalogTuiScreen extends TuiBaseScreen {
   }
 
   private async addMcpToProject(mcp: McpCatalogEntry, state: TuiState): Promise<void> {
+    if (!mcp) {
+      console.log('\n❌ Error: Selected MCP details are unavailable.');
+      await this.pressEnter();
+      return;
+    }
+
     // Select targets
     const { promptTargets } = await import('../prompts/index.js');
     const targets = await promptTargets([state.target]);
@@ -318,6 +336,12 @@ export class CatalogTuiScreen extends TuiBaseScreen {
   }
 
   private async addSkillToProject(skill: SkillCatalogEntry, state: TuiState): Promise<void> {
+    if (!skill) {
+      console.log('\n❌ Error: Selected Skill details are unavailable.');
+      await this.pressEnter();
+      return;
+    }
+
     // Select targets
     const { promptTargets } = await import('../prompts/index.js');
     const targets = await promptTargets([state.target]);
@@ -339,7 +363,7 @@ export class CatalogTuiScreen extends TuiBaseScreen {
   }
 
   private async deleteMcpFromCatalog(id: string): Promise<void> {
-    const { prompt } = await import('enquirer');
+    const { prompt } = (await import('enquirer')).default as any;
 
     try {
       const confirm = await prompt({
@@ -365,7 +389,7 @@ export class CatalogTuiScreen extends TuiBaseScreen {
   }
 
   private async deleteSkillFromCatalog(id: string): Promise<void> {
-    const { prompt } = await import('enquirer');
+    const { prompt } = (await import('enquirer')).default as any;
 
     try {
       const confirm = await prompt({

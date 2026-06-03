@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import YAML from 'yaml';
-import TOML from '@iarna/toml';
+import * as TOML from 'smol-toml';
 import type {
   CatalogFile,
   McpCatalogEntry,

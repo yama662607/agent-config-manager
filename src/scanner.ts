@@ -342,19 +342,22 @@ async function scanNestedDeepPath(scanPath: SkillScanPath): Promise<ScannedSkill
  */
 export async function scanAllMcps(): Promise<ScannedMcp[]> {
   const results: ScannedMcp[] = [];
+  const seenIds = new Set<string>();
   const home = getHome();
 
-  // Claude Code — ~/.mcp.json
-  const claudeMcps = await scanClaudeMcps(path.join(home, '.mcp.json'));
-  results.push(...claudeMcps);
+  const sources: ScannedMcp[] = [
+    // Claude first (typically the most up-to-date config)
+    ...(await scanClaudeMcps(path.join(home, '.mcp.json'))),
+    ...(await scanCodexMcps(path.join(home, '.codex', 'config.toml'))),
+    ...(await scanAntigravityMcps(path.join(home, '.gemini', 'antigravity', 'mcp_config.json'))),
+  ];
 
-  // Codex — ~/.codex/config.toml
-  const codexMcps = await scanCodexMcps(path.join(home, '.codex', 'config.toml'));
-  results.push(...codexMcps);
-
-  // Antigravity — ~/.gemini/antigravity/mcp_config.json
-  const agyMcps = await scanAntigravityMcps(path.join(home, '.gemini', 'antigravity', 'mcp_config.json'));
-  results.push(...agyMcps);
+  for (const mcp of sources) {
+    if (!seenIds.has(mcp.id)) {
+      seenIds.add(mcp.id);
+      results.push(mcp);
+    }
+  }
 
   return results.sort((a, b) => a.id.localeCompare(b.id));
 }

@@ -55,6 +55,7 @@ Commands:
   catalog     Browse and manage catalog (TUI mode) [DEPRECATED: Use "-g" or "--global" instead]
   mcp         Manage MCP servers (TUI mode by default)
   skill       Manage skills (TUI mode by default)
+  plugin      Manage plugins (scan, list, install, uninstall)
   validate    Validate current project configuration [DEPRECATED: Use "acm doctor --strict" instead]
   doctor      Run diagnostics and health checks
 
@@ -206,6 +207,36 @@ EXAMPLES:
   acm skill import ./my-skill -g
 `;
 
+const PLUGIN_HELP = `acm plugin - Manage plugins across Claude Code, Codex, and Antigravity
+
+Usage:
+  acm plugin <subcommand> [options]
+
+Subcommands:
+  scan                    Discover available plugins across all agents
+  list                    List installed plugins
+  show <name>             Show plugin details (skills, MCPs, agents, etc.)
+  install <name>          Install a plugin (skills + MCPs + agents + knowledge)
+  uninstall <name>        Uninstall a plugin
+
+Install Options:
+  --target <agent>        Install for specific agent (claude, codex, antigravity, all)
+                          Default: claude. Aliases: c, x, a, g, agy
+
+Uninstall Options:
+  --target <agent>        Uninstall from specific agent (default: all)
+  --keep-skills           Keep skills when uninstalling
+
+EXAMPLES:
+  acm plugin scan                      # Discover all available plugins
+  acm plugin list                      # List installed plugins
+  acm plugin show vercel               # Show plugin details
+  acm plugin install vercel            # Install to Claude
+  acm plugin install vercel --target all  # Install to all agents
+  acm plugin uninstall vercel          # Uninstall (removes skills too)
+  acm plugin uninstall vercel --keep-skills  # Uninstall but keep skills
+`;
+
 const VALIDATE_HELP = `acm validate - Validate current project configuration [DEPRECATED: Use "acm doctor --strict" instead]
 
 Usage:
@@ -285,6 +316,10 @@ async function main(): Promise<void> {
 
     case 'skill':
       await handleSkill(argv.slice(1));
+      break;
+
+    case 'plugin':
+      await handlePlugin(argv.slice(1));
       break;
 
     case 'validate':
@@ -974,6 +1009,58 @@ async function handleValidate(argv: string[]): Promise<void> {
 
   const strict = parseFlag(argv, 'strict');
   await validate({ strict });
+}
+
+async function handlePlugin(argv: string[]): Promise<void> {
+  if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h') {
+    process.stdout.write(PLUGIN_HELP);
+    return;
+  }
+
+  const subcommand = argv[0];
+  const args = argv.slice(1);
+
+  switch (subcommand) {
+    case 'scan':
+      await (await import('./cli-plugin.js')).pluginScan();
+      break;
+
+    case 'list':
+      await (await import('./cli-plugin.js')).pluginList();
+      break;
+
+    case 'show':
+      if (args.length === 0) {
+        process.stderr.write('Usage: acm plugin show <name>\n');
+        process.exitCode = 1;
+        return;
+      }
+      await (await import('./cli-plugin.js')).pluginShow(args[0]);
+      break;
+
+    case 'install':
+      if (args.length === 0) {
+        process.stderr.write('Usage: acm plugin install <name> [--target <agent>]\n');
+        process.exitCode = 1;
+        return;
+      }
+      await (await import('./cli-plugin.js')).pluginInstall(args[0], args.slice(1));
+      break;
+
+    case 'uninstall':
+      if (args.length === 0) {
+        process.stderr.write('Usage: acm plugin uninstall <name> [--keep-skills]\n');
+        process.exitCode = 1;
+        return;
+      }
+      await (await import('./cli-plugin.js')).pluginUninstall(args[0], args.slice(1));
+      break;
+
+    default:
+      process.stderr.write(`Unknown subcommand: ${subcommand}\n`);
+      process.stderr.write(PLUGIN_HELP);
+      process.exitCode = 1;
+  }
 }
 
 async function handleDoctor(argv: string[]): Promise<void> {

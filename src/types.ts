@@ -192,6 +192,107 @@ export interface McpsMetadataFile {
 }
 
 // ============================================================================
+// Plugin Management (plugins-metadata.toml)
+// ============================================================================
+
+/** Raw plugin manifest as read from source plugin.json */
+export interface PluginManifest {
+  name: string;
+  version?: string;
+  description?: string;
+  author?: { name: string; email?: string; url?: string };
+  homepage?: string;
+  repository?: string;
+  license?: string;
+  keywords?: string[];
+  interface?: {
+    displayName?: string;
+    category?: string;
+    shortDescription?: string;
+    longDescription?: string;
+    developerName?: string;
+    capabilities?: string[];
+    websiteURL?: string;
+    privacyPolicyURL?: string;
+    termsOfServiceURL?: string;
+    defaultPrompt?: string[];
+    brandColor?: string;
+    composerIcon?: string;
+    logo?: string;
+    screenshots?: string[];
+  };
+}
+
+/** Installed plugin entry in plugins-metadata.toml */
+export interface PluginEntry {
+  name: string;
+  version?: string;
+  description?: string;
+  author?: string;
+  homepage?: string;
+  repository?: string;
+  license?: string;
+  keywords?: string[];
+  category?: string;
+  /** Display name from interface block */
+  displayName?: string;
+  /** Long description from interface block */
+  longDescription?: string;
+  /** Capabilities from interface block */
+  capabilities?: string[];
+  /** Default prompts from interface block */
+  defaultPrompt?: string[];
+  /** Brand color from interface block */
+  brandColor?: string;
+  /** Privacy policy URL */
+  privacyPolicyURL?: string;
+  /** Terms of service URL */
+  termsOfServiceURL?: string;
+  /** Which agent this plugin was sourced from */
+  agent: TargetName;
+  /** Which agents this plugin is installed for */
+  installedFor?: TargetName[];
+  /** Absolute path to the original plugin source directory */
+  sourcePath: string;
+  /** Skill IDs included in this plugin */
+  skills: string[];
+  /** MCP IDs included in this plugin */
+  mcps: string[];
+  /** Agent file names (relative to agents/) */
+  agentFiles: string[];
+  /** Knowledge file names (AGENTS.md, vercel.md, etc.) */
+  knowledgeFiles: string[];
+  /** Command file names (relative to commands/) */
+  commandFiles: string[];
+  /** ISO 8601 timestamp of installation */
+  installedAt: string;
+  /** ISO 8601 timestamp of last update */
+  updatedAt?: string;
+  /** User favorite flag */
+  pinned?: boolean;
+}
+
+/** Result of scanning for an available plugin */
+export interface PluginScanResult {
+  name: string;
+  version?: string;
+  description?: string;
+  author?: string;
+  category?: string;
+  agent: TargetName;
+  sourcePath: string;
+  skills: number;
+  mcps: number;
+  agents: number;
+}
+
+/** Top-level structure of plugins-metadata.toml */
+export interface PluginsMetadataFile {
+  version: string;
+  plugins: Record<string, PluginEntry>;
+}
+
+// ============================================================================
 // Native Config Types
 // ============================================================================
 

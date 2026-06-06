@@ -214,10 +214,13 @@ Usage:
 
 Subcommands:
   scan                    Discover available plugins across all agents
+  scan --diff             Compare with last snapshot (read-only)
+  snapshot                Save current scan state for future --diff
   list                    List installed plugins
   show <name>             Show plugin details (skills, MCPs, agents, etc.)
   install <name>          Install a plugin (skills + MCPs + agents + knowledge)
   uninstall <name>        Uninstall a plugin
+  doctor                  Check for orphan/unregistered plugins
 
 Install Options:
   --target <agent>        Install for specific agent (claude, codex, antigravity, all)
@@ -1022,7 +1025,11 @@ async function handlePlugin(argv: string[]): Promise<void> {
 
   switch (subcommand) {
     case 'scan':
-      await (await import('./cli-plugin.js')).pluginScan();
+      await (await import('./cli-plugin.js')).pluginScan(args);
+      break;
+
+    case 'snapshot':
+      await (await import('./cli-plugin.js')).pluginSnapshot();
       break;
 
     case 'list':
@@ -1054,6 +1061,10 @@ async function handlePlugin(argv: string[]): Promise<void> {
         return;
       }
       await (await import('./cli-plugin.js')).pluginUninstall(args[0], args.slice(1));
+      break;
+
+    case 'doctor':
+      await (await import('./cli-plugin.js')).pluginDoctor();
       break;
 
     default:

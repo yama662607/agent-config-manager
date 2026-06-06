@@ -63,12 +63,36 @@ function parseTargets(argv: string[]): TargetName[] {
 // Scan Command
 // ============================================================================
 
-export async function pluginScan(): Promise<void> {
+export async function pluginScan(argv?: string[]): Promise<void> {
+  const showDiff = argv?.includes('--diff') ?? false;
+
   console.log('🔍 Scanning plugins across agents...\n');
   const plugins = await scanAllPlugins();
 
   if (plugins.length === 0) {
     console.log('  No plugins found.');
+    return;
+  }
+
+  // --diff mode: compare with previous snapshot (read-only)
+  if (showDiff) {
+    const { loadSnapshot, diffSnapshots } = await import('./plugin-snapshot.js');
+    const prev = await loadSnapshot();
+    if (!prev) {
+      console.log(`  No snapshot found. Run 'acm plugin snapshot' first.\n`);
+      return;
+    }
+    const current = {
+      scannedAt: new Date().toISOString(),
+      plugins: Object.fromEntries(plugins.map(p => [p.name, { name: p.name, version: p.version, skills: p.skills, mcps: p.mcps, agents: p.agents }])),
+    };
+    const diff = diffSnapshots(prev, current);
+
+    console.log(`  📸 Compared to ${prev.scannedAt.slice(0, 10)}:\n`);
+    if (diff.added.length) { console.log(`  🆕 Added (${diff.added.length}):`); for (const n of diff.added.slice(0, 10)) console.log(`    + ${n}`); if (diff.added.length > 10) console.log(`    ... +${diff.added.length - 10} more`); console.log(); }
+    if (diff.removed.length) { console.log(`  ❌ Removed (${diff.removed.length}):`); for (const n of diff.removed.slice(0, 10)) console.log(`    - ${n}`); if (diff.removed.length > 10) console.log(`    ... -${diff.removed.length - 10} more`); console.log(); }
+    if (diff.changed.length) { console.log(`  ✏️  Changed (${diff.changed.length}):`); for (const c of diff.changed.slice(0, 10)) console.log(`    ~ ${c.name}: ${c.field} ${c.before} → ${c.after}`); console.log(); }
+    if (!diff.added.length && !diff.removed.length && !diff.changed.length) console.log(`  ✅ No changes since last scan.\n`);
     return;
   }
 
@@ -553,4 +577,84 @@ export async function pluginUninstall(name: string, argv: string[]): Promise<voi
   console.log(`\nDone.`);
   if (keepSkills) console.log('Skills were kept (--keep-skills).');
   console.log();
+}
+
+// ============================================================================
+// Snapshot Command — Save current state
+// ============================================================================
+
+export async function pluginSnapshot(): Promise<void> {
+  const plugins = await scanAllPlugins();
+  const { saveSnapshot } = await import('./plugin-snapshot.js');
+
+  const snapshot = {
+    scannedAt: new Date().toISOString(),
+    plugins: Object.fromEntries(plugins.map(p => [p.name, { name: p.name, version: p.version, skills: p.skills, mcps: p.mcps, agents: p.agents }])),
+  };
+
+  await saveSnapshot(snapshot);
+  console.log(`📸 Snapshot saved: ${plugins.length} plugins at ${snapshot.scannedAt.slice(0, 19)}\n`);
+}
+
+// ============================================================================
+// Doctor Command — Orphan detection
+// ============================================================================
+
+export async function pluginDoctor(): Promise<void> {
+  console.log('🩺 Plugin health check...\n');
+
+  const plugins = await listPlugins();
+  const { scanAllPlugins } = await import('./plugin-scanner.js');
+  const scanResults = await scanAllPlugins();
+  const scanNames = new Set(scanResults.map(p => p.name));
+  const registryNames = new Set(plugins.map(p => p.name));
+
+  let issues = 0;
+
+  // 1. Registry entries without filesystem presence
+  for (const p of plugins) {
+    const dirs = [
+      path.join(AGENT_PLUGIN_DIR.claude, p.name),
+      path.join(AGENT_PLUGIN_DIR.codex, p.name),
+      path.join(AGENT_PLUGIN_DIR.antigravity, p.name),
+      getPluginInstallDir(p.name),
+    ];
+    let found = false;
+    for (const d of dirs) {
+      try { await fs.access(d); found = true; break; } catch {}
+    }
+    if (!found) {
+      console.log(`  👻 Orphan registry: ${p.name} (no filesystem presence)`);
+      issues++;
+    }
+  }
+
+  // 2. Filesystem plugins without registry entries
+  for (const name of scanNames) {
+    if (!registryNames.has(name)) {
+      console.log(`  📦 Unregistered: ${name} (on disk but not in registry)`);
+      issues++;
+    }
+  }
+
+  // 3. Check acm management dir for orphans
+  const acmPluginDir = path.join(os.homedir(), '.acm', 'plugins');
+  try {
+    const acmPlugins = await fs.readdir(acmPluginDir, { withFileTypes: true });
+    for (const entry of acmPlugins) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+      if (!registryNames.has(entry.name)) {
+        console.log(`  👻 Orphan acm dir: ${entry.name} (~/.acm/plugins/)`);
+        issues++;
+      }
+    }
+  } catch {}
+
+  if (issues === 0) {
+    console.log(`  ✅ All clean — no orphan plugins detected.\n`);
+  } else {
+    console.log(`\n  ${issues} issue(s) found.`);
+    console.log(`  Run 'acm plugin install <name>' to register unregistered plugins.`);
+    console.log(`  Run 'acm plugin uninstall <name>' to clean up orphans.\n`);
+  }
 }

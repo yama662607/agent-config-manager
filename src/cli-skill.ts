@@ -1,3 +1,4 @@
+import os from 'node:os';
 import type { SkillWorkspaceStatus, TargetName } from './types.js';
 import { discoverProject } from './project-discovery.js';
 import { getSkills, validateSkillName } from './skill-adapters.js';
@@ -12,6 +13,16 @@ import { padRightWide, truncateWide, getStringWidth } from './table-utils.js';
  */
 function sanitizeSkillId(skillId: string): string {
   return skillId.replace(/[^\w.-]/g, '').slice(0, 50);
+}
+
+/**
+ * Format an absolute path for display, collapsing the home directory to `~`.
+ */
+function formatHomePath(absolutePath: string): string {
+  const homeDir = os.homedir();
+  return absolutePath === homeDir || absolutePath.startsWith(homeDir + '/')
+    ? '~' + absolutePath.slice(homeDir.length)
+    : absolutePath;
 }
 
 // ============================================================================
@@ -140,7 +151,7 @@ export interface SkillAddOptions {
  * Add a skill to the current project.
  */
 export async function skillAdd(options: SkillAddOptions): Promise<void> {
-  const { normalizeSkillPackage, getSkill, addSkill, getSkillWithContent } = await import('./catalog.js');
+  const { normalizeSkillPackage, getSkill, addSkill, getSkillWithContent, getSkillDir: getCatalogSkillDir } = await import('./catalog.js');
 
   // Validate skill ID
   try {
@@ -154,6 +165,10 @@ export async function skillAdd(options: SkillAddOptions): Promise<void> {
   // Check if entry exists in catalog first
   let entry = await getSkill(options.skillId);
   let content: string;
+  // When the skill has a catalog directory (existing or newly registered), copy
+  // the whole directory (SKILL.md + references/, scripts/, assets/, etc.)
+  // instead of only the SKILL.md content.
+  let sourceDir: string | undefined;
 
   // If not in catalog, create a basic entry
   if (!entry) {
@@ -174,6 +189,7 @@ Skill content for ${sanitizedId}.
     if (!options.noRegister) {
       await addSkill(entry, content);
       console.log(`Added to catalog: ${entry.id}`);
+      sourceDir = getCatalogSkillDir(entry.id);
     }
   } else {
     // Load content from file
@@ -184,15 +200,21 @@ Skill content for ${sanitizedId}.
       return;
     }
     content = skillWithData.content;
+    sourceDir = getCatalogSkillDir(options.skillId);
   }
 
   // Add to each target
   const discovery = await discoverProject(process.cwd(), { allowHome: options.allowHome });
-  const { addSkillToConfig } = await import('./skill-adapters.js');
+  const { addSkillToConfig, copySkillDirToConfig, getSkillDir } = await import('./skill-adapters.js');
 
   for (const target of options.targets) {
-    await addSkillToConfig(discovery.root, target, entry.id, content);
-    console.log(`Added to ${target}: ${entry.id}`);
+    if (sourceDir) {
+      await copySkillDirToConfig(discovery.root, target, entry.id, sourceDir);
+    } else {
+      await addSkillToConfig(discovery.root, target, entry.id, content);
+    }
+    const destination = getSkillDir(discovery.root, target, entry.id);
+    console.log(`Added to ${target}: ${entry.id} -> ${formatHomePath(destination)}`);
   }
 
   console.log('\nRun `acm skill` to see the updated status.');
@@ -252,11 +274,12 @@ export async function skillInstallFromGitHub(options: SkillInstallFromGitHubOpti
 
   // Add to project
   const discovery = await discoverProject(process.cwd(), { allowHome: options.allowHome });
-  const { addSkillToConfig } = await import('./skill-adapters.js');
+  const { addSkillToConfig, getSkillDir } = await import('./skill-adapters.js');
 
   for (const target of options.targets) {
     await addSkillToConfig(discovery.root, target, name, content);
-    console.log(`✓ Added to ${target}: ${name}`);
+    const destination = getSkillDir(discovery.root, target, name);
+    console.log(`✓ Added to ${target}: ${name} -> ${formatHomePath(destination)}`);
   }
 
   console.log('\nRun `acm skill` to see the updated status.');

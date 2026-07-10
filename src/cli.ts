@@ -62,7 +62,7 @@ Commands:
 Options:
   -g, --global  Operate on the global catalog (~/.acm/) instead of current project
   -t, --targets Comma-separated target list (claude, codex, agy; aliases: c, x, a, g)
-  -H, --home    Allow managing configs in home directory (global configs)
+  -H, --home    Target the home directory (global configs), regardless of cwd
   -h, --help    Show this help message
   -V, --version Show version information
 
@@ -134,7 +134,7 @@ Options:
   --args <json>       Arguments for command (JSON array)
   --cwd <path>        Working directory for command
   --env <json|KEY=V>  Environment variables, repeatable
-  -H, --home          Allow managing configs in home directory (global configs)
+  -H, --home          Target the home directory (global configs), regardless of cwd
 
 EXAMPLES:
   # Show project MCP status
@@ -176,7 +176,7 @@ Options:
   -g, --global        Operate on the global catalog (~/.acm/)
   -t, --targets <l>   Comma-separated target list (default: claude,codex,agy; aliases: c,x,a,g)
   --[no-]register     Auto-register to catalog (default: yes)
-  -H, --home          Allow managing configs in home directory (global configs)
+  -H, --home          Target the home directory (global configs), regardless of cwd
   --name <name>       Override skill name from GitHub or import
   --no-catalog        Don't add to catalog, only install to project
   --file <path>       MD file path to register skill to catalog

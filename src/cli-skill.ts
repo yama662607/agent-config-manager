@@ -44,9 +44,9 @@ async function buildSkillStatus(projectRoot: string, allowHome: boolean = false)
 
   const skillMap = new Map<string, { name: string; enabled: boolean; targets: TargetName[]; source: 'catalog' | 'inline' }>();
 
-  for (const [target, configPath] of targets.entries()) {
-    if (!configPath.exists) continue;
-
+  for (const target of targets.keys()) {
+    // Skill directories are independent of native MCP config files, so a
+    // target is checked for skills even if it has no MCP config yet.
     const skills = await getSkills(projectRoot, target);
 
     for (const [name, info] of Object.entries(skills)) {

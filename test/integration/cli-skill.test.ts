@@ -155,4 +155,39 @@ describe('Skill CLI Integration Tests', () => {
       assert.match(stdout, /Enabled/);
     });
   });
+
+  describe('Skill List Command (#7: list without a native MCP config file)', () => {
+    const NO_MCP_HOME_DIR = path.join(os.tmpdir(), 'acm-test-skill-home-no-mcp');
+    const NO_MCP_PROJECT_DIR = path.join(os.tmpdir(), 'acm-test-skill-project-no-mcp');
+
+    before(async () => {
+      await fs.rm(NO_MCP_HOME_DIR, { recursive: true, force: true });
+      await fs.rm(NO_MCP_PROJECT_DIR, { recursive: true, force: true });
+      // Note: no writeNativeConfigPlaceholders() here — neither directory has
+      // .mcp.json, .codex/config.toml, or .agents/mcp_config.json, matching
+      // a typical home directory that has never had MCP servers configured.
+      const skillsDir = path.join(NO_MCP_HOME_DIR, '.claude', 'skills', 'homeless-skill');
+      await fs.mkdir(skillsDir, { recursive: true });
+      await fs.writeFile(
+        path.join(skillsDir, 'SKILL.md'),
+        '---\nname: homeless-skill\ndescription: skill with no native MCP config present\n---\n\n# homeless-skill\n'
+      );
+      await fs.mkdir(NO_MCP_PROJECT_DIR, { recursive: true });
+    });
+
+    after(async () => {
+      await fs.rm(NO_MCP_HOME_DIR, { recursive: true, force: true });
+      await fs.rm(NO_MCP_PROJECT_DIR, { recursive: true, force: true });
+    });
+
+    it('still lists skills for a target with no native MCP config file (-H)', async () => {
+      const { stdout } = await execAsync(`node "${CLI_PATH}" skill list -H --verbose`, {
+        cwd: NO_MCP_PROJECT_DIR,
+        env: { ...process.env, HOME: NO_MCP_HOME_DIR },
+      });
+
+      assert.match(stdout, /Skill: homeless-skill/);
+      assert.match(stdout, /Enabled/);
+    });
+  });
 });

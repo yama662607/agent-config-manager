@@ -226,7 +226,17 @@ export async function getSkills(
   const entries = await fs.readdir(skillsDir, { withFileTypes: true });
 
   for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
+    let isDir = entry.isDirectory();
+    if (entry.isSymbolicLink()) {
+      try {
+        const stat = await fs.stat(path.join(skillsDir, entry.name));
+        isDir = stat.isDirectory();
+      } catch {
+        // Dead symlink, skip
+        isDir = false;
+      }
+    }
+    if (!isDir) continue;
 
     const skillName = entry.name;
 

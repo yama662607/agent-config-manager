@@ -8,6 +8,7 @@ import path from 'node:path';
 
 import {
   copySkillDirToConfig,
+  getSkills,
   getSkillDir,
 } from '../../src/skill-adapters.js';
 
@@ -42,6 +43,44 @@ describe('Skill Adapters Module', () => {
       assert.match(skillMd, /name: my-skill/);
       assert.strictEqual(reference, 'reference content');
       assert.strictEqual(agent, 'agent content');
+    });
+  });
+
+  describe('getSkills (#5: symlinked skill directories should be detected)', () => {
+    it('detects a symlinked skill directory as installed', async () => {
+      const skillsDir = path.join(TEST_PROJECT_DIR, '.claude', 'skills');
+      await fs.mkdir(skillsDir, { recursive: true });
+
+      const realSkillTarget = path.join(TEST_PROJECT_DIR, 'external-skill');
+      await fs.mkdir(realSkillTarget, { recursive: true });
+      await fs.writeFile(path.join(realSkillTarget, 'SKILL.md'), '---\nname: linked-skill\n---\ncontent');
+
+      await fs.symlink(realSkillTarget, path.join(skillsDir, 'linked-skill'), 'dir');
+
+      const skills = await getSkills(TEST_PROJECT_DIR, 'claude');
+
+      assert.ok(skills['linked-skill']?.enabled, 'Symlinked skill should be reported as enabled/installed');
+    });
+
+    it('still detects regular (non-symlinked) skill directories', async () => {
+      const skillsDir = path.join(TEST_PROJECT_DIR, '.claude', 'skills', 'regular-skill');
+      await fs.mkdir(skillsDir, { recursive: true });
+      await fs.writeFile(path.join(skillsDir, 'SKILL.md'), '---\nname: regular-skill\n---\ncontent');
+
+      const skills = await getSkills(TEST_PROJECT_DIR, 'claude');
+
+      assert.ok(skills['regular-skill']?.enabled);
+    });
+
+    it('skips broken symlinks without throwing', async () => {
+      const skillsDir = path.join(TEST_PROJECT_DIR, '.claude', 'skills');
+      await fs.mkdir(skillsDir, { recursive: true });
+
+      await fs.symlink(path.join(TEST_PROJECT_DIR, 'does-not-exist'), path.join(skillsDir, 'broken-link'), 'dir');
+
+      const skills = await getSkills(TEST_PROJECT_DIR, 'claude');
+
+      assert.strictEqual(skills['broken-link'], undefined);
     });
   });
 });

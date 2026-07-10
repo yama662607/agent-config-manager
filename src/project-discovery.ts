@@ -35,23 +35,29 @@ export interface DiscoverProjectOptions {
 
 /**
  * Discover the active project from the current working directory.
- * Uses the current directory as the project root.
+ * Uses the current directory as the project root, unless `allowHome` is set,
+ * in which case the home directory is targeted regardless of cwd.
  */
 export async function discoverProject(
   cwd: string = process.cwd(),
   options?: DiscoverProjectOptions
 ): Promise<ProjectDiscovery> {
-  const currentDir = path.resolve(cwd);
   const homeDir = os.homedir();
 
-  // Prevent using home directory as project root (unless explicitly allowed)
-  if (!options?.allowHome) {
-    if (currentDir === homeDir || currentDir === path.dirname(homeDir)) {
-      throw new Error(
-        'Cannot use home directory as project root. ' +
-        'Use --allow-home to enable global config management, or navigate to a project directory.'
-      );
-    }
+  // --home targets the home directory (global configs) regardless of cwd.
+  if (options?.allowHome) {
+    const targets = await resolveNativeConfigPaths(homeDir);
+    return { root: homeDir, targets };
+  }
+
+  const currentDir = path.resolve(cwd);
+
+  // Prevent using home directory as project root unless --home was passed.
+  if (currentDir === homeDir || currentDir === path.dirname(homeDir)) {
+    throw new Error(
+      'Cannot use home directory as project root. ' +
+      'Use --home to enable global config management, or navigate to a project directory.'
+    );
   }
 
   const targets = await resolveNativeConfigPaths(currentDir);

@@ -175,6 +175,24 @@ export async function addSkillToConfig(
 }
 
 /**
+ * Copy an entire skill directory (SKILL.md plus any references/, scripts/,
+ * assets/, etc. subdirectories) from a source directory into a project's
+ * target skill directory.
+ */
+export async function copySkillDirToConfig(
+  projectRoot: string,
+  target: TargetName,
+  skillId: string,
+  sourceDir: string
+): Promise<void> {
+  validateSkillName(skillId);
+
+  const skillDir = getSkillDir(projectRoot, target, skillId);
+  await fs.mkdir(path.dirname(skillDir), { recursive: true });
+  await fs.cp(sourceDir, skillDir, { recursive: true, force: true });
+}
+
+/**
  * Remove a skill from a project.
  */
 export async function removeSkillFromConfig(
@@ -208,7 +226,17 @@ export async function getSkills(
   const entries = await fs.readdir(skillsDir, { withFileTypes: true });
 
   for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
+    let isDir = entry.isDirectory();
+    if (entry.isSymbolicLink()) {
+      try {
+        const stat = await fs.stat(path.join(skillsDir, entry.name));
+        isDir = stat.isDirectory();
+      } catch {
+        // Dead symlink, skip
+        isDir = false;
+      }
+    }
+    if (!isDir) continue;
 
     const skillName = entry.name;
 

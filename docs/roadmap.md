@@ -141,15 +141,14 @@ tool_timeouts = { slow_op = 120 }
 **Grok は既定で `~/.claude/skills/` と `./.claude/skills/` も読む。**
 そのため Grok を独立した Skill ターゲットとして単純に追加すると、Claude 向けに配布済みの Skill が
 二重に見える（Grok 側は同名を重複排除するが、ACM の status 表示と実体の対応が分かりにくくなる）。
-取りうる方針は次の 3 つ。実装時に決める。
-
-1. `~/.grok/skills/` へ通常どおり配布し、重複は Grok の重複排除に任せる
-2. `[compat.claude]` を無効化する前提で Grok を完全に独立したターゲットとして扱う
-3. `[skills] paths` にカタログのパスを直接登録し、配布そのものを省く
-
 ### 決定
 
-- **Skill と MCP の両方**を対象に、既存の 3 プロバイダと同等に扱う。
+- **Skill と MCP の両方**を対象にする。ただし扱いは非対称になる。
+- **MCP**: `~/.grok/config.toml` の `[mcp_servers.*]` を編集する。TOML なので Codex に近い実装になる。
+- **Skill**: `~/.grok/skills/` への配布は行わない。`[skills] paths` にカタログのパスを直接登録し、
+  Grok にカタログを直接読ませる。二重配布を避けられ、実体を一箇所に保つという symlink 化の方針とも一致する。
+  - 副作用として、Grok の Skill は「配布された一覧」ではなく「カタログそのもの」になる。
+    `acm skill` の status 表示で Grok だけ意味が異なる点を UI 上で明示する必要がある。
 
 ---
 

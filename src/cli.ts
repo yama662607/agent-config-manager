@@ -183,7 +183,7 @@ Options:
 
   Catalog Filter Options (with -g/--global):
   --plugin <name>     Filter by plugin name (e.g., vercel, slack, zoom)
-  --agent <name>      Filter by agent (claude, codex, antigravity)
+  --agent <name>      Filter by agent (claude, codex, antigravity, grok)
   --source-type <t>   Filter by source type (user, plugin, curated, system, bundled)
   --category <cat>    Filter by category (ai-ml, cloud-platform, communication, etc.)
   --search <text>     Free-text search in name/description
@@ -223,7 +223,7 @@ Subcommands:
   doctor                  Check for orphan/unregistered plugins
 
 Install Options:
-  --target <agent>        Install for specific agent (claude, codex, antigravity, all)
+  --target <agent>        Install for specific agent (claude, codex, antigravity, grok, all)
                           Default: claude. Aliases: c, x, a, g, agy
 
 Uninstall Options:
@@ -1391,7 +1391,7 @@ function parseCatalogSkillImportOptions(argv: string[]): CatalogSkillImportOptio
 }
 
 function parseTargets(input: string): TargetName[] {
-  const validTargets: TargetName[] = ['claude', 'codex', 'antigravity'];
+  const validTargets: TargetName[] = ['claude', 'codex', 'antigravity', 'grok'];
   
   const aliasMap: Record<string, TargetName> = {
     claude: 'claude',
@@ -1401,7 +1401,9 @@ function parseTargets(input: string): TargetName[] {
     c: 'claude',
     x: 'codex',
     a: 'antigravity',
-    g: 'antigravity'
+    g: 'antigravity',
+    grok: 'grok',
+    k: 'grok'
   };
 
   const targets = input.split(',').map((t) => {
@@ -1412,7 +1414,7 @@ function parseTargets(input: string): TargetName[] {
   for (const target of targets) {
     if (!validTargets.includes(target)) {
       process.stderr.write(`Invalid target: ${target}\n`);
-      process.stderr.write(`Valid targets: claude, codex, agy (aliases: c, x, a, g)\n`);
+      process.stderr.write(`Valid targets: claude, codex, agy, grok (aliases: c, x, a, g, k)\n`);
       process.exit(1);
     }
   }

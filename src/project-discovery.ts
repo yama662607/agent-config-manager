@@ -12,6 +12,7 @@ const TARGET_CONFIG_PATHS: Record<TargetName, string> = {
   claude: '.mcp.json',
   codex: path.join('.codex', 'config.toml'),
   antigravity: path.join('.agents', 'mcp_config.json'),
+  grok: path.join('.grok', 'config.toml'),
 };
 
 /** Skills directory paths for each target relative to project root */
@@ -19,6 +20,7 @@ const TARGET_SKILLS_PATHS: Record<TargetName, string> = {
   claude: path.join('.claude', 'skills'),
   codex: path.join('.codex', 'skills'),
   antigravity: path.join('.agents', 'skills'),
+  grok: path.join('.grok', 'skills'),
 };
 
 // ============================================================================

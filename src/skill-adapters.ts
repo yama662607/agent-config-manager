@@ -62,6 +62,8 @@ export function getSkillsDir(projectRoot: string, target: TargetName): string {
       return path.join(projectRoot, '.codex', 'skills');
     case 'antigravity':
       return path.join(projectRoot, '.agents', 'skills');
+    case 'grok':
+      return path.join(projectRoot, '.grok', 'skills');
   }
 }
 

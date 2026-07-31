@@ -87,6 +87,7 @@ acm skill add my-skill --targets claude -H --copy
 | `stale` | Copy that no longer matches the catalog — reinstall to refresh. |
 | `broken` | Symlink whose catalog target is gone. |
 | `unlinked` | Installed, but no catalog entry to compare against. |
+| `catalog` | Grok only: read straight from the registered catalog, never copied. |
 
 When targets differ, the column lists them per target (`cl:stale cx:link`).
 
@@ -97,6 +98,29 @@ migration command:
 acm skill remove my-skill --targets claude -H
 acm skill add my-skill --targets claude -H
 ```
+
+### Grok skills are registered, not copied
+
+Grok discovers skills from directories listed under `[skills] paths` in `config.toml`, and it
+already scans `~/.claude/skills` by default. Copying catalog skills into `~/.grok/skills` would
+duplicate everything ACM installs for Claude, so `acm` registers the catalog directory with Grok
+once instead:
+
+```bash
+acm skill add my-skill --targets grok -H
+# → registers ~/.acm/skills in ~/.grok/config.toml
+# → my-skill is read from the catalog, not copied
+```
+
+Because the whole directory is registered at once, every catalog skill becomes visible to Grok.
+Removing one skill therefore turns it off by name rather than deleting a copy:
+
+```bash
+acm skill remove my-skill --targets grok -H
+# → adds "my-skill" to [skills] disabled
+```
+
+`acm skill` shows these as placement `catalog`.
 
 ### `acm skill`
 

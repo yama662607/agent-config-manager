@@ -56,12 +56,13 @@ Commands:
   mcp         Manage MCP servers (TUI mode by default)
   skill       Manage skills (TUI mode by default)
   plugin      Manage plugins (scan, list, install, uninstall)
+  scan        Discover skills and MCPs already configured across agents
   validate    Validate current project configuration [DEPRECATED: Use "acm doctor --strict" instead]
   doctor      Run diagnostics and health checks
 
 Options:
   -g, --global  Operate on the global catalog (~/.acm/) instead of current project
-  -t, --targets Comma-separated target list (claude, codex, agy; aliases: c, x, a, g)
+  -t, --targets Comma-separated target list (claude, codex, agy, grok; aliases: c, x, a, g, k)
   -H, --home    Target the home directory (global configs), regardless of cwd
   -h, --help    Show this help message
   -V, --version Show version information
@@ -70,6 +71,7 @@ Targets:
   claude      Claude Code (.mcp.json, .claude/skills/) (alias: c)
   codex       Codex (.codex/config.toml, .codex/skills/) (alias: x)
   agy         Antigravity CLI (.agents/mcp_config.json, .agents/skills/) (alias: a, g)
+  grok        Grok CLI (.grok/config.toml; skills read from the catalog) (alias: k)
 
 EXAMPLES:
   acm init                         Interactive setup for current project

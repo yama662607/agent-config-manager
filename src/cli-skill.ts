@@ -1,4 +1,5 @@
 import os from 'node:os';
+import path from 'node:path';
 import type { SkillPlacementState, SkillStatus, SkillWorkspaceStatus, TargetName } from './types.js';
 import { discoverProject } from './project-discovery.js';
 import { defaultPlacementMode, getSkills, validateSkillName } from './skill-adapters.js';
@@ -57,7 +58,11 @@ async function buildSkillStatus(projectRoot: string, allowHome: boolean = false)
       if (!info.enabled) continue;
 
       const catalogDir = catalogSkillIds.has(name) ? getCatalogSkillDir(name) : undefined;
-      const placement = (await inspectSkillPlacement(projectRoot, target, name, catalogDir)).state;
+      let placement = (await inspectSkillPlacement(projectRoot, target, name, catalogDir)).state;
+      // Grok reads registered catalog paths directly, so nothing is placed on disk.
+      if (target === 'grok' && placement === 'missing') {
+        placement = 'registered';
+      }
 
       const existing = skillMap.get(name);
       if (existing) {
@@ -143,6 +148,7 @@ function printSkillStatus(status: SkillWorkspaceStatus, verbose: boolean): void 
 /** Short label for a placement state. */
 const PLACEMENT_LABELS: Record<SkillPlacementState, string> = {
   linked: 'link',
+  registered: 'catalog',
   'copy-current': 'copy',
   'copy-stale': 'stale',
   'broken-link': 'broken',
@@ -181,6 +187,46 @@ function centerWide(str: string, width: number): string {
   const left = Math.floor((width - strWidth) / 2);
   const right = width - strWidth - left;
   return ' '.repeat(left) + str + ' '.repeat(right);
+}
+
+// ============================================================================
+// Grok Helpers
+// ============================================================================
+
+/**
+ * Grok reads skills straight out of directories listed in `[skills] paths`, and
+ * already scans `~/.claude/skills`. So instead of copying, ACM registers the
+ * catalog once and clears any `[skills] disabled` entry for this skill.
+ */
+async function addSkillForGrok(projectRoot: string, skillId: string): Promise<void> {
+  const { registerSkillPath, setSkillDisabled } = await import('./grok-skills.js');
+  const { getSkillsDir: getCatalogSkillsDir } = await import('./catalog.js');
+
+  const configPath = path.join(projectRoot, '.grok', 'config.toml');
+  const catalogSkillsDir = getCatalogSkillsDir();
+
+  const registered = await registerSkillPath(configPath, catalogSkillsDir);
+  await setSkillDisabled(configPath, skillId, false);
+
+  if (registered) {
+    console.log(
+      `Added to grok: registered catalog ${formatHomePath(catalogSkillsDir)} in ${formatHomePath(configPath)}`
+    );
+  }
+  console.log(`Added to grok: ${skillId} (read from the catalog, not copied)`);
+}
+
+/**
+ * Grok cannot "uninstall" a single catalog skill, because the whole directory is
+ * registered at once. Disabling it by name is the equivalent operation.
+ */
+async function removeSkillForGrok(projectRoot: string, skillName: string): Promise<void> {
+  const { setSkillDisabled } = await import('./grok-skills.js');
+
+  const configPath = path.join(projectRoot, '.grok', 'config.toml');
+  await setSkillDisabled(configPath, skillName, true);
+
+  console.log(`Removed from grok: ${skillName} (added to [skills] disabled)`);
 }
 
 // ============================================================================
@@ -258,6 +304,10 @@ Skill content for ${sanitizedId}.
   const placement = options.placement ?? defaultPlacementMode(discovery.root);
 
   for (const target of options.targets) {
+    if (target === 'grok') {
+      await addSkillForGrok(discovery.root, entry.id);
+      continue;
+    }
     if (sourceDir) {
       await copySkillDirToConfig(discovery.root, target, entry.id, sourceDir, placement);
     } else {
@@ -333,6 +383,10 @@ export async function skillInstallFromGitHub(options: SkillInstallFromGitHubOpti
   const sourceDir = options.addToCatalog !== false ? getCatalogSkillDir(name) : undefined;
 
   for (const target of options.targets) {
+    if (target === 'grok') {
+      await addSkillForGrok(discovery.root, name);
+      continue;
+    }
     if (sourceDir) {
       await copySkillDirToConfig(discovery.root, target, name, sourceDir, placement);
     } else {
@@ -373,6 +427,10 @@ export async function skillRemove(options: SkillRemoveOptions): Promise<void> {
   const { removeSkillFromConfig } = await import('./skill-adapters.js');
 
   for (const target of options.targets) {
+    if (target === 'grok') {
+      await removeSkillForGrok(discovery.root, options.skillName);
+      continue;
+    }
     await removeSkillFromConfig(discovery.root, target, options.skillName);
     console.log(`Removed from ${target}: ${options.skillName}`);
   }

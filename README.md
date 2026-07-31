@@ -58,6 +58,46 @@ acm mcp disable github --targets claude
 acm mcp enable github --targets codex
 ```
 
+### Skill placement: symlink vs copy
+
+`acm` places a skill from the catalog into a target either as a **symlink** back to the catalog
+or as an independent **copy**.
+
+| Destination | Default | Why |
+|-------------|---------|-----|
+| Home (`acm skill add … -H`) | symlink | Personal environment. One catalog copy is shared by every provider, so it can never drift. |
+| Project | copy | Repositories are shared. An absolute symlink would break for anyone else and in CI. |
+
+Override per command with `--link` or `--copy`:
+
+```bash
+# Link into the project as well (personal repo, single machine)
+acm skill add my-skill --targets claude --link
+
+# Force a standalone copy in the home directory
+acm skill add my-skill --targets claude -H --copy
+```
+
+`acm skill` reports how each skill is placed:
+
+| Placement | Meaning |
+|-----------|---------|
+| `link` | Symlink to the catalog. Always current. |
+| `copy` | Copy whose contents match the catalog. |
+| `stale` | Copy that no longer matches the catalog — reinstall to refresh. |
+| `broken` | Symlink whose catalog target is gone. |
+| `unlinked` | Installed, but no catalog entry to compare against. |
+
+When targets differ, the column lists them per target (`cl:stale cx:link`).
+
+To move an existing copy onto a symlink, remove and add it again — there is no separate
+migration command:
+
+```bash
+acm skill remove my-skill --targets claude -H
+acm skill add my-skill --targets claude -H
+```
+
 ### `acm skill`
 
 Manage skills for the current project.

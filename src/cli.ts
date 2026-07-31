@@ -867,6 +867,7 @@ async function handleSkill(argv: string[]): Promise<void> {
           targets: options.targets,
           noRegister: options.noRegister,
           allowHome,
+          placement: options.placement,
         });
       }
       break;
@@ -906,6 +907,7 @@ async function handleSkill(argv: string[]): Promise<void> {
           targets: options.targets,
           addToCatalog: options.addToCatalog,
           allowHome,
+          placement: options.placement,
         });
       }
       break;
@@ -939,6 +941,7 @@ async function handleSkill(argv: string[]): Promise<void> {
           targets: options.targets,
           noRegister: true,
           allowHome,
+          placement: options.placement,
         });
       }
       break;
@@ -1427,6 +1430,8 @@ interface SkillOptions {
   targets: TargetName[];
   noRegister: boolean;
   verbose?: boolean;
+  /** Placement override for installed skill directories. */
+  placement?: 'link' | 'copy';
   // GitHub URL install options
   githubUrl?: string;
   skillName?: string;
@@ -1463,6 +1468,12 @@ function parseSkillOptions(argv: string[], subcommand?: string): SkillOptions {
       case '--verbose':
       case '-v':
         options.verbose = true;
+        break;
+      case '--link':
+        options.placement = 'link';
+        break;
+      case '--copy':
+        options.placement = 'copy';
         break;
       case '--from-github':
       case '--github':

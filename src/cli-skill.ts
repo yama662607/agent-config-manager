@@ -1,7 +1,8 @@
 import os from 'node:os';
-import type { SkillWorkspaceStatus, TargetName } from './types.js';
+import type { SkillPlacementState, SkillStatus, SkillWorkspaceStatus, TargetName } from './types.js';
 import { discoverProject } from './project-discovery.js';
-import { getSkills, validateSkillName } from './skill-adapters.js';
+import { defaultPlacementMode, getSkills, validateSkillName } from './skill-adapters.js';
+import type { SkillPlacementMode } from './skill-adapters.js';
 import { padRightWide, truncateWide, getStringWidth } from './table-utils.js';
 
 // ============================================================================
@@ -41,8 +42,11 @@ export async function skillStatus(verbose: boolean = false, allowHome: boolean =
 
 async function buildSkillStatus(projectRoot: string, allowHome: boolean = false): Promise<SkillWorkspaceStatus> {
   const { targets } = await discoverProject(process.cwd(), { allowHome });
+  const { listSkills, getSkillDir: getCatalogSkillDir } = await import('./catalog.js');
+  const { inspectSkillPlacement } = await import('./skill-placement.js');
+  const catalogSkillIds = new Set((await listSkills()).map((s) => s.id));
 
-  const skillMap = new Map<string, { name: string; enabled: boolean; targets: TargetName[]; source: 'catalog' | 'inline' }>();
+  const skillMap = new Map<string, SkillStatus>();
 
   for (const target of targets.keys()) {
     // Skill directories are independent of native MCP config files, so a
@@ -52,15 +56,20 @@ async function buildSkillStatus(projectRoot: string, allowHome: boolean = false)
     for (const [name, info] of Object.entries(skills)) {
       if (!info.enabled) continue;
 
+      const catalogDir = catalogSkillIds.has(name) ? getCatalogSkillDir(name) : undefined;
+      const placement = (await inspectSkillPlacement(projectRoot, target, name, catalogDir)).state;
+
       const existing = skillMap.get(name);
       if (existing) {
         existing.targets.push(target);
+        existing.placement![target] = placement;
       } else {
         skillMap.set(name, {
           name,
           enabled: true,
           targets: [target],
-          source: 'inline', // TODO: detect from catalog
+          source: catalogDir ? 'catalog' : 'inline',
+          placement: { [target]: placement },
         });
       }
     }
@@ -93,21 +102,25 @@ function printSkillStatus(status: SkillWorkspaceStatus, verbose: boolean): void 
       console.log(`Skill: ${skill.name}`);
       console.log(`  Status: ${skill.enabled ? '✓' : '✗'} ${skill.enabled ? 'Enabled' : 'Disabled'}`);
       console.log(`  Targets: ${skill.targets.join(', ') || '(none)'}`);
-      console.log(`  Source: ${skill.source}\n`);
+      console.log(`  Source: ${skill.source}`);
+      console.log(`  Placement: ${formatPlacement(skill)}\n`);
     }
   } else {
     // Compact table output
-    const NAME_WIDTH = 35;
+    const NAME_WIDTH = 30;
     const ENABLED_WIDTH = 7;
     const TARGETS_WIDTH = 15;
     const SOURCE_WIDTH = 7;
+    const PLACEMENT_WIDTH = 18;
 
-    const borderH = '┌' + '─'.repeat(NAME_WIDTH + 2) + '┬' + '─'.repeat(ENABLED_WIDTH + 2) + '┬' + '─'.repeat(TARGETS_WIDTH + 2) + '┬' + '─'.repeat(SOURCE_WIDTH + 2) + '┐';
-    const borderM = '├' + '─'.repeat(NAME_WIDTH + 2) + '┼' + '─'.repeat(ENABLED_WIDTH + 2) + '┼' + '─'.repeat(TARGETS_WIDTH + 2) + '┼' + '─'.repeat(SOURCE_WIDTH + 2) + '┤';
-    const borderF = '└' + '─'.repeat(NAME_WIDTH + 2) + '┴' + '─'.repeat(ENABLED_WIDTH + 2) + '┴' + '─'.repeat(TARGETS_WIDTH + 2) + '┴' + '─'.repeat(SOURCE_WIDTH + 2) + '┘';
+    const widths = [NAME_WIDTH, ENABLED_WIDTH, TARGETS_WIDTH, SOURCE_WIDTH, PLACEMENT_WIDTH];
+    const line = (l: string, m: string, r: string) => l + widths.map(w => '─'.repeat(w + 2)).join(m) + r;
+    const borderH = line('┌', '┬', '┐');
+    const borderM = line('├', '┼', '┤');
+    const borderF = line('└', '┴', '┘');
 
     console.log(borderH);
-    console.log('│ ' + padRightWide('Name', NAME_WIDTH) + ' │ ' + padRightWide('Enabled', ENABLED_WIDTH) + ' │ ' + padRightWide('Targets', TARGETS_WIDTH) + ' │ ' + padRightWide('Source', SOURCE_WIDTH) + ' │');
+    console.log('│ ' + padRightWide('Name', NAME_WIDTH) + ' │ ' + padRightWide('Enabled', ENABLED_WIDTH) + ' │ ' + padRightWide('Targets', TARGETS_WIDTH) + ' │ ' + padRightWide('Source', SOURCE_WIDTH) + ' │ ' + padRightWide('Placement', PLACEMENT_WIDTH) + ' │');
     console.log(borderM);
 
     for (const skill of status.skills) {
@@ -116,13 +129,47 @@ function printSkillStatus(status: SkillWorkspaceStatus, verbose: boolean): void 
       const targets = truncateWide(skill.targets.join(', ') || '(none)', TARGETS_WIDTH);
       const source = padRightWide(skill.source, SOURCE_WIDTH);
 
-      console.log('│ ' + padRightWide(name, NAME_WIDTH) + ' │ ' + centerWide(enabled, ENABLED_WIDTH) + ' │ ' + padRightWide(targets, TARGETS_WIDTH) + ' │ ' + source + ' │');
+      const placement = padRightWide(truncateWide(formatPlacement(skill), PLACEMENT_WIDTH), PLACEMENT_WIDTH);
+
+      console.log('│ ' + padRightWide(name, NAME_WIDTH) + ' │ ' + centerWide(enabled, ENABLED_WIDTH) + ' │ ' + padRightWide(targets, TARGETS_WIDTH) + ' │ ' + source + ' │ ' + placement + ' │');
     }
 
     console.log(borderF);
     console.log();
     console.log('Run `acm skill <name>` for details, `acm skill add` to add new skills.\n');
   }
+}
+
+/** Short label for a placement state. */
+const PLACEMENT_LABELS: Record<SkillPlacementState, string> = {
+  linked: 'link',
+  'copy-current': 'copy',
+  'copy-stale': 'stale',
+  'broken-link': 'broken',
+  unlinked: 'unlinked',
+  missing: '-',
+};
+
+/**
+ * Summarize placement across targets. Reports the single state when every
+ * target agrees, otherwise lists them per target.
+ */
+function formatPlacement(skill: SkillStatus): string {
+  const entries = Object.entries(skill.placement ?? {}) as [TargetName, SkillPlacementState][];
+  if (entries.length === 0) return '-';
+
+  const states = new Set(entries.map(([, state]) => state));
+  if (states.size === 1) {
+    return PLACEMENT_LABELS[entries[0][1]];
+  }
+
+  const short: Record<TargetName, string> = {
+    claude: 'cl',
+    codex: 'cx',
+    antigravity: 'ag',
+    grok: 'gk',
+  };
+  return entries.map(([target, state]) => `${short[target]}:${PLACEMENT_LABELS[state]}`).join(' ');
 }
 
 /**
@@ -145,6 +192,8 @@ export interface SkillAddOptions {
   targets: TargetName[];
   noRegister: boolean;
   allowHome?: boolean;
+  /** Placement override. Defaults to link for home, copy for projects. */
+  placement?: SkillPlacementMode;
 }
 
 /**
@@ -206,15 +255,17 @@ Skill content for ${sanitizedId}.
   // Add to each target
   const discovery = await discoverProject(process.cwd(), { allowHome: options.allowHome });
   const { addSkillToConfig, copySkillDirToConfig, getSkillDir } = await import('./skill-adapters.js');
+  const placement = options.placement ?? defaultPlacementMode(discovery.root);
 
   for (const target of options.targets) {
     if (sourceDir) {
-      await copySkillDirToConfig(discovery.root, target, entry.id, sourceDir);
+      await copySkillDirToConfig(discovery.root, target, entry.id, sourceDir, placement);
     } else {
       await addSkillToConfig(discovery.root, target, entry.id, content);
     }
     const destination = getSkillDir(discovery.root, target, entry.id);
-    console.log(`Added to ${target}: ${entry.id} -> ${formatHomePath(destination)}`);
+    const how = sourceDir && placement === 'link' ? ' (symlink)' : '';
+    console.log(`Added to ${target}: ${entry.id} -> ${formatHomePath(destination)}${how}`);
   }
 
   console.log('\nRun `acm skill` to see the updated status.');
@@ -230,6 +281,8 @@ export interface SkillInstallFromGitHubOptions {
   targets: TargetName[];
   addToCatalog?: boolean;
   allowHome?: boolean;
+  /** Placement override. Defaults to link for home, copy for projects. */
+  placement?: SkillPlacementMode;
 }
 
 /**
@@ -274,12 +327,20 @@ export async function skillInstallFromGitHub(options: SkillInstallFromGitHubOpti
 
   // Add to project
   const discovery = await discoverProject(process.cwd(), { allowHome: options.allowHome });
-  const { addSkillToConfig, getSkillDir } = await import('./skill-adapters.js');
+  const { addSkillToConfig, copySkillDirToConfig, getSkillDir } = await import('./skill-adapters.js');
+  const { getSkillDir: getCatalogSkillDir } = await import('./catalog.js');
+  const placement = options.placement ?? defaultPlacementMode(discovery.root);
+  const sourceDir = options.addToCatalog !== false ? getCatalogSkillDir(name) : undefined;
 
   for (const target of options.targets) {
-    await addSkillToConfig(discovery.root, target, name, content);
+    if (sourceDir) {
+      await copySkillDirToConfig(discovery.root, target, name, sourceDir, placement);
+    } else {
+      await addSkillToConfig(discovery.root, target, name, content);
+    }
     const destination = getSkillDir(discovery.root, target, name);
-    console.log(`✓ Added to ${target}: ${name} -> ${formatHomePath(destination)}`);
+    const how = sourceDir && placement === 'link' ? ' (symlink)' : '';
+    console.log(`✓ Added to ${target}: ${name} -> ${formatHomePath(destination)}${how}`);
   }
 
   console.log('\nRun `acm skill` to see the updated status.');

@@ -7,6 +7,7 @@
 ## 前提：現在のアーキテクチャ
 
 - 実体（カタログ）は `~/.kanade/catalogs/` にあり、`~/.acm/` から symlink されている。
+  これは kanade リポジトリ（`git@github.com:yama662607/kanade.git`）の **`catalog` ブランチ**で管理されている。
   - `~/.acm/skills` → `~/.kanade/catalogs/skills`
   - `~/.acm/skills-metadata.toml`、`mcps-metadata.toml`、`plugins`、`plugins-metadata.toml` も同様
   - `catalog.toml` のみ `~/.acm/` の実ファイル
@@ -34,8 +35,7 @@
 ### 実装メモ
 
 - `copySkillDirToConfig` を配置戦略（link / copy）を受け取る形に一般化する。
-- 既存のコピー済み Skill から symlink への移行パス（再配置コマンド、または `install` 時の置換確認）が必要。
-- 配布先が既存の実ディレクトリだった場合に無条件で symlink へ置き換えない。差分を提示してから確認する。
+- **既存のコピー済み Skill の移行に専用コマンドは作らない。** アンインストールして入れ直す運用とする。
 - アンインストール時、symlink だけを削除しカタログ実体に触れないことをテストで保証する。
 
 ---
@@ -97,21 +97,59 @@ kanade を使うと、エージェントから別ディレクトリで安全に�
 - 未対応。`src/types.ts` の `TargetName` は `'claude' | 'codex' | 'antigravity'` のみ。
 - ローカルには grok CLI 0.2.117 が導入済み。
 
-### ローカルで確認した Grok の構成（`~/.grok/`）
+### 調査結果（出典: `~/.grok/docs/user-guide/`。grok CLI に同梱の公式ドキュメント）
 
-| パス | 用途（推定） |
+#### MCP
+
+`~/.grok/config.toml` の `[mcp_servers.<name>]` セクションで定義する。TOML なので Codex に近い扱いになる。
+
+```toml
+[mcp_servers.my-server]
+command = "/path/to/server"
+args = ["--flag", "value"]
+env = { API_KEY = "sk-..." }
+enabled = true                 # enable/disable がネイティブに存在（既定 true）
+startup_timeout_sec = 30
+tool_timeout_sec = 6000
+tool_timeouts = { slow_op = 120 }
+```
+
+- HTTP/SSE の場合は `url` と `headers`（`{ "Authorization" = "Bearer token" }`）。
+- プロジェクトスコープは `<repo>/.grok/config.toml`。cwd → git root の連鎖で最も深いファイルが勝つ。
+  **ただしそのフォルダが trusted になって初めて有効**（`~/.grok/trusted_folders.toml`）。
+- 設定の優先順位: `requirements.toml` > 環境変数 > リポジトリ `.grok/config.toml` > user/managed config > 既定値。
+
+#### Skill
+
+探索先の優先度順（高い方が勝つ。同名は重複排除される）:
+
+| パス | スコープ |
 | --- | --- |
-| `~/.grok/config.toml` | 設定本体。MCP 定義の有無はスキーマ確認が必要 |
-| `~/.grok/skills/` | Skill の配置先 |
-| `~/.grok/marketplace-cache/` | マーケットプレースのキャッシュ |
-| `~/.grok/bundled/` | バンドル同梱物 |
-| `~/.grok/trusted_folders.toml` | 信頼済みフォルダ |
+| `./.grok/skills/`, `./.grok/commands/` | Local（CWD）: 最高 |
+| `./.claude/skills/`, `./.claude/commands/` | Local / Repo: 高 |
+| `<repo_root>/.grok/skills/` | Repo: 中 |
+| `~/.grok/skills/`, `~/.grok/commands/` | User: 低 |
+| `~/.claude/skills/`, `~/.claude/commands/` | User: 低（Claude Code 互換） |
+| `~/.cursor/skills/`, `./.cursor/skills/` | Cursor 互換 |
+
+- 各階層で `.agents/skills/`（および `commands/`）もスキャンされる。
+- `[skills] paths` で追加ディレクトリ、`ignore` で除外、`disabled` で個別無効化ができる。
+- 探索に `.gitignore` は影響しない。
+
+#### 設計上の注意
+
+**Grok は既定で `~/.claude/skills/` と `./.claude/skills/` も読む。**
+そのため Grok を独立した Skill ターゲットとして単純に追加すると、Claude 向けに配布済みの Skill が
+二重に見える（Grok 側は同名を重複排除するが、ACM の status 表示と実体の対応が分かりにくくなる）。
+取りうる方針は次の 3 つ。実装時に決める。
+
+1. `~/.grok/skills/` へ通常どおり配布し、重複は Grok の重複排除に任せる
+2. `[compat.claude]` を無効化する前提で Grok を完全に独立したターゲットとして扱う
+3. `[skills] paths` にカタログのパスを直接登録し、配布そのものを省く
 
 ### 決定
 
 - **Skill と MCP の両方**を対象に、既存の 3 プロバイダと同等に扱う。
-- プロジェクトスコープの設定パス（リポジトリ内で Grok が読む場所）は実装前に要確認。
-- `config.toml` の MCP スキーマは実物を読んで確定させる。推測で書かない。
 
 ---
 

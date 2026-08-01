@@ -17,6 +17,7 @@ const TEST_DIR = path.join(os.tmpdir(), 'acm-config-adapters-test');
 const CODEX_CONFIG_PATH = path.join(TEST_DIR, '.codex', 'config.toml');
 const CLAUDE_CONFIG_PATH = path.join(TEST_DIR, '.mcp.json');
 const ANTIGRAVITY_CONFIG_PATH = path.join(TEST_DIR, '.agents', 'mcp_config.json');
+const GROK_CONFIG_PATH = path.join(TEST_DIR, '.grok', 'config.toml');
 
 const GITHUB_RECIPE: McpRecipe = {
   transport: 'stdio',
@@ -29,6 +30,7 @@ describe('Config Adapters', () => {
     await fs.rm(TEST_DIR, { recursive: true, force: true });
     await fs.mkdir(path.dirname(CODEX_CONFIG_PATH), { recursive: true });
     await fs.mkdir(path.dirname(ANTIGRAVITY_CONFIG_PATH), { recursive: true });
+    await fs.mkdir(path.dirname(GROK_CONFIG_PATH), { recursive: true });
   });
 
   after(async () => {
@@ -71,6 +73,86 @@ describe('Config Adapters', () => {
 
     const result = await readNativeConfig('codex', CODEX_CONFIG_PATH);
     assert.deepStrictEqual(result.config, { mcp_servers: {} });
+  });
+
+  it('writes Grok MCP entries under mcp_servers with an enabled flag', async () => {
+    await fs.writeFile(GROK_CONFIG_PATH, '# test config\n');
+
+    const actualName = await addMcpToConfig(
+      'grok',
+      GROK_CONFIG_PATH,
+      '@modelcontextprotocol/server-github',
+      GITHUB_RECIPE
+    );
+
+    assert.strictEqual(actualName, 'github');
+
+    const raw = await fs.readFile(GROK_CONFIG_PATH, 'utf8');
+    assert.match(raw, /\[mcp_servers\.github\]/);
+    assert.match(raw, /enabled = true/);
+
+    const servers = await getMcpServers('grok', GROK_CONFIG_PATH);
+    assert.strictEqual(servers['@modelcontextprotocol/server-github']?.enabled, true);
+  });
+
+  it('can disable and remove a Grok MCP entry by package id', async () => {
+    await fs.writeFile(GROK_CONFIG_PATH, '# test config\n');
+    await addMcpToConfig('grok', GROK_CONFIG_PATH, '@modelcontextprotocol/server-github', GITHUB_RECIPE);
+
+    await disableMcpInConfig('grok', GROK_CONFIG_PATH, '@modelcontextprotocol/server-github');
+
+    let servers = await getMcpServers('grok', GROK_CONFIG_PATH);
+    assert.strictEqual(servers['@modelcontextprotocol/server-github']?.enabled, false);
+
+    await removeMcpFromConfig('grok', GROK_CONFIG_PATH, '@modelcontextprotocol/server-github');
+
+    servers = await getMcpServers('grok', GROK_CONFIG_PATH);
+    assert.deepStrictEqual(servers, {});
+  });
+
+  it('uses url (not httpUrl) for Grok HTTP servers', async () => {
+    const httpRecipe: McpRecipe = {
+      transport: 'http',
+      url: 'https://mcp.example.com/api',
+    };
+
+    await fs.writeFile(GROK_CONFIG_PATH, '# test config\n');
+    await addMcpToConfig('grok', GROK_CONFIG_PATH, 'remote-api', httpRecipe);
+
+    const raw = await fs.readFile(GROK_CONFIG_PATH, 'utf8');
+    assert.match(raw, /url = "https:\/\/mcp\.example\.com\/api"/);
+    assert.ok(!raw.includes('httpUrl'));
+
+    const servers = await getMcpServers('grok', GROK_CONFIG_PATH);
+    assert.strictEqual(servers['remote-api']?.recipe?.url, 'https://mcp.example.com/api');
+    assert.strictEqual(servers['remote-api']?.recipe?.transport, 'http');
+  });
+
+  it('preserves unrelated Grok config sections when editing MCP servers', async () => {
+    await fs.writeFile(
+      GROK_CONFIG_PATH,
+      [
+        '[cli]',
+        'installer = "internal"',
+        'auto_update = true',
+        '',
+        '[ui]',
+        'yolo = false',
+        '',
+        '[[marketplace.sources]]',
+        'name = "xAI Official"',
+        'git = "https://github.com/xai-org/plugin-marketplace.git"',
+        '',
+      ].join('\n')
+    );
+
+    await addMcpToConfig('grok', GROK_CONFIG_PATH, '@modelcontextprotocol/server-github', GITHUB_RECIPE);
+
+    const result = await readNativeConfig('grok', GROK_CONFIG_PATH);
+    assert.strictEqual((result.config as any).cli.installer, 'internal');
+    assert.strictEqual((result.config as any).ui.yolo, false);
+    assert.strictEqual((result.config as any).marketplace.sources[0].name, 'xAI Official');
+    assert.ok((result.config as any).mcp_servers.github);
   });
 
   it('round-trips env for Claude and Antigravity configs', async () => {

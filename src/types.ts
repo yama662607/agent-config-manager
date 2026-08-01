@@ -3,7 +3,7 @@
 // ============================================================================
 
 /** Supported agent targets */
-export type TargetName = 'claude' | 'codex' | 'antigravity';
+export type TargetName = 'claude' | 'codex' | 'antigravity' | 'grok';
 
 /** Transport types for MCP servers */
 export type TransportType = 'stdio' | 'http' | 'sse';
@@ -321,6 +321,28 @@ export interface CodexMcpServer {
   cwd?: string;
   env?: Record<string, string>;
   enabled?: boolean;
+}
+
+/** Grok CLI .grok/config.toml structure (partial) */
+export interface GrokConfig {
+  mcp_servers?: Record<string, GrokMcpServer>;
+  skills?: GrokSkillsConfig;
+}
+
+export interface GrokMcpServer {
+  command?: string;
+  args?: string[];
+  url?: string;  // HTTP/SSE URL
+  headers?: Record<string, string>;
+  env?: Record<string, string>;
+  enabled?: boolean;
+}
+
+/** Grok [skills] section. ACM registers catalog paths here instead of copying skills. */
+export interface GrokSkillsConfig {
+  paths?: string[];
+  ignore?: string[];
+  disabled?: string[];
 }
 
 /** Antigravity CLI .agents/mcp_config.json structure (partial) */

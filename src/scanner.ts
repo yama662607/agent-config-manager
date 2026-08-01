@@ -189,6 +189,20 @@ export function getSkillScanPaths(): SkillScanPath[] {
       sourcePrefix: 'plugin:antigravity',
       agent: 'antigravity',
     },
+    // Grok — user skills
+    {
+      baseDir: path.join(home, '.grok', 'skills'),
+      mode: 'direct',
+      sourcePrefix: 'user:grok',
+      agent: 'grok',
+    },
+    // Grok — plugin skills
+    {
+      baseDir: path.join(home, '.grok', 'plugins'),
+      mode: 'nested',
+      sourcePrefix: 'plugin:grok',
+      agent: 'grok',
+    },
   ];
 }
 
@@ -404,7 +418,8 @@ export async function scanAllMcps(): Promise<ScannedMcp[]> {
   // ---- Main config files ----
   const mainSources: ScannedMcp[] = [
     ...(await scanClaudeMcps(path.join(home, '.mcp.json'))),
-    ...(await scanCodexMcps(path.join(home, '.codex', 'config.toml'))),
+    ...(await scanTomlMcps(path.join(home, '.codex', 'config.toml'))),
+    ...(await scanTomlMcps(path.join(home, '.grok', 'config.toml'), 'grok')),
     ...(await scanAntigravityMcps(path.join(home, '.gemini', 'antigravity-cli', 'mcp_config.json'))),
     ...(await scanAntigravityMcps(path.join(home, '.gemini', 'antigravity', 'mcp_config.json'))),
     ...(await scanAntigravityMcps(path.join(home, '.gemini', 'antigravity-ide', 'mcp_config.json'))),
@@ -438,6 +453,9 @@ export async function scanAllMcps(): Promise<ScannedMcp[]> {
 
   // Antigravity plugins: ~/.gemini/config/plugins/*/.mcp.json
   await scanPluginMcpsDir(home, '.gemini/config/plugins', 'antigravity', 1, results, seenIds);
+
+  // Grok plugins: ~/.grok/plugins/*/.mcp.json (auto-trusted user scope)
+  await scanPluginMcpsDir(home, '.grok/plugins', 'grok', 1, results, seenIds);
 
   return results.sort((a, b) => a.id.localeCompare(b.id));
 }
@@ -616,7 +634,8 @@ async function scanClaudeMcps(configPath: string): Promise<ScannedMcp[]> {
   return results;
 }
 
-async function scanCodexMcps(configPath: string): Promise<ScannedMcp[]> {
+/** Codex and Grok share the same TOML `mcp_servers` layout. */
+async function scanTomlMcps(configPath: string, agent: 'codex' | 'grok' = 'codex'): Promise<ScannedMcp[]> {
   const results: ScannedMcp[] = [];
 
   try {
@@ -658,8 +677,8 @@ async function scanCodexMcps(configPath: string): Promise<ScannedMcp[]> {
       results.push({
         id: name,
         recipe,
-        source: 'codex',
-        agent: 'codex',
+        source: agent,
+        agent,
         enabled: server.enabled !== false,
       });
     }

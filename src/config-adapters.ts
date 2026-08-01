@@ -10,6 +10,8 @@ import type {
   CodexMcpServer,
   AntigravitySettings,
   AntigravityMcpServer,
+  GrokConfig,
+  GrokMcpServer,
   McpRecipe,
   ConfigReadResult,
 } from './types.js';
@@ -133,6 +135,8 @@ export async function readNativeConfig(target: TargetName, configPath: string): 
         return parseCodexConfig(raw);
       case 'antigravity':
         return parseAntigravityConfig(raw);
+      case 'grok':
+        return parseGrokConfig(raw);
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -169,6 +173,15 @@ function parseAntigravityConfig(raw: string): ConfigReadResult<AntigravitySettin
   }
 }
 
+function parseGrokConfig(raw: string): ConfigReadResult<GrokConfig> {
+  try {
+    const config = TOML.parse(raw) as GrokConfig;
+    return { config, exists: true };
+  } catch {
+    return { config: null, exists: true, raw };
+  }
+}
+
 // ============================================================================
 // Config Writing
 // ============================================================================
@@ -193,6 +206,9 @@ export async function writeNativeConfig(
       break;
     case 'antigravity':
       content = JSON.stringify(config, null, 2);
+      break;
+    case 'grok':
+      content = TOML.stringify(config as any);
       break;
   }
 
@@ -231,6 +247,9 @@ export async function addMcpToConfig(
     case 'antigravity':
       config = result.config ?? { mcpServers: {} };
       break;
+    case 'grok':
+      config = result.config ?? { mcp_servers: {} };
+      break;
   }
 
   const actualServerName = await addMcpServer(target, config, serverName, recipe);
@@ -266,6 +285,9 @@ export async function updateMcpInConfig(
       break;
     case 'antigravity':
       config = result.config ?? { mcpServers: {} };
+      break;
+    case 'grok':
+      config = result.config ?? { mcp_servers: {} };
       break;
   }
 
@@ -378,10 +400,27 @@ async function addMcpServer(
       const codexEnv = normalizeEnvMap(recipe.env);
       if (codexEnv) server.env = codexEnv;
 
-      const codexServerName = getCodexServerKey(config as CodexConfig, serverName);
+      const codexServerName = getTomlServerKey(config as CodexConfig, serverName);
       if (!config.mcp_servers) config.mcp_servers = {};
       (config as CodexConfig).mcp_servers![codexServerName] = server;
       return codexServerName;
+    }
+
+    case 'grok': {
+      const server: GrokMcpServer = { enabled: true };
+      if (recipe.url) {
+        server.url = recipe.url;
+      } else if (recipe.command) {
+        server.command = recipe.command;
+        if (recipe.args) server.args = recipe.args;
+      }
+      const grokEnv = normalizeEnvMap(recipe.env);
+      if (grokEnv) server.env = grokEnv;
+
+      const grokServerName = getTomlServerKey(config as GrokConfig, serverName);
+      if (!config.mcp_servers) config.mcp_servers = {};
+      (config as GrokConfig).mcp_servers![grokServerName] = server;
+      return grokServerName;
     }
 
     case 'antigravity': {
@@ -414,9 +453,17 @@ async function removeMcpServer(
       break;
 
     case 'codex': {
-      const codexServerName = resolveCodexServerKey(config as CodexConfig, serverName);
+      const codexServerName = resolveTomlServerKey(config as CodexConfig, serverName);
       if (config.mcp_servers && codexServerName) {
         delete config.mcp_servers[codexServerName];
+      }
+      break;
+    }
+
+    case 'grok': {
+      const grokServerName = resolveTomlServerKey(config as GrokConfig, serverName);
+      if (config.mcp_servers && grokServerName) {
+        delete config.mcp_servers[grokServerName];
       }
       break;
     }
@@ -444,9 +491,17 @@ async function setMcpEnabled(
       break;
 
     case 'codex': {
-      const codexServerName = resolveCodexServerKey(config as CodexConfig, serverName);
+      const codexServerName = resolveTomlServerKey(config as CodexConfig, serverName);
       if (codexServerName && config.mcp_servers?.[codexServerName]) {
         (config.mcp_servers[codexServerName] as CodexMcpServer).enabled = enabled;
+      }
+      break;
+    }
+
+    case 'grok': {
+      const grokServerName = resolveTomlServerKey(config as GrokConfig, serverName);
+      if (grokServerName && config.mcp_servers?.[grokServerName]) {
+        (config.mcp_servers[grokServerName] as GrokMcpServer).enabled = enabled;
       }
       break;
     }
@@ -526,6 +581,31 @@ export async function getMcpServers(
       return servers;
     }
 
+    case 'grok': {
+      const config = result.config as GrokConfig;
+      const servers: Record<string, { enabled: boolean; recipe?: McpRecipe }> = {};
+      if (config.mcp_servers) {
+        for (const [name, server] of Object.entries(config.mcp_servers)) {
+          const resolvedName = inferCanonicalServerName(name, server);
+          const recipe: McpRecipe = {};
+          if (server.url) {
+            recipe.url = server.url;
+            recipe.transport = 'http';
+          } else if (server.command) {
+            recipe.command = server.command;
+            recipe.args = server.args ?? [];
+            recipe.transport = 'stdio';
+          }
+          if (server.env) recipe.env = server.env;
+          servers[resolvedName] = {
+            enabled: server.enabled !== false,
+            recipe: server.enabled !== false ? recipe : undefined,
+          };
+        }
+      }
+      return servers;
+    }
+
     case 'antigravity': {
       const config = result.config as AntigravitySettings;
       const servers: Record<string, { enabled: boolean; recipe?: McpRecipe }> = {};
@@ -553,11 +633,14 @@ export async function getMcpServers(
   }
 }
 
-function inferCanonicalServerName(name: string, server: CodexMcpServer): string {
+/** Codex and Grok both key MCP servers by a TOML table name under mcp_servers. */
+type TomlMcpConfig = { mcp_servers?: Record<string, { command?: string; args?: string[] }> };
+
+function inferCanonicalServerName(name: string, server: CodexMcpServer | GrokMcpServer): string {
   return inferPackageIdFromRecipe(server.command, server.args) ?? name;
 }
 
-function resolveCodexServerKey(config: CodexConfig, requestedName: string): string | null {
+function resolveTomlServerKey(config: TomlMcpConfig, requestedName: string): string | null {
   if (!config.mcp_servers) return null;
   if (config.mcp_servers[requestedName]) return requestedName;
 
@@ -570,13 +653,13 @@ function resolveCodexServerKey(config: CodexConfig, requestedName: string): stri
   return null;
 }
 
-function getCodexServerKey(config: CodexConfig, serverName: string): string {
-  const existing = resolveCodexServerKey(config, serverName);
+function getTomlServerKey(config: TomlMcpConfig, serverName: string): string {
+  const existing = resolveTomlServerKey(config, serverName);
   if (existing) {
     return existing;
   }
 
-  const baseName = sanitizeCodexServerName(serverName);
+  const baseName = sanitizeTomlServerName(serverName);
   if (!config.mcp_servers?.[baseName]) {
     return baseName;
   }
@@ -589,7 +672,7 @@ function getCodexServerKey(config: CodexConfig, serverName: string): string {
   return `${baseName}_${suffix}`;
 }
 
-function sanitizeCodexServerName(serverName: string): string {
+function sanitizeTomlServerName(serverName: string): string {
   if (CODEX_SERVER_NAME_PATTERN.test(serverName)) {
     return serverName;
   }

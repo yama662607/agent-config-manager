@@ -146,6 +146,13 @@ acm doctor --fix # Attempt auto-fix
 | Claude Code | `.mcp.json` | ✓ | ✓ |
 | Codex | `.codex/config.toml` | ✓ | ✓ |
 | Antigravity CLI | `.gemini/antigravity/mcp_config.json` | ✓ | ✓ |
+| Grok CLI | `.grok/config.toml` | ✓ | ✓ |
+
+Target aliases for `--targets`: `claude`/`c`, `codex`/`x`, `antigravity`/`agy`/`a`/`g`, `grok`/`k`.
+
+Grok stores MCP servers in TOML under `[mcp_servers.<name>]`, like Codex, but uses `url` (not
+`httpUrl`) for HTTP/SSE transports and supports a native `enabled` flag. Editing a Grok config
+rewrites the whole TOML file, so comments in `config.toml` are not preserved (same as Codex).
 
 ## Manual Catalog Editing & Advanced Features
 
@@ -202,7 +209,10 @@ my-project/                   # Your project
 ├── .codex/skills/            # Codex skills
 │   └── <name>/SKILL.md
 ├── .gemini/antigravity/mcp_config.json  # Antigravity CLI config (edited directly)
-└── .agents/skills/           # Antigravity CLI skills
+├── .agents/skills/           # Antigravity CLI skills
+│   └── <name>/SKILL.md
+├── .grok/config.toml         # Grok CLI config (edited directly)
+└── .grok/skills/             # Grok CLI skills
     └── <name>/SKILL.md
 ```
 
@@ -212,7 +222,7 @@ my-project/                   # Your project
 - **Easy to explain** — "edits `.mcp.json`" vs "generates from manifest"
 - **Tool-agnostic** — remove `acm` and your project still works
 - **CI-friendly** — `acm validate` for checking, no drift detection needed
-- **Cross-agent** — manage MCP and skills across Claude Code, Codex, and Antigravity CLI
+- **Cross-agent** — manage MCP and skills across Claude Code, Codex, Antigravity CLI, and Grok CLI
 
 ## License
 

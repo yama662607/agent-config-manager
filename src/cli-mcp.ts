@@ -171,6 +171,7 @@ export async function mcpAdd(options: McpAddOptions): Promise<void> {
   }
 
   console.log('\nRun `acm mcp` to see the updated status.');
+  console.log('Already-running agent sessions keep their old server list until restarted.');
 }
 
 export interface McpEditOptions {
@@ -201,6 +202,7 @@ export async function mcpEdit(options: McpEditOptions): Promise<void> {
   }
 
   console.log('\nRun `acm mcp` to see the updated status.');
+  console.log('Already-running agent sessions keep their old server list until restarted.');
 }
 
 // ============================================================================
@@ -229,6 +231,7 @@ export async function mcpRemove(options: McpRemoveOptions): Promise<void> {
   }
 
   console.log('\nRun `acm mcp` to see the updated status.');
+  console.log('Already-running agent sessions keep their old server list until restarted.');
 }
 
 // ============================================================================
@@ -257,6 +260,7 @@ export async function mcpEnable(options: McpEnableOptions): Promise<void> {
   }
 
   console.log('\nRun `acm mcp` to see the updated status.');
+  console.log('Already-running agent sessions keep their old server list until restarted.');
 }
 
 // ============================================================================
@@ -285,6 +289,7 @@ export async function mcpDisable(options: McpDisableOptions): Promise<void> {
   }
 
   console.log('\nRun `acm mcp` to see the updated status.');
+  console.log('Already-running agent sessions keep their old server list until restarted.');
 }
 
 function normalizeRecipe(recipe?: McpRecipe): McpRecipe | undefined {

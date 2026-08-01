@@ -90,3 +90,20 @@ describe('Target parsing', () => {
     assert.throws(() => parseTargetList('gemini'), /Invalid target: 'gemini'/);
   });
 });
+
+describe('Scope flag aliases', () => {
+  // Feedback from a user: -g / -H / project scope were hard to tell apart, so
+  // each scope now has an explicit spelling as well.
+  const CLI = path.resolve('src/cli.ts');
+
+  it('documents the three scopes in help', async () => {
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const run = promisify(execFile);
+
+    const { stdout } = await run('npx', ['tsx', CLI, '--help']);
+    assert.match(stdout, /--project/);
+    assert.match(stdout, /-H, --home/);
+    assert.match(stdout, /-g, --catalog/);
+  });
+});

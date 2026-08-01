@@ -12,6 +12,8 @@ import { padRightWide, truncateWide } from './table-utils.js';
 // ============================================================================
 
 export interface McpListFilter {
+  /** Free text matched against id, display name and description. */
+  search?: string;
   category?: string;
   language?: string;
   popularity?: string;
@@ -59,6 +61,7 @@ export async function catalogMcpList(filter?: McpListFilter): Promise<void> {
   if (filter) {
     enriched = enriched.filter(e => {
       if (filter.category !== undefined && e.category !== filter.category) return false;
+      if (filter.search !== undefined && !matchesSearch(filter.search, [e.id, e.displayName, e.description])) return false;
       if (filter.language !== undefined && e.language !== filter.language) return false;
       if (filter.sourceType !== undefined && e.sourceType !== filter.sourceType) return false;
       if (filter.popularity !== undefined && e.popularity !== filter.popularity) return false;
@@ -507,6 +510,8 @@ export async function catalogSkillImport(options: CatalogSkillImportOptions): Pr
  */
 export interface SkillListFilter {
   plugin?: string;
+  /** Free text matched against id, display name, description and tags. */
+  search?: string;
   agent?: string;
   sourceType?: string;
   category?: string;
@@ -541,6 +546,7 @@ export async function catalogSkillList(filter?: SkillListFilter): Promise<void> 
   // Apply filters
   if (filter) {
     enriched = enriched.filter(e => {
+      if (filter.search !== undefined && !matchesSearch(filter.search, [e.id, e.displayName, e.description, ...(e.tags ?? [])])) return false;
       if (filter.plugin !== undefined && e.plugin !== filter.plugin) return false;
       if (filter.agent !== undefined && e.agent !== filter.agent) return false;
       if (filter.sourceType !== undefined && e.sourceType !== filter.sourceType) return false;
@@ -552,7 +558,7 @@ export async function catalogSkillList(filter?: SkillListFilter): Promise<void> 
   }
 
   if (enriched.length === 0) {
-    const filterDesc = filter ? describeFilter(filter) : '';
+    const filterDesc = filter ? ` (${describeFilter(filter)})` : '';
     console.log(`No matching skill entries${filterDesc}.\n`);
     console.log('Run `acm catalog skill add <name>` to add an entry.');
     return;
@@ -599,6 +605,12 @@ function agentAbbr(agent?: string): string {
     case 'grok': return 'grok';
     default: return agent || '-';
   }
+}
+
+/** Case-insensitive substring match across a record's searchable fields. */
+function matchesSearch(query: string, fields: Array<string | undefined>): boolean {
+  const needle = query.toLowerCase();
+  return fields.some((field) => field !== undefined && field.toLowerCase().includes(needle));
 }
 
 function describeFilter(filter: SkillListFilter): string {

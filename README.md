@@ -252,6 +252,18 @@ Grok stores MCP servers in TOML under `[mcp_servers.<name>]`, like Codex, but us
 `httpUrl`) for HTTP/SSE transports and supports a native `enabled` flag. Editing a Grok config
 rewrites the whole TOML file, so comments in `config.toml` are not preserved (same as Codex).
 
+## Scopes
+
+Every command acts on exactly one scope:
+
+| Scope | Flag | Acts on |
+|-------|------|---------|
+| Project | `--project` (default) | `.mcp.json`, `.claude/skills/` … under the current directory |
+| Home | `-H`, `--home` | Each agent's machine-wide config |
+| Catalog | `-g`, `--catalog` | The acm catalog itself |
+
+`--global` remains as an alias for `--catalog`.
+
 ## Machine-readable output
 
 `acm mcp` and `acm skill` accept `--json` for scripting:

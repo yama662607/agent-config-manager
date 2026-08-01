@@ -586,8 +586,9 @@ export async function catalogSkillList(filter?: SkillListFilter): Promise<void> 
 
   console.log(borderF);
   console.log();
-  console.log('Run `acm catalog skill show <id>` for details.');
-  console.log('Filter: --plugin <name>  --agent <name>  --source-type <type>  --category <cat>  --pinned  --deprecated');
+  console.log('Narrow this list: `acm skill list -g --search <text>`');
+  console.log('One entry:      `acm skill show -g <id>`');
+  console.log('More filters:   --plugin <name>  --agent <name>  --source-type <type>  --category <cat>  --pinned  --deprecated');
 }
 
 function agentAbbr(agent?: string): string {

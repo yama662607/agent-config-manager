@@ -62,8 +62,12 @@ Commands:
   validate    Validate current project configuration [DEPRECATED: Use "acm doctor --strict" instead]
   doctor      Run diagnostics and health checks
 
+Scopes (a command acts on exactly one):
+  --project           The current directory's config (default)
+  -H, --home          The machine-wide config of each agent
+  -g, --catalog       The acm catalog itself (aliases: --global)
+
 Options:
-  -g, --global  Operate on the global catalog (~/.acm/) instead of current project
   -t, --targets Comma-separated target list (claude, codex, agy, grok; aliases: c, x, a, g, k)
   -H, --home    Target the home directory (global configs), regardless of cwd
   -h, --help    Show this help message
@@ -367,7 +371,14 @@ async function main(): Promise<void> {
 // ============================================================================
 
 async function handleCatalog(argv: string[]): Promise<void> {
-  process.stderr.write('[DEPRECATED] "acm catalog" commands are deprecated. Please use commands with "-g" or "--global" flags instead.\n\n');
+  const [resourceArg, subcommandArg] = argv;
+  const replacement =
+    resourceArg && subcommandArg
+      ? `acm ${resourceArg} ${subcommandArg} -g`
+      : 'acm skill -g / acm mcp -g';
+  process.stderr.write(
+    `[DEPRECATED] "acm catalog" is deprecated. Use \`${replacement}\` instead.\n\n`
+  );
   if (argv.length === 0) {
     // Check if we can run TUI
     if (!isInteractive()) {
@@ -613,11 +624,16 @@ async function handleMcp(argv: string[]): Promise<void> {
   let i = 0;
   while (i < argv.length) {
     const arg = argv[i];
-    if (arg === '-g' || arg === '--global') {
+    if (arg === '-g' || arg === '--global' || arg === '--catalog') {
       isGlobal = true;
       i++;
-    } else if (arg === '-H' || arg === '--allow-home' || arg === '--allowHome') {
+    } else if (arg === '-H' || arg === '--allow-home' || arg === '--allowHome' || arg === '--home') {
       allowHome = true;
+      i++;
+    } else if (arg === '--project') {
+      // Explicit form of the default scope; accepted so the three scopes can be
+      // named symmetrically.
+      allowHome = false;
       i++;
     } else if (arg === '-v' || arg === '--verbose') {
       verbose = true;
@@ -816,11 +832,16 @@ async function handleSkill(argv: string[]): Promise<void> {
   let i = 0;
   while (i < argv.length) {
     const arg = argv[i];
-    if (arg === '-g' || arg === '--global') {
+    if (arg === '-g' || arg === '--global' || arg === '--catalog') {
       isGlobal = true;
       i++;
-    } else if (arg === '-H' || arg === '--allow-home' || arg === '--allowHome') {
+    } else if (arg === '-H' || arg === '--allow-home' || arg === '--allowHome' || arg === '--home') {
       allowHome = true;
+      i++;
+    } else if (arg === '--project') {
+      // Explicit form of the default scope; accepted so the three scopes can be
+      // named symmetrically.
+      allowHome = false;
       i++;
     } else if (arg === '-v' || arg === '--verbose') {
       verbose = true;

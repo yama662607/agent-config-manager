@@ -47,7 +47,7 @@ export async function skillStatus(
     return;
   }
 
-  printSkillStatus(status, verbose);
+  await printSkillStatus(status, verbose);
 }
 
 async function buildSkillStatus(projectRoot: string, allowHome: boolean = false): Promise<SkillWorkspaceStatus> {
@@ -100,7 +100,7 @@ async function buildSkillStatus(projectRoot: string, allowHome: boolean = false)
   };
 }
 
-function printSkillStatus(status: SkillWorkspaceStatus, verbose: boolean): void {
+async function printSkillStatus(status: SkillWorkspaceStatus, verbose: boolean): Promise<void> {
   console.log(`Project: ${status.projectRoot}`);
   console.log(`Skills (${status.totalCount} total, ${status.enabledCount} enabled):\n`);
 
@@ -117,7 +117,11 @@ function printSkillStatus(status: SkillWorkspaceStatus, verbose: boolean): void 
       console.log(`  Status: ${skill.enabled ? '✓' : '✗'} ${skill.enabled ? 'Enabled' : 'Disabled'}`);
       console.log(`  Targets: ${skill.targets.join(', ') || '(none)'}`);
       console.log(`  Source: ${skill.source}`);
-      console.log(`  Placement: ${formatPlacement(skill)}\n`);
+      console.log(`  Placement: ${formatPlacement(skill)}`);
+      for (const line of await describeResolution(status.projectRoot, skill)) {
+        console.log(`  ${line}`);
+      }
+      console.log();
     }
   } else {
     // Compact table output
@@ -152,6 +156,54 @@ function printSkillStatus(status: SkillWorkspaceStatus, verbose: boolean): void 
     console.log();
     console.log('Run `acm skill <name>` for details, `acm skill add` to add new skills.\n');
   }
+}
+
+/**
+ * Describe where a distributed skill actually resolves to.
+ *
+ * A link can pass through the state directory and again through the catalog
+ * before reaching real content, which makes "where does this file come from?"
+ * hard to answer during diagnosis.
+ */
+async function describeResolution(projectRoot: string, skill: SkillStatus): Promise<string[]> {
+  const fsp = await import('node:fs/promises');
+  const { getSkillDir } = await import('./skill-adapters.js');
+
+  const lines: string[] = [];
+
+  for (const target of skill.targets) {
+    const dir = getSkillDir(projectRoot, target, skill.name);
+    let stat;
+    try {
+      stat = await fsp.lstat(dir);
+    } catch {
+      continue;
+    }
+    if (!stat.isSymbolicLink()) continue;
+
+    const chain: string[] = [formatHomePath(dir)];
+    let current = dir;
+    for (let hop = 0; hop < 8; hop++) {
+      let next: string;
+      try {
+        next = await fsp.readlink(current);
+      } catch {
+        break;
+      }
+      const resolved = next.startsWith('/') ? next : path.resolve(path.dirname(current), next);
+      chain.push(formatHomePath(resolved));
+      current = resolved;
+      try {
+        if (!(await fsp.lstat(resolved)).isSymbolicLink()) break;
+      } catch {
+        break;
+      }
+    }
+
+    lines.push(`Resolves (${target}): ${chain.join(' -> ')}`);
+  }
+
+  return lines;
 }
 
 /** Short label for a placement state. */
@@ -328,6 +380,7 @@ Skill content for ${sanitizedId}.
   }
 
   console.log('\nRun `acm skill` to see the updated status.');
+  console.log('Already-running agent sessions keep their old skill list until restarted.');
 }
 
 // ============================================================================
@@ -407,6 +460,7 @@ export async function skillInstallFromGitHub(options: SkillInstallFromGitHubOpti
   }
 
   console.log('\nRun `acm skill` to see the updated status.');
+  console.log('Already-running agent sessions keep their old skill list until restarted.');
 }
 
 // ============================================================================
@@ -445,6 +499,7 @@ export async function skillRemove(options: SkillRemoveOptions): Promise<void> {
   }
 
   console.log('\nRun `acm skill` to see the updated status.');
+  console.log('Already-running agent sessions keep their old skill list until restarted.');
 }
 
 // ============================================================================

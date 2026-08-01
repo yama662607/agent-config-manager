@@ -252,6 +252,15 @@ Grok stores MCP servers in TOML under `[mcp_servers.<name>]`, like Codex, but us
 `httpUrl`) for HTTP/SSE transports and supports a native `enabled` flag. Editing a Grok config
 rewrites the whole TOML file, so comments in `config.toml` are not preserved (same as Codex).
 
+## Machine-readable output
+
+`acm mcp` and `acm skill` accept `--json` for scripting:
+
+```bash
+acm skill -H --json | jq '.skills[] | select(.placement.claude == "copy-stale") | .name'
+acm mcp --json | jq '.servers[].name'
+```
+
 ## Catalog Location
 
 `acm` keeps two directories apart:

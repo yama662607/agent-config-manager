@@ -607,6 +607,7 @@ async function handleMcp(argv: string[]): Promise<void> {
   let isGlobal = false;
   let allowHome = false;
   let verbose = false;
+  let json = false;
   const filteredArgs: string[] = [];
 
   let i = 0;
@@ -620,6 +621,9 @@ async function handleMcp(argv: string[]): Promise<void> {
       i++;
     } else if (arg === '-v' || arg === '--verbose') {
       verbose = true;
+      i++;
+    } else if (arg === '--json') {
+      json = true;
       i++;
     } else if (['--command', '--args', '--url', '--cwd', '--env', '--targets', '-t', '--file', '--display-name', '--description', '--name', '--category', '--language', '--popularity', '--source-type'].includes(arg)) {
       filteredArgs.push(arg);
@@ -650,7 +654,7 @@ async function handleMcp(argv: string[]): Promise<void> {
 
     // Check if we can run TUI
     if (!isInteractive()) {
-      await mcpStatus(verbose, allowHome);
+      await mcpStatus(verbose, allowHome, json);
       return;
     }
 
@@ -674,7 +678,7 @@ async function handleMcp(argv: string[]): Promise<void> {
       const filter = parseMcpListFilter(filteredArgs.slice(1));
       await catalogMcpList(Object.keys(filter).length > 0 ? filter : undefined);
     } else {
-      await mcpStatus(verbose, allowHome);
+      await mcpStatus(verbose, allowHome, json);
     }
     return;
   }
@@ -806,6 +810,7 @@ async function handleSkill(argv: string[]): Promise<void> {
   let isGlobal = false;
   let allowHome = false;
   let verbose = false;
+  let json = false;
   const filteredArgs: string[] = [];
 
   let i = 0;
@@ -819,6 +824,9 @@ async function handleSkill(argv: string[]): Promise<void> {
       i++;
     } else if (arg === '-v' || arg === '--verbose') {
       verbose = true;
+      i++;
+    } else if (arg === '--json') {
+      json = true;
       i++;
     } else if (['--command', '--args', '--url', '--cwd', '--env', '--targets', '-t', '--file', '--display-name', '--description', '--name', '--plugin', '--agent', '--source-type', '--category', '--search'].includes(arg)) {
       filteredArgs.push(arg);
@@ -849,7 +857,7 @@ async function handleSkill(argv: string[]): Promise<void> {
 
     // Check if we can run TUI
     if (!isInteractive()) {
-      await skillStatus(verbose, allowHome);
+      await skillStatus(verbose, allowHome, json);
       return;
     }
 
@@ -873,7 +881,7 @@ async function handleSkill(argv: string[]): Promise<void> {
       const filter = parseSkillListFilter(filteredArgs.slice(1));
       await catalogSkillList(Object.keys(filter).length > 0 ? filter : undefined);
     } else {
-      await skillStatus(verbose, allowHome);
+      await skillStatus(verbose, allowHome, json);
     }
     return;
   }
@@ -1260,6 +1268,8 @@ interface McpOptions {
   targets: TargetName[];
   noRegister: boolean;
   verbose?: boolean;
+  /** Machine-readable output for scripting. */
+  json?: boolean;
   command?: string;
   args?: string[];
   url?: string;
@@ -1294,6 +1304,9 @@ function parseMcpOptions(argv: string[], subcommand?: string): McpOptions {
       case '--verbose':
       case '-v':
         options.verbose = true;
+        break;
+      case '--json':
+        options.json = true;
         break;
       case '--command':
         options.command = nextVal(argv, i, arg);
@@ -1509,6 +1522,8 @@ interface SkillOptions {
   targets: TargetName[];
   noRegister: boolean;
   verbose?: boolean;
+  /** Machine-readable output for scripting. */
+  json?: boolean;
   /** Placement override for installed skill directories. */
   placement?: 'link' | 'copy';
   deprecated?: boolean;
@@ -1551,6 +1566,9 @@ function parseSkillOptions(argv: string[], subcommand?: string): SkillOptions {
       case '--verbose':
       case '-v':
         options.verbose = true;
+        break;
+      case '--json':
+        options.json = true;
         break;
       case '--as':
         options.skillName = nextVal(argv, i, arg);

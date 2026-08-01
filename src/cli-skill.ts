@@ -34,9 +34,18 @@ function formatHomePath(absolutePath: string): string {
 /**
  * Show skill status for the current project.
  */
-export async function skillStatus(verbose: boolean = false, allowHome: boolean = false): Promise<void> {
+export async function skillStatus(
+  verbose: boolean = false,
+  allowHome: boolean = false,
+  json: boolean = false
+): Promise<void> {
   const discovery = await discoverProject(process.cwd(), { allowHome });
   const status = await buildSkillStatus(discovery.root, allowHome);
+
+  if (json) {
+    console.log(JSON.stringify(status, null, 2));
+    return;
+  }
 
   printSkillStatus(status, verbose);
 }

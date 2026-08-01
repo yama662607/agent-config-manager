@@ -5,9 +5,11 @@
  */
 
 import { scanAllSkills, scanAllMcps, type ScannedSkill, type ScannedMcp } from './scanner.js';
-import { addSkill, normalizeSkillPackage, getSkill, addMcp, normalizeMcpPackage, getMcp } from './catalog.js';
+import { addSkillFromDir, normalizeSkillPackage, getSkill, addMcp, normalizeMcpPackage, getMcp } from './catalog.js';
 import { padRightWide, truncateWide } from './table-utils.js';
 import type { McpRecipe } from './types.js';
+import path from 'node:path';
+import fs from 'node:fs/promises';
 
 // ============================================================================
 // Helpers
@@ -151,14 +153,22 @@ async function importSkillsToCatalog(skills: ScannedSkill[]): Promise<ImportResu
         continue;
       }
 
-      // Parse and normalize
+      // Copy the whole skill directory, not just SKILL.md: skills routinely
+      // carry references/, scripts/ and assets/ that are useless without it.
+      const sourceDir = path.dirname(skill.skillPath);
       const entry = normalizeSkillPackage(skill.id, skill.content, {
         tags: ['scanned', skill.source],
       });
 
-      // Import to catalog (copies SKILL.md content)
-      await addSkill(entry, skill.content);
-      console.log(`  ✅ ${skill.id} (from ${skill.source})`);
+      await addSkillFromDir(skill.id, sourceDir, {
+        displayName: entry.displayName,
+        description: entry.description,
+        tags: entry.tags,
+        license: entry.license,
+      });
+
+      const extras = (await fs.readdir(sourceDir)).filter((name) => name !== 'SKILL.md').length;
+      console.log(`  ✅ ${skill.id} (from ${skill.source}${extras > 0 ? `, +${extras} files` : ''})`);
       added++;
     } catch (error: any) {
       console.error(`  ❌ ${skill.id}: ${error.message}`);

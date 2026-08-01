@@ -10,9 +10,18 @@ import { padRightWide, truncateWide, getStringWidth } from './table-utils.js';
 /**
  * Show MCP status for the current project.
  */
-export async function mcpStatus(verbose: boolean = false, allowHome: boolean = false): Promise<void> {
+export async function mcpStatus(
+  verbose: boolean = false,
+  allowHome: boolean = false,
+  json: boolean = false
+): Promise<void> {
   const discovery = await discoverProject(process.cwd(), { allowHome });
   const status = await buildMcpStatus(discovery.root, allowHome);
+
+  if (json) {
+    console.log(JSON.stringify(status, null, 2));
+    return;
+  }
 
   printMcpStatus(status, verbose);
 }

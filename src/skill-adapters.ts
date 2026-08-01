@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { TargetName, SkillRecipe } from './types.js';
+import { AGENT_GLOBAL_SKILLS_DIR, isHomeScope } from './agent-paths.js';
 
 // ============================================================================
 // Constants
@@ -72,8 +73,16 @@ export function validateSkillName(skillName: string): void {
  * - Claude: <project>/.claude/skills/
  * - Codex: <project>/.codex/skills/
  * - Antigravity: <project>/.agents/skills/
+ * - Grok: <project>/.grok/skills/
+ *
+ * The home directory is not a project: each target has its own machine-wide
+ * root, which for Antigravity is not simply `~` plus the project-relative path.
  */
 export function getSkillsDir(projectRoot: string, target: TargetName): string {
+  if (isHomeScope(projectRoot)) {
+    return AGENT_GLOBAL_SKILLS_DIR[target];
+  }
+
   switch (target) {
     case 'claude':
       return path.join(projectRoot, '.claude', 'skills');

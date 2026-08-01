@@ -40,6 +40,7 @@ import {
 } from './cli-skill.js';
 import { validate, doctor } from './cli-diagnostics.js';
 import { scanCommand } from './cli-scan.js';
+import { parseTargetList } from './target-utils.js';
 
 // ============================================================================
 // Constants
@@ -1396,32 +1397,12 @@ function parseCatalogSkillImportOptions(argv: string[]): CatalogSkillImportOptio
 }
 
 function parseTargets(input: string): TargetName[] {
-  const validTargets: TargetName[] = ['claude', 'codex', 'antigravity', 'grok'];
-  
-  const aliasMap: Record<string, TargetName> = {
-    claude: 'claude',
-    codex: 'codex',
-    agy: 'antigravity',
-    antigravity: 'antigravity',
-    c: 'claude',
-    x: 'codex',
-    a: 'antigravity',
-    g: 'antigravity',
-    grok: 'grok',
-    k: 'grok'
-  };
-
-  const targets = input.split(',').map((t) => {
-    const raw = t.trim().toLowerCase();
-    return aliasMap[raw] || (raw as TargetName);
-  });
-
-  for (const target of targets) {
-    if (!validTargets.includes(target)) {
-      process.stderr.write(`Invalid target: ${target}\n`);
-      process.stderr.write(`Valid targets: claude, codex, agy, grok (aliases: c, x, a, g, k)\n`);
-      process.exit(1);
-    }
+  let targets: TargetName[];
+  try {
+    targets = parseTargetList(input);
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exit(1);
   }
 
   return targets;

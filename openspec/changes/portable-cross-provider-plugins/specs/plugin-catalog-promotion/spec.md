@@ -42,7 +42,7 @@ ACM SHALL inspect overlap with existing Catalog worktree changes but MUST NOT st
 - **THEN** the intended working-tree files are present but ACM has not staged, committed, pushed, or changed publication allowlists
 
 ### Requirement: Catalog isolation tests
-The implementation test suite SHALL model Catalog paths as symbolic links to a separate temporary Git repository and SHALL assert byte-level and Git-status isolation. Tests MUST use a temporary HOME and MUST NOT access the user's real ACM or Kanade Catalog state.
+The implementation test suite SHALL model Catalog paths as symbolic links to a separate temporary Git repository and SHALL assert byte-level and Git-status isolation. Tests MUST use a temporary HOME and MUST NOT access the user's real ACM or linked Catalog state.
 
 #### Scenario: Lifecycle isolation integration test
 - **WHEN** the integration suite runs import, plan, install, update, and uninstall against fake provider CLIs

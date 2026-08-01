@@ -6,7 +6,7 @@ The product intent is broader than wrapping native CLIs: a plugin authored for o
 
 The supported initial providers are Claude Code, Codex, and Antigravity. Gemini CLI is deprecated for this project and is not a compatibility target. “Antigravity” has multiple surfaces; this design targets AGY CLI for user scope and `.agents/plugins` for workspace scope. The shared IDE/2.0 location at `~/.gemini/config/plugins` is a discovery source, not an install target in this change.
 
-The current shared Catalog is especially sensitive. `~/.acm/plugins`, `plugins-metadata.toml`, and related paths can be symbolic links into the separate `~/.kanade/catalogs` Git repository. That repository can already contain unrelated changes, and its `PUBLIC.txt` controls separate publication behavior. Normal plugin workflows must not mutate it.
+The current shared Catalog is especially sensitive. `~/.acm/plugins`, `plugins-metadata.toml`, and related paths can be symbolic links into a separate Git repository outside the project. That repository can already contain unrelated changes, and its `PUBLIC.txt` controls separate publication behavior. Normal plugin workflows must not mutate it.
 
 ## Goals / Non-Goals
 
@@ -73,7 +73,7 @@ The existing linked `plugins-metadata.toml` remains read-only. Discovery can rec
 
 Import preserves files, executable permissions, and internal symbolic links. It excludes `.git` metadata and does not follow links that escape the source root. Escaping links are a blocking import finding unless an explicit future policy handles them. Sensitive candidates—environment files, credentials, private keys, absolute user paths, caches, `node_modules`, build output, and unclear redistribution/license material—appear in the report. Non-interactive operations require `--allow-sensitive` where the operation would retain or publish a flagged file.
 
-Tests always use a temporary HOME and temporary Catalog links. They must never scan or mutate the developer's actual `~/.acm` or `~/.kanade` trees.
+Tests always use a temporary HOME and temporary Catalog links. They must never scan or mutate the developer's actual `~/.acm` tree or linked Catalog.
 
 ### 5. Make compatibility a first-class plan
 

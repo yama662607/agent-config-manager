@@ -2,7 +2,7 @@
  * Enhanced Skill Metadata Store
  *
  * Reads/writes ~/.acm/skills-metadata.toml — a separate file from catalog.toml
- * to avoid breaking the kanade project which shares the same catalog.toml schema.
+ * to avoid breaking external tools that share the same catalog.toml schema.
  */
 
 import fs from 'node:fs/promises';

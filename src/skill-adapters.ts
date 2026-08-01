@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import type { TargetName, SkillRecipe } from './types.js';
 
@@ -8,6 +9,24 @@ import type { TargetName, SkillRecipe } from './types.js';
 
 /** Maximum size for skill files (1MB) */
 const MAX_SKILL_SIZE = 1024 * 1024;
+
+/**
+ * How a skill directory is placed into a target.
+ * - `link`: symlink to the catalog directory (no duplication, cannot drift)
+ * - `copy`: independent copy (portable, but drifts once the catalog changes)
+ */
+export type SkillPlacementMode = 'link' | 'copy';
+
+/**
+ * Default placement for a destination.
+ *
+ * Home directories are personal, so linking keeps every provider pointing at the
+ * one catalog copy. Project directories are shared through version control, where
+ * an absolute symlink would break for anyone else, so those are copied.
+ */
+export function defaultPlacementMode(projectRoot: string): SkillPlacementMode {
+  return path.resolve(projectRoot) === os.homedir() ? 'link' : 'copy';
+}
 
 /** Valid skill name pattern: alphanumeric, hyphens, underscores, dots */
 const SKILL_NAME_PATTERN = /^[a-zA-Z0-9._-]+$/;
@@ -177,20 +196,35 @@ export async function addSkillToConfig(
 }
 
 /**
- * Copy an entire skill directory (SKILL.md plus any references/, scripts/,
+ * Place an entire skill directory (SKILL.md plus any references/, scripts/,
  * assets/, etc. subdirectories) from a source directory into a project's
  * target skill directory.
+ *
+ * - `link` creates a symlink to the catalog directory. The catalog stays the
+ *   single source of truth, so the destination can never drift.
+ * - `copy` duplicates the directory, which keeps the destination portable
+ *   (a repository can be shared without the symlink target existing).
+ *
+ * An existing destination is replaced either way.
  */
 export async function copySkillDirToConfig(
   projectRoot: string,
   target: TargetName,
   skillId: string,
-  sourceDir: string
+  sourceDir: string,
+  mode: SkillPlacementMode = 'copy'
 ): Promise<void> {
   validateSkillName(skillId);
 
   const skillDir = getSkillDir(projectRoot, target, skillId);
   await fs.mkdir(path.dirname(skillDir), { recursive: true });
+  await fs.rm(skillDir, { recursive: true, force: true });
+
+  if (mode === 'link') {
+    await fs.symlink(path.resolve(sourceDir), skillDir);
+    return;
+  }
+
   await fs.cp(sourceDir, skillDir, { recursive: true, force: true });
 }
 

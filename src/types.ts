@@ -384,7 +384,18 @@ export interface SkillStatus {
   enabled: boolean;
   targets: TargetName[];
   source: 'catalog' | 'inline';
+  /** How the skill is placed per target (symlink, fresh copy, stale copy, ...) */
+  placement?: Partial<Record<TargetName, SkillPlacementState>>;
 }
+
+/** How an installed skill relates to its catalog source (see skill-placement.ts) */
+export type SkillPlacementState =
+  | 'linked'
+  | 'copy-current'
+  | 'copy-stale'
+  | 'broken-link'
+  | 'unlinked'
+  | 'missing';
 
 /** Overall skill status for the project */
 export interface SkillWorkspaceStatus {

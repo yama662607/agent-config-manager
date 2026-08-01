@@ -4,6 +4,8 @@ import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { discoverProject } from './project-discovery.js';
 import { loadCatalog } from './catalog.js';
+import os from 'node:os';
+import { describeCatalogSource, getCatalogDir, getConfigPath } from './acm-config.js';
 
 const execAsync = promisify(exec);
 
@@ -158,7 +160,24 @@ export async function doctor(options: DoctorOptions): Promise<{ hasErrors: boole
     }
   }
 
-  // 3. Environment checks
+  // 3. Catalog location
+  console.log('\n[Catalog]');
+  const catalogDir = getCatalogDir();
+  const source = describeCatalogSource();
+  const sourceLabel = {
+    env: 'ACM_CATALOG_DIR',
+    config: `catalog_dir in ${formatHome(getConfigPath())}`,
+    default: 'default (state directory)',
+  }[source];
+  try {
+    await fs.access(catalogDir);
+    console.log(`  ✓ ${formatHome(catalogDir)}  [${sourceLabel}]`);
+  } catch {
+    console.log(`  ✗ ${formatHome(catalogDir)} does not exist  [${sourceLabel}]`);
+    hasWarnings = true;
+  }
+
+  // 4. Environment checks
   console.log('\n[Environment]');
   const hasNode = await checkCommand('node', 'Node.js');
   const hasNpm = await checkCommand('npm', 'npm');
@@ -230,4 +249,12 @@ async function commandExists(command: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** Collapse the home directory to `~` for display. */
+function formatHome(absolutePath: string): string {
+  const home = os.homedir();
+  return absolutePath === home || absolutePath.startsWith(home + '/')
+    ? '~' + absolutePath.slice(home.length)
+    : absolutePath;
 }

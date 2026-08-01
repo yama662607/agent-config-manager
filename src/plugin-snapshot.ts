@@ -9,8 +9,10 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import * as TOML from 'smol-toml';
+import { getCatalogDir } from './acm-config.js';
 
-const SNAPSHOT_PATH = path.join(os.homedir(), '.acm', 'plugin-snapshot.toml');
+const SNAPSHOT_FILE = 'plugin-snapshot.toml';
+const snapshotPath = () => path.join(getCatalogDir(), SNAPSHOT_FILE);
 
 export interface PluginSnapshot {
   scannedAt: string;
@@ -18,16 +20,16 @@ export interface PluginSnapshot {
 }
 
 export async function saveSnapshot(snapshot: PluginSnapshot): Promise<void> {
-  const dir = path.dirname(SNAPSHOT_PATH);
+  const dir = path.dirname(snapshotPath());
   await fs.mkdir(dir, { recursive: true });
-  const tmp = SNAPSHOT_PATH + '.tmp';
+  const tmp = snapshotPath() + '.tmp';
   await fs.writeFile(tmp, TOML.stringify(snapshot as any), 'utf8');
-  await fs.rename(tmp, SNAPSHOT_PATH);
+  await fs.rename(tmp, snapshotPath());
 }
 
 export async function loadSnapshot(): Promise<PluginSnapshot | null> {
   try {
-    const raw = await fs.readFile(SNAPSHOT_PATH, 'utf8');
+    const raw = await fs.readFile(snapshotPath(), 'utf8');
     const parsed = TOML.parse(raw) as any;
     if (!parsed?.plugins) return null;
     return parsed as PluginSnapshot;

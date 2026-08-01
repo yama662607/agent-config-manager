@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import YAML from 'yaml';
 import * as TOML from 'smol-toml';
+import { getCatalogDir } from './acm-config.js';
 import type {
   CatalogFile,
   McpCatalogEntry,
@@ -63,12 +64,10 @@ const CATALOG_LOCK_FILE = 'catalog.lock';
 // ============================================================================
 
 /**
- * Get the catalog directory path for the current platform.
+ * Get the catalog directory path.
+ * Configurable via ACM_CATALOG_DIR or `catalog_dir` in ~/.acm/config.toml.
  */
-export function getCatalogDir(): string {
-  const home = os.homedir();
-  return path.join(home, CATALOG_DIR);
-}
+export { getCatalogDir };
 
 /**
  * Get the catalog file path.

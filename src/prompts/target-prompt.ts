@@ -44,6 +44,12 @@ export async function promptTargets(preselected: TargetName[] = []): Promise<Tar
         message: 'Antigravity CLI',
         hint: '.agents/mcp_config.json',
         enabled: preselected.includes('antigravity') || allSelected
+      },
+      {
+        name: 'grok',
+        message: 'Grok CLI',
+        hint: '.grok/config.toml',
+        enabled: preselected.includes('grok') || allSelected
       }
     ],
     validate: (value: TargetName[]) => value.length > 0 || 'Please select at least one target'

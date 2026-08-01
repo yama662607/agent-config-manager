@@ -109,7 +109,7 @@ export async function catalogMcpList(filter?: McpListFilter): Promise<void> {
 
 function sourceAbbr(sourceType?: string, agent?: string): string {
   if (!sourceType) return '-';
-  const a = agent === 'claude' ? 'Cl' : agent === 'codex' ? 'Cx' : agent === 'antigravity' ? 'Ag' : (agent || '??');
+  const a = agent === 'claude' ? 'Cl' : agent === 'codex' ? 'Cx' : agent === 'antigravity' ? 'Ag' : agent === 'grok' ? 'Gk' : (agent || '??');
   return sourceType === 'plugin' ? `p:${a}` : sourceType === 'config' ? `c:${a}` : sourceType;
 }
 
@@ -595,6 +595,7 @@ function agentAbbr(agent?: string): string {
     case 'claude': return 'claude';
     case 'codex': return 'codex';
     case 'antigravity': return 'antigrav';
+    case 'grok': return 'grok';
     default: return agent || '-';
   }
 }

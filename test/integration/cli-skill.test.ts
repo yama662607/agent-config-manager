@@ -191,3 +191,37 @@ describe('Skill CLI Integration Tests', () => {
     });
   });
 });
+
+describe('Linking into a repository', () => {
+  const REPO_DIR = path.join(os.tmpdir(), 'acm-link-warning-test');
+  const CATALOG_DIR = path.join(REPO_DIR, 'catalog');
+
+  it('warns when a link would store an absolute path in a repository', async () => {
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const run = promisify(execFile);
+
+    await fs.rm(REPO_DIR, { recursive: true, force: true });
+    const project = path.join(REPO_DIR, 'project');
+    await fs.mkdir(project, { recursive: true });
+    await run('git', ['init', '-q'], { cwd: project });
+
+    const skillDir = path.join(CATALOG_DIR, 'skills', 'warn-probe');
+    await fs.mkdir(skillDir, { recursive: true });
+    await fs.writeFile(
+      path.join(skillDir, 'SKILL.md'),
+      '---\nname: warn-probe\ndescription: probe\n---\n\nbody\n'
+    );
+
+    const cli = path.resolve('src/cli.ts');
+    const { stdout, stderr } = await run(
+      'npx',
+      ['tsx', cli, 'skill', 'add', 'warn-probe', '-t', 'claude', '--link'],
+      { cwd: project, env: { ...process.env, ACM_CATALOG_DIR: CATALOG_DIR, NODE_ENV: 'test' } }
+    );
+
+    assert.match(stdout + stderr, /linking into a git repository/);
+
+    await fs.rm(REPO_DIR, { recursive: true, force: true });
+  });
+});

@@ -250,6 +250,34 @@ function centerWide(str: string, width: number): string {
   return ' '.repeat(left) + str + ' '.repeat(right);
 }
 
+/**
+ * A symlink inside a repository records an absolute path from this machine.
+ * Anyone else who clones it — and any container or remote runtime — gets a
+ * dangling link, so say so at the moment it happens.
+ */
+async function warnIfLinkingIntoRepository(
+  projectRoot: string,
+  placement: SkillPlacementMode
+): Promise<void> {
+  if (placement !== 'link') return;
+
+  const fsp = await import('node:fs/promises');
+  const os = await import('node:os');
+  if (path.resolve(projectRoot) === os.homedir()) return;
+
+  try {
+    await fsp.access(path.join(projectRoot, '.git'));
+  } catch {
+    return; // Not a repository; nothing to warn about.
+  }
+
+  console.warn(
+    'Warning: linking into a git repository. The link stores an absolute path,\n' +
+    '         so it breaks for anyone else who clones it and inside containers.\n' +
+    '         Use --copy for anything shared or run in a sandbox.'
+  );
+}
+
 // ============================================================================
 // Grok Helpers
 // ============================================================================
@@ -363,6 +391,7 @@ Skill content for ${sanitizedId}.
   const discovery = await discoverProject(process.cwd(), { allowHome: options.allowHome });
   const { addSkillToConfig, copySkillDirToConfig, getSkillDir } = await import('./skill-adapters.js');
   const placement = options.placement ?? defaultPlacementMode(discovery.root);
+  await warnIfLinkingIntoRepository(discovery.root, placement);
 
   for (const target of options.targets) {
     if (target === 'grok') {

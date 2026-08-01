@@ -8,6 +8,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import * as TOML from 'smol-toml';
+import { getCatalogDir } from './acm-config.js';
 import type { PluginEntry, PluginsMetadataFile } from './types.js';
 
 // ============================================================================
@@ -23,7 +24,7 @@ const METADATA_VERSION = '1.0';
 // ============================================================================
 
 export function getPluginsMetadataPath(): string {
-  return path.join(os.homedir(), METADATA_DIR, METADATA_FILE);
+  return path.join(getCatalogDir(), METADATA_FILE);
 }
 
 /** Validate plugin name to prevent path traversal. */
@@ -37,7 +38,7 @@ export function validatePluginName(name: string): void {
 }
 
 export function getPluginInstallDir(name: string): string {
-  return path.join(os.homedir(), METADATA_DIR, 'plugins', name);
+  return path.join(getCatalogDir(), 'plugins', name);
 }
 
 // ============================================================================

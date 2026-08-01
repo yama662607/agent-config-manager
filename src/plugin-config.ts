@@ -8,8 +8,9 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import * as TOML from 'smol-toml';
+import { getConfigPath } from './acm-config.js';
 
-const CONFIG_PATH = path.join(os.homedir(), '.acm', 'config.toml');
+const CONFIG_PATH = getConfigPath();
 
 interface PluginConfig {
   /** Additional plugin scan paths (absolute) */
@@ -34,14 +35,26 @@ export async function loadPluginConfig(): Promise<PluginConfig> {
   }
 }
 
+/**
+ * Write plugin settings, preserving every other key in the file.
+ * config.toml is shared with the rest of the tool (catalog_dir lives there too),
+ * so a plugin scan must not drop settings it does not know about.
+ */
 export async function savePluginConfig(config: PluginConfig): Promise<void> {
   const dir = path.dirname(CONFIG_PATH);
   await fs.mkdir(dir, { recursive: true });
+
+  let existing: Record<string, unknown> = {};
+  try {
+    existing = TOML.parse(await fs.readFile(CONFIG_PATH, 'utf8')) as Record<string, unknown>;
+  } catch {
+    // No file yet, or unreadable: start from an empty document.
+  }
+
+  const merged = { ...existing, ...config };
   const tmp = CONFIG_PATH + '.tmp';
-  await fs.writeFile(tmp, TOML.stringify(config as any), 'utf8');
+  await fs.writeFile(tmp, TOML.stringify(merged as any), 'utf8');
   await fs.rename(tmp, CONFIG_PATH);
 }
 
-export function getConfigPath(): string {
-  return CONFIG_PATH;
-}
+

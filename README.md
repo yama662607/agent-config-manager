@@ -218,6 +218,31 @@ Grok stores MCP servers in TOML under `[mcp_servers.<name>]`, like Codex, but us
 `httpUrl`) for HTTP/SSE transports and supports a native `enabled` flag. Editing a Grok config
 rewrites the whole TOML file, so comments in `config.toml` are not preserved (same as Codex).
 
+## Catalog Location
+
+`acm` keeps two directories apart:
+
+| Directory | Contents | Configurable |
+|-----------|----------|--------------|
+| `~/.acm/` | This tool's own state: `config.toml`, `catalog.lock` | No |
+| Catalog | Your skills, MCP recipes and plugins | **Yes** |
+
+By default the catalog *is* `~/.acm/`. Point it elsewhere when you want to keep the
+catalog in its own version-controlled repository:
+
+```bash
+# Per invocation or per shell
+export ACM_CATALOG_DIR=~/Code/my-catalog
+```
+
+```toml
+# ~/.acm/config.toml — persistent
+catalog_dir = "~/Code/my-catalog"
+```
+
+Resolution order: `ACM_CATALOG_DIR`, then `catalog_dir`, then `~/.acm`. `acm doctor`
+shows which one is in effect.
+
 ## Manual Catalog Editing & Advanced Features
 
 The `acm` catalog database (`~/.acm/catalog.toml`) is saved in TOML format, making it incredibly easy for developers to open and edit manually in any text editor, or to import configuration blocks directly.

@@ -17,6 +17,7 @@ import {
 import type { PluginEntry, TargetName } from './types.js';
 import { padRightWide, truncateWide } from './table-utils.js';
 import { AGENT_PLUGIN_DIR } from './agent-paths.js';
+import { getCatalogDir } from './acm-config.js';
 import { parseTargetList } from './target-utils.js';
 
 const home = os.homedir();
@@ -620,7 +621,7 @@ export async function pluginDoctor(): Promise<void> {
   }
 
   // 3. Check acm management dir for orphans
-  const acmPluginDir = path.join(os.homedir(), '.acm', 'plugins');
+  const acmPluginDir = path.join(getCatalogDir(), 'plugins');
   try {
     const acmPlugins = await fs.readdir(acmPluginDir, { withFileTypes: true });
     for (const entry of acmPlugins) {

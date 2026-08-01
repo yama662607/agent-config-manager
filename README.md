@@ -277,6 +277,32 @@ catalog_dir = "~/Code/my-catalog"
 Resolution order: `ACM_CATALOG_DIR`, then `catalog_dir`, then `~/.acm`. `acm doctor`
 shows which one is in effect.
 
+## Publishing a Public Subset
+
+A personal catalog holds far more than should ever be public, so publishing is opt-in.
+Only entries named in an allowlist are staged, and the bundle is refused outright if it
+contains secrets or personal paths.
+
+```bash
+# PUBLIC.txt in the catalog — one <kind>/<name> per line
+#   skill/my-public-skill
+#   mcp/my-server
+#   plugin/my-plugin
+
+acm catalog publish                          # stage into <catalog>/dist-public
+acm catalog publish --to ~/Code/public-repo  # sync into a git working tree
+acm catalog publish --to ~/Code/public-repo --dry-run
+acm catalog publish --to ~/Code/public-repo --commit
+```
+
+`--commit` commits in the destination; it never pushes. Files the bundle needs but the
+catalog does not hold as entries (README, LICENSE, `.gitignore`, setup docs) go in
+`<catalog>/publish/bundle/` and are copied verbatim over the staged root.
+
+Development-only content (`.git`, `node_modules`, `tests`, `evals`, `__pycache__`,
+`VERIFICATION.md`, …) is dropped, and symlinked entries are dereferenced so the bundle
+stands alone.
+
 ## Manual Catalog Editing & Advanced Features
 
 The `acm` catalog database (`~/.acm/catalog.toml`) is saved in TOML format, making it incredibly easy for developers to open and edit manually in any text editor, or to import configuration blocks directly.

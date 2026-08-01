@@ -115,6 +115,16 @@ SKILL Subcommands:
   install <id>      Install a skill from skills.directory registry
   search <query>    Search the skills.directory registry
   remove <id>        Remove a skill entry from catalog
+
+PUBLISH:
+  publish                  Stage the allowlisted subset (PUBLIC.txt) of the catalog
+    --allowlist <file>     Use a different allowlist
+    --to <repo>            Sync the staged bundle into a git working tree
+    --commit               Commit in the destination (never pushes)
+    --dry-run              Report what would be synced
+
+  Publishing is opt-in: only entries listed in the allowlist are staged, and the
+  bundle is refused if it contains secrets or personal paths.
 `;
 
 const MCP_HELP = `acm mcp - Manage MCP servers for the current project or global catalog
@@ -378,9 +388,25 @@ async function handleCatalog(argv: string[]): Promise<void> {
   const subcommand = argv[1];
   const args = argv.slice(2);
 
+  if (resource === 'publish') {
+    const publishArgs = argv.slice(1);
+    const valueOf = (flag: string): string | undefined => {
+      const i = publishArgs.indexOf(flag);
+      return i >= 0 && i + 1 < publishArgs.length ? publishArgs[i + 1] : undefined;
+    };
+    const { catalogPublish } = await import('./cli-publish.js');
+    await catalogPublish({
+      allowlist: valueOf('--allowlist'),
+      to: valueOf('--to'),
+      commit: publishArgs.includes('--commit'),
+      dryRun: publishArgs.includes('--dry-run'),
+    });
+    return;
+  }
+
   if (resource !== 'mcp' && resource !== 'skill') {
     process.stderr.write(`Unknown catalog resource: ${resource}\n`);
-    process.stderr.write('Use "acm catalog mcp" or "acm catalog skill" for management.\n');
+    process.stderr.write('Use "acm catalog mcp", "acm catalog skill" or "acm catalog publish".\n');
     process.exitCode = 1;
     return;
   }

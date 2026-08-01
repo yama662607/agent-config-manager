@@ -2,7 +2,7 @@
 
 - [ ] 1.1 Confirm the repository Git workflow with the user, then create the agreed dedicated `feature/portable-plugin-management` branch/worktree without touching the existing untracked `.agents/` content.
 - [ ] 1.2 Capture a pre-change `just check` result and add a test helper that creates a temporary HOME, provider config roots, and a separate temporary Git-backed Catalog with symlinked ACM paths.
-- [ ] 1.3 Add filesystem guards so plugin tests and fake adapters fail if they attempt to access the real HOME, `~/.acm`, or the linked Catalog.
+- [ ] 1.3 Add filesystem guards so plugin tests and fake adapters fail if they attempt to access the real HOME, `~/.acm`, or the linked Catalog repository.
 - [ ] 1.4 Record the locally verified provider CLI versions and fixture schemas used by tests; keep version/capability assumptions inside adapters rather than global conditionals.
 
 ## 2. Canonical Model and Local State (PR 1)
@@ -88,4 +88,4 @@
 - [ ] 10.3 Document legacy read-only reconstruction, Gemini removal, Antigravity migration, Catalog symlink safety, and explicit Catalog promotion operations.
 - [ ] 10.4 Run targeted unit/integration suites after each implementation slice, then run `just check` from a temporary-HOME-safe environment and resolve all failures.
 - [ ] 10.5 Perform read-only/dry-run smoke checks against locally available real CLIs without installing plugins or mutating the real HOME; record unavailable CLIs as skipped capability evidence.
-- [ ] 10.6 Review the final diff against all four capability specs, verify no real `the linked Catalog` or existing `.agents/` content changed, and leave an implementation handoff noting completed tasks and deferred non-goals.
+- [ ] 10.6 Review the final diff against all four capability specs, verify no the real linked Catalog or existing `.agents/` content changed, and leave an implementation handoff noting completed tasks and deferred non-goals.

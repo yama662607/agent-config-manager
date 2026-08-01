@@ -221,3 +221,40 @@ describe('Linked catalog entries (development repositories)', () => {
     assert.ok(await digestSkillDir(loopDir));
   });
 });
+
+describe('Stable link targets', () => {
+  it('points a link at the state directory when it leads to the same content', async () => {
+    // ~/.acm/skills/<id> is a fixed address in front of a movable catalog.
+    // Distributions should hold that address, not the catalog's current path.
+    const home = os.homedir();
+    const stateSkills = path.join(home, '.acm', 'skills');
+
+    let entrance: string;
+    try {
+      entrance = await fs.realpath(stateSkills);
+    } catch {
+      return; // No state directory on this machine; nothing to assert.
+    }
+
+    const catalogSkill = path.join(entrance, 'link-target-probe');
+    await fs.mkdir(catalogSkill, { recursive: true });
+    await fs.writeFile(path.join(catalogSkill, 'SKILL.md'), '---\nname: probe\n---\n\nx\n');
+
+    try {
+      await copySkillDirToConfig(PROJECT_DIR, 'claude', 'link-target-probe', catalogSkill, 'link');
+
+      const link = await fs.readlink(getSkillDir(PROJECT_DIR, 'claude', 'link-target-probe'));
+      assert.strictEqual(link, path.join(stateSkills, 'link-target-probe'));
+    } finally {
+      await fs.rm(catalogSkill, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to the source path when the state directory differs', async () => {
+    const sourceDir = await writeCatalogSkill();
+    await copySkillDirToConfig(PROJECT_DIR, 'claude', SKILL_ID, sourceDir, 'link');
+
+    const link = await fs.readlink(getSkillDir(PROJECT_DIR, 'claude', SKILL_ID));
+    assert.strictEqual(link, path.resolve(sourceDir));
+  });
+});

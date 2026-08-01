@@ -16,6 +16,8 @@ import {
 } from './plugins-metadata.js';
 import type { PluginEntry, TargetName } from './types.js';
 import { padRightWide, truncateWide } from './table-utils.js';
+import { AGENT_PLUGIN_DIR } from './agent-paths.js';
+import { parseTargetList } from './target-utils.js';
 
 const home = os.homedir();
 
@@ -23,24 +25,11 @@ const home = os.homedir();
 // Agent-specific paths
 // ============================================================================
 
-/** Agent-native plugin directories (where agents discover plugins) */
-const AGENT_PLUGIN_DIR: Record<TargetName, string> = {
-  claude: path.join(home, '.claude', 'plugins'),
-  codex: path.join(home, '.codex', '.tmp', 'plugins', 'plugins'),
-  antigravity: path.join(home, '.gemini', 'config', 'plugins'),
-  grok: path.join(home, '.grok', 'plugins'),
-};
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
-const TARGET_ALIASES: Record<string, TargetName> = {
-  c: 'claude', claude: 'claude',
-  x: 'codex', codex: 'codex',
-  a: 'antigravity', agy: 'antigravity', antigravity: 'antigravity', g: 'antigravity',
-  k: 'grok', grok: 'grok',
-};
 
 function parseFlag(argv: string[], ...names: string[]): boolean {
   return argv.some(a => names.includes(a));
@@ -49,16 +38,7 @@ function parseFlag(argv: string[], ...names: string[]): boolean {
 function parseTargets(argv: string[]): TargetName[] {
   const idx = argv.findIndex(a => a === "--target" || a === "-t");
   if (idx < 0 || idx + 1 >= argv.length) return ["claude"];
-  const raw = argv[idx + 1];
-  if (raw === 'all') return ['claude', 'codex', 'antigravity', 'grok'];
-  return raw.split(',').map(t => {
-    const trimmed = t.trim().toLowerCase();
-    const resolved = TARGET_ALIASES[trimmed];
-    if (!resolved) {
-      throw new Error(`Invalid target: '${trimmed}'. Valid: claude(c), codex(x), antigravity(a,g,agy), grok(k), all`);
-    }
-    return resolved;
-  });
+  return parseTargetList(argv[idx + 1]);
 }
 
 // ============================================================================

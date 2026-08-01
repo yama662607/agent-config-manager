@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import type { ProjectDiscovery, NativeConfigPath, TargetName } from './types.js';
+import { AGENT_GLOBAL_MCP_CONFIG, AGENT_GLOBAL_SKILLS_DIR, isHomeScope } from './agent-paths.js';
 
 // ============================================================================
 // Constants
@@ -73,7 +74,10 @@ async function resolveNativeConfigPaths(projectRoot: string): Promise<Map<Target
   const targets = new Map<TargetName, NativeConfigPath>();
 
   for (const [target, relativePath] of Object.entries(TARGET_CONFIG_PATHS) as [TargetName, string][]) {
-    const fullPath = path.join(projectRoot, relativePath);
+    // The home directory is not a project: targets have their own global roots.
+    const fullPath = isHomeScope(projectRoot)
+      ? AGENT_GLOBAL_MCP_CONFIG[target]
+      : path.join(projectRoot, relativePath);
     let exists = false;
 
     try {
@@ -108,7 +112,9 @@ export function getRelativeConfigPath(projectRoot: string, target: TargetName): 
  * Get the relative path from project root to the skills directory.
  */
 export function getSkillsPath(projectRoot: string, target: TargetName): string {
-  return path.join(projectRoot, TARGET_SKILLS_PATHS[target]);
+  return isHomeScope(projectRoot)
+    ? AGENT_GLOBAL_SKILLS_DIR[target]
+    : path.join(projectRoot, TARGET_SKILLS_PATHS[target]);
 }
 
 /**

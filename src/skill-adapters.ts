@@ -230,7 +230,7 @@ export async function copySkillDirToConfig(
   await fs.rm(skillDir, { recursive: true, force: true });
 
   if (mode === 'link') {
-    await fs.symlink(path.resolve(sourceDir), skillDir);
+    await fs.symlink(await stableLinkTarget(sourceDir, skillId), skillDir);
     return;
   }
 
@@ -377,4 +377,30 @@ async function getGrokRegisteredSkills(
   }
 
   return skills;
+}
+
+/**
+ * Prefer the state directory as the link target when it leads to the same
+ * content.
+ *
+ * `~/.acm/skills/<id>` is a fixed address; the catalog behind it can be moved.
+ * Pointing thousands of distributed links at that address instead of at the
+ * catalog's current location means relocating the catalog only requires
+ * updating one symlink rather than every distribution.
+ *
+ * Falls back to the source path whenever the state directory does not resolve
+ * to the very same directory.
+ */
+async function stableLinkTarget(sourceDir: string, skillId: string): Promise<string> {
+  const resolved = path.resolve(sourceDir);
+  const viaState = path.join(os.homedir(), '.acm', 'skills', skillId);
+
+  try {
+    const [a, b] = await Promise.all([fs.realpath(viaState), fs.realpath(resolved)]);
+    if (a === b) return viaState;
+  } catch {
+    // No state-directory entrance, or it points somewhere else.
+  }
+
+  return resolved;
 }

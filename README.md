@@ -99,6 +99,40 @@ acm skill remove my-skill --targets claude -H
 acm skill add my-skill --targets claude -H
 ```
 
+### Developing a skill in its own repository
+
+A catalog entry can be a symlink to a directory you develop elsewhere, so an edit in
+that repository reaches every provider with no further step:
+
+```bash
+# Register ~/Code/Skills/my-skill in the catalog without copying it
+acm skill link ~/Code/Skills/my-skill
+
+# Give it a different catalog id
+acm skill link ~/Code/Skills/my-skill --as other-name
+
+# Distribute as usual; home targets link by default
+acm skill add my-skill --targets claude,codex -H
+
+# Remove the catalog link. The source directory is never touched.
+acm skill unlink my-skill
+```
+
+The chain is `development repository → catalog → provider`. Copying a linked entry into
+a project dereferences it, so the project keeps real content and stays portable.
+
+### Refreshing drifted copies
+
+```bash
+# Re-place every copy that no longer matches the catalog
+acm skill update --targets claude,codex -H
+
+# Just one skill
+acm skill update my-skill --targets claude -H
+```
+
+Links and Grok registrations cannot drift, so they are left alone.
+
 ### Grok skills are registered, not copied
 
 Grok discovers skills from directories listed under `[skills] paths` in `config.toml`, and it

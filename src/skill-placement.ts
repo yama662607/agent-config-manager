@@ -36,12 +36,34 @@ export interface SkillPlacement {
  */
 export async function digestSkillDir(dir: string): Promise<string | null> {
   const files: string[] = [];
+  const visited = new Set<string>();
 
   async function walk(current: string): Promise<void> {
+    // Resolve so a directory reached twice through different links is walked once.
+    let real: string;
+    try {
+      real = await fs.realpath(current);
+    } catch {
+      return; // Dangling link
+    }
+    if (visited.has(real)) return;
+    visited.add(real);
+
     const entries = await fs.readdir(current, { withFileTypes: true });
     for (const entry of entries) {
       const full = path.join(current, entry.name);
-      if (entry.isDirectory()) {
+
+      // Follow links: a skill linked into the catalog from a development
+      // repository must hash to the same value as a copy of its contents,
+      // otherwise identical content is reported as drifted.
+      let stat;
+      try {
+        stat = await fs.stat(full);
+      } catch {
+        continue; // Dangling link
+      }
+
+      if (stat.isDirectory()) {
         await walk(full);
       } else {
         files.push(full);
@@ -50,6 +72,8 @@ export async function digestSkillDir(dir: string): Promise<string | null> {
   }
 
   try {
+    const rootStat = await fs.stat(dir);
+    if (!rootStat.isDirectory()) return null;
     await walk(dir);
   } catch {
     return null;
@@ -61,12 +85,7 @@ export async function digestSkillDir(dir: string): Promise<string | null> {
   for (const file of files) {
     hash.update(path.relative(dir, file));
     hash.update('\0');
-    const stat = await fs.lstat(file);
-    if (stat.isSymbolicLink()) {
-      hash.update(await fs.readlink(file));
-    } else {
-      hash.update(await fs.readFile(file));
-    }
+    hash.update(await fs.readFile(file));
     hash.update('\0');
   }
 

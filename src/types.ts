@@ -137,6 +137,27 @@ export interface EnhancedSkillMetadata {
   deprecated?: boolean;
   /** Flexible user-defined tags */
   tags?: string[];
+
+  // --- Provenance: where this skill came from, so it can be revisited ---
+
+  /** Upstream location, e.g. a GitHub tree URL. */
+  sourceUrl?: string;
+  /** How sourceUrl is interpreted. Only `github` supports update checks today. */
+  sourceKind?: 'github' | 'local' | 'plugin' | 'unknown';
+  /**
+   * The exact upstream revision this copy came from — a commit SHA, not a
+   * branch name. A moving ref cannot answer "has upstream changed since?".
+   */
+  sourceRef?: string;
+  /** When this copy was taken from upstream. */
+  installedAt?: string;
+  /** When upstream was last compared against this copy. */
+  upstreamCheckedAt?: string;
+  /**
+   * Deliberately modified from upstream. Update checks report it as forked
+   * rather than behind, so an intentional divergence stops nagging.
+   */
+  forked?: boolean;
 }
 
 /** Top-level structure of skills-metadata.toml */

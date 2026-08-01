@@ -510,6 +510,8 @@ export async function catalogSkillImport(options: CatalogSkillImportOptions): Pr
  */
 export interface SkillListFilter {
   plugin?: string;
+  /** Substring matched against the recorded upstream URL. */
+  source?: string;
   /** Free text matched against id, display name, description and tags. */
   search?: string;
   agent?: string;
@@ -539,6 +541,7 @@ export async function catalogSkillList(filter?: SkillListFilter): Promise<void> 
       category: meta?.category,
       pinned: meta?.pinned,
       deprecated: meta?.deprecated,
+      sourceUrl: meta?.sourceUrl,
       tags: entry.tags,
     };
   });
@@ -547,6 +550,7 @@ export async function catalogSkillList(filter?: SkillListFilter): Promise<void> 
   if (filter) {
     enriched = enriched.filter(e => {
       if (filter.search !== undefined && !matchesSearch(filter.search, [e.id, e.displayName, e.description, ...(e.tags ?? [])])) return false;
+      if (filter.source !== undefined && !(e.sourceUrl ?? '').includes(filter.source)) return false;
       if (filter.plugin !== undefined && e.plugin !== filter.plugin) return false;
       if (filter.agent !== undefined && e.agent !== filter.agent) return false;
       if (filter.sourceType !== undefined && e.sourceType !== filter.sourceType) return false;

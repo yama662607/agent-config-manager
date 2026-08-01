@@ -466,6 +466,11 @@ export async function skillInstallFromGitHub(options: SkillInstallFromGitHubOpti
     console.log(`✓ Added to catalog: ${entry.id}`);
   }
 
+  // Record where this came from, so it can be revisited when upstream moves.
+  if (options.addToCatalog !== false) {
+    await recordProvenance(name, options.githubUrl);
+  }
+
   // Add to project
   const discovery = await discoverProject(process.cwd(), { allowHome: options.allowHome });
   const { addSkillToConfig, copySkillDirToConfig, getSkillDir } = await import('./skill-adapters.js');
@@ -747,6 +752,12 @@ export interface SkillMetaOptions {
   /** Replaces the existing tags. */
   tags?: string[];
   category?: string;
+  /** Upstream location this skill came from. */
+  source?: string;
+  /** Upstream revision this copy corresponds to. */
+  ref?: string;
+  /** Deliberately diverged from upstream. */
+  forked?: boolean;
 }
 
 /**
@@ -794,6 +805,20 @@ export async function skillMeta(options: SkillMetaOptions): Promise<void> {
     entry.category = options.category;
     changes.push(`category = ${options.category}`);
   }
+  if (options.source !== undefined) {
+    const { classifySource } = await import('./skill-provenance.js');
+    entry.sourceUrl = options.source;
+    entry.sourceKind = classifySource(options.source);
+    changes.push(`sourceUrl = ${options.source}`);
+  }
+  if (options.ref !== undefined) {
+    entry.sourceRef = options.ref;
+    changes.push(`sourceRef = ${options.ref}`);
+  }
+  if (options.forked !== undefined) {
+    entry.forked = options.forked;
+    changes.push(`forked = ${options.forked}`);
+  }
 
   if (changes.length === 0) {
     const current = data.skills[options.skillId];
@@ -812,4 +837,137 @@ export async function skillMeta(options: SkillMetaOptions): Promise<void> {
   await saveSkillsMetadata(data);
 
   console.log(`Updated ${options.skillId}: ${changes.join(', ')}`);
+}
+
+
+// ============================================================================
+// Provenance
+// ============================================================================
+
+/**
+ * Store the origin of a freshly installed skill, resolving the branch to the
+ * commit it actually points at right now. A branch name alone cannot answer
+ * "has upstream changed since?" later.
+ */
+async function recordProvenance(skillId: string, sourceUrl: string): Promise<void> {
+  const { loadSkillsMetadata, saveSkillsMetadata } = await import('./skills-metadata.js');
+  const { classifySource, parseGitHubSource, resolveLatestCommit } = await import('./skill-provenance.js');
+
+  const data = await loadSkillsMetadata();
+  const entry = { ...(data.skills[skillId] ?? {}) };
+
+  entry.sourceUrl = sourceUrl;
+  entry.sourceKind = classifySource(sourceUrl);
+  entry.installedAt = new Date().toISOString();
+
+  const source = parseGitHubSource(sourceUrl);
+  if (source) {
+    try {
+      entry.sourceRef = await resolveLatestCommit(source);
+      entry.upstreamCheckedAt = entry.installedAt;
+      console.log(`  Recorded upstream revision ${entry.sourceRef.slice(0, 8)}`);
+    } catch (error) {
+      // Not fatal: the URL is still worth keeping even without a revision.
+      console.warn(
+        `  Could not resolve the upstream revision: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  data.skills[skillId] = entry;
+  await saveSkillsMetadata(data);
+}
+
+// ============================================================================
+// Outdated Command
+// ============================================================================
+
+export interface SkillOutdatedOptions {
+  /** Limit to one skill. */
+  skillName?: string;
+  json?: boolean;
+  /** Include entries whose origin cannot be checked. */
+  all?: boolean;
+}
+
+/**
+ * Compare catalog entries against their recorded upstream.
+ *
+ * This is the only skill command that reaches the network, and only for
+ * entries that recorded a GitHub source.
+ */
+export async function skillOutdated(options: SkillOutdatedOptions): Promise<void> {
+  const { loadSkillsMetadata, saveSkillsMetadata } = await import('./skills-metadata.js');
+  const { listSkills } = await import('./catalog.js');
+  const { checkUpstreamAll } = await import('./skill-provenance.js');
+
+  const catalogIds = new Set((await listSkills()).map((s) => s.id));
+  const data = await loadSkillsMetadata();
+
+  let entries = Object.entries(data.skills)
+    .filter(([id]) => catalogIds.has(id))
+    .map(([id, meta]) => ({ id, meta }));
+
+  if (options.skillName) {
+    entries = entries.filter((e) => e.id === options.skillName);
+    if (entries.length === 0) {
+      console.error(`Not in the catalog, or no metadata recorded: ${options.skillName}\n`);
+      process.exitCode = 1;
+      return;
+    }
+  } else if (!options.all) {
+    // Checking 600 entries with no recorded source would be all noise.
+    entries = entries.filter((e) => e.meta.sourceUrl !== undefined);
+  }
+
+  if (entries.length === 0) {
+    console.log('No skill records an upstream source yet.');
+    console.log('Record one with `acm skill meta <id> --source <url>`.');
+    return;
+  }
+
+  const results = await checkUpstreamAll(entries);
+  results.sort((a, b) => a.skillId.localeCompare(b.skillId));
+
+  // Remember when each answer was obtained.
+  const now = new Date().toISOString();
+  for (const result of results) {
+    if (result.state === 'up-to-date' || result.state === 'behind') {
+      data.skills[result.skillId] = { ...data.skills[result.skillId], upstreamCheckedAt: now };
+    }
+  }
+  await saveSkillsMetadata(data);
+
+  if (options.json) {
+    console.log(JSON.stringify({ checkedAt: now, results }, null, 2));
+    return;
+  }
+
+  const labels: Record<string, string> = {
+    'up-to-date': '✓ up to date',
+    behind: '● behind',
+    forked: '~ forked',
+    unknown: '? unknown',
+    unreachable: '! unreachable',
+  };
+
+  for (const result of results) {
+    const suffix =
+      result.state === 'behind'
+        ? `  ${result.recordedRef?.slice(0, 8)} -> ${result.latestRef?.slice(0, 8)}`
+        : result.detail
+          ? `  (${result.detail})`
+          : '';
+    console.log(`${labels[result.state].padEnd(15)} ${result.skillId}${suffix}`);
+  }
+
+  const behind = results.filter((r) => r.state === 'behind');
+  console.log();
+  if (behind.length === 0) {
+    console.log('Nothing is behind its upstream.');
+  } else {
+    console.log(`${behind.length} skill${behind.length === 1 ? '' : 's'} behind upstream.`);
+    console.log('Review the upstream changes, then re-install what you want to take:');
+    console.log(`  acm skill install <url> --force`);
+  }
 }

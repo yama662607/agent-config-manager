@@ -118,7 +118,8 @@ SKILL Subcommands:
   link <path>       Register a directory in the catalog as a symlink (no copy)
   unlink <id>       Remove a catalog link (never touches real content)
   update [id]       Re-place distributed copies that drifted from the catalog
-  meta <id>         Show or edit catalog metadata (deprecated, pinned, tags)
+  meta <id>         Show or edit catalog metadata (deprecated, pinned, tags, source)
+  outdated [id]     Check recorded GitHub sources for upstream changes
   install <id>      Install a skill from skills.directory registry
   search <query>    Search the skills.directory registry
   remove <id>        Remove a skill entry from catalog
@@ -642,7 +643,7 @@ async function handleMcp(argv: string[]): Promise<void> {
     } else if (arg === '--json') {
       json = true;
       i++;
-    } else if (['--command', '--args', '--url', '--cwd', '--env', '--targets', '-t', '--file', '--display-name', '--description', '--name', '--category', '--language', '--popularity', '--source-type', '--search'].includes(arg)) {
+    } else if (['--command', '--args', '--url', '--cwd', '--env', '--targets', '-t', '--file', '--display-name', '--description', '--name', '--category', '--language', '--popularity', '--source-type', '--search', '--source'].includes(arg)) {
       filteredArgs.push(arg);
       if (i + 1 < argv.length) {
         filteredArgs.push(argv[++i]);
@@ -976,6 +977,12 @@ async function handleSkill(argv: string[]): Promise<void> {
       }
       break;
 
+    case 'outdated': {
+      const { skillOutdated } = await import('./cli-skill.js');
+      await skillOutdated({ skillName: options.skillId, json, all: options.all });
+      break;
+    }
+
     case 'meta': {
       if (options.skillId === undefined) {
         process.stderr.write(
@@ -991,6 +998,9 @@ async function handleSkill(argv: string[]): Promise<void> {
         pinned: options.pinned,
         tags: options.tags,
         category: options.category,
+        source: options.source,
+        ref: options.ref,
+        forked: options.forked,
       });
       break;
     }
@@ -1552,6 +1562,10 @@ interface SkillOptions {
   pinned?: boolean;
   tags?: string[];
   category?: string;
+  source?: string;
+  ref?: string;
+  forked?: boolean;
+  all?: boolean;
   // GitHub URL install options
   githubUrl?: string;
   skillName?: string;
@@ -1616,6 +1630,23 @@ function parseSkillOptions(argv: string[], subcommand?: string): SkillOptions {
         options.category = nextVal(argv, i, arg);
         i++;
         break;
+      case '--source':
+        options.source = nextVal(argv, i, arg);
+        i++;
+        break;
+      case '--ref':
+        options.ref = nextVal(argv, i, arg);
+        i++;
+        break;
+      case '--forked':
+        options.forked = true;
+        break;
+      case '--no-forked':
+        options.forked = false;
+        break;
+      case '--all':
+        options.all = true;
+        break;
       case '--link':
         options.placement = 'link';
         break;
@@ -1678,6 +1709,7 @@ function parseSkillListFilter(argv: string[]): SkillListFilter {
       case '--source-type': filter.sourceType = nextVal(argv, i++, '--source-type'); break;
       case '--category':    filter.category = nextVal(argv, i++, '--category'); break;
       case '--search':      filter.search = nextVal(argv, i++, '--search'); break;
+      case '--source':      filter.source = nextVal(argv, i++, '--source'); break;
       case '--pinned':      filter.pinned = true; break;
       case '--deprecated':  filter.deprecated = true; break;
     }

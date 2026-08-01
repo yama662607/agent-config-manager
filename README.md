@@ -252,6 +252,45 @@ Grok stores MCP servers in TOML under `[mcp_servers.<name>]`, like Codex, but us
 `httpUrl`) for HTTP/SSE transports and supports a native `enabled` flag. Editing a Grok config
 rewrites the whole TOML file, so comments in `config.toml` are not preserved (same as Codex).
 
+## Where a skill came from
+
+A downloaded skill has an upstream that keeps moving. `acm` records where each one
+came from so it can be revisited later.
+
+```bash
+# install records the URL and resolves the branch to the commit it points at now
+acm skill install https://github.com/owner/repo/tree/main/skills/thing
+
+# record it for something already in the catalog
+acm skill meta thing --source https://github.com/owner/repo/tree/main/skills/thing --ref <sha>
+
+# a deliberate divergence stops being reported as behind
+acm skill meta thing --forked
+
+# find everything from one upstream
+acm skill list -g --source owner/repo
+
+# compare recorded sources against upstream
+acm skill outdated
+acm skill outdated --json
+```
+
+| State | Meaning |
+|-------|---------|
+| `up to date` | The recorded revision is what upstream is at |
+| `behind` | Upstream moved since this copy was taken |
+| `forked` | Deliberately modified; not tracking upstream |
+| `unknown` | No source recorded, no revision recorded, or an origin that cannot be queried |
+| `unreachable` | Network or API failure |
+
+Only GitHub sources can be checked. Plugin bundles, application-bundled skills and
+hand-written ones are recorded but reported as `unknown`.
+
+`acm skill outdated` is the only skill command that uses the network, and it reports
+rather than applies: review the upstream changes, then re-install what you want.
+It uses the `gh` CLI when available (5000 requests/hour, private repositories work)
+and falls back to the unauthenticated API (60/hour).
+
 ## Scopes
 
 Every command acts on exactly one scope:

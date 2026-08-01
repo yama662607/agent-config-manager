@@ -391,6 +391,8 @@ export interface SkillStatus {
 /** How an installed skill relates to its catalog source (see skill-placement.ts) */
 export type SkillPlacementState =
   | 'linked'
+  /** Grok only: read straight from a registered catalog path, never copied. */
+  | 'registered'
   | 'copy-current'
   | 'copy-stale'
   | 'broken-link'

@@ -109,6 +109,9 @@ SKILL Subcommands:
   show <id>         Show details of a specific skill entry
   add <name>        Add a new skill entry to catalog from file
   import <path>     Import a skill from a local directory
+  link <path>       Register a directory in the catalog as a symlink (no copy)
+  unlink <id>       Remove a catalog link (never touches real content)
+  update [id]       Re-place distributed copies that drifted from the catalog
   install <id>      Install a skill from skills.directory registry
   search <query>    Search the skills.directory registry
   remove <id>        Remove a skill entry from catalog
@@ -915,6 +918,39 @@ async function handleSkill(argv: string[]): Promise<void> {
       }
       break;
 
+    case 'link': {
+      if (options.skillId === undefined) {
+        process.stderr.write('Usage: acm skill link <path> [--as <id>]\n');
+        process.exitCode = 1;
+        return;
+      }
+      const { skillLink } = await import('./cli-skill.js');
+      await skillLink({ sourcePath: options.skillId, skillId: options.skillName });
+      break;
+    }
+
+    case 'unlink': {
+      if (options.skillId === undefined) {
+        process.stderr.write('Usage: acm skill unlink <id>\n');
+        process.exitCode = 1;
+        return;
+      }
+      const { skillUnlink } = await import('./cli-skill.js');
+      await skillUnlink(options.skillId);
+      break;
+    }
+
+    case 'update': {
+      const { skillUpdate } = await import('./cli-skill.js');
+      await skillUpdate({
+        skillName: options.skillId,
+        targets: options.targets,
+        allowHome,
+        placement: options.placement,
+      });
+      break;
+    }
+
     case 'import':
       if (options.skillId === undefined) {
         process.stderr.write('Usage: acm skill import <path> [options]\n');
@@ -1451,6 +1487,10 @@ function parseSkillOptions(argv: string[], subcommand?: string): SkillOptions {
       case '--verbose':
       case '-v':
         options.verbose = true;
+        break;
+      case '--as':
+        options.skillName = nextVal(argv, i, arg);
+        i++;
         break;
       case '--link':
         options.placement = 'link';

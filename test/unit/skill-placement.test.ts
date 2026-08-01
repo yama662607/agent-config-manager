@@ -164,3 +164,60 @@ describe('Skill placement', () => {
     );
   });
 });
+
+describe('Linked catalog entries (development repositories)', () => {
+  const DEV_DIR = path.join(TEST_DIR, 'dev-repo', 'demo-skill');
+
+  it('digests a linked directory the same as a copy of its contents', async () => {
+    // A skill linked into the catalog from a development repository must hash
+    // to the same value as a plain copy, or identical content reads as drifted.
+    await fs.mkdir(path.join(DEV_DIR, 'references'), { recursive: true });
+    await fs.writeFile(path.join(DEV_DIR, 'SKILL.md'), '---\nname: demo-skill\n---\n\nbody\n');
+    await fs.writeFile(path.join(DEV_DIR, 'references', 'notes.md'), 'notes\n');
+
+    const linkDir = path.join(TEST_DIR, 'catalog-link');
+    await fs.mkdir(linkDir, { recursive: true });
+    const linked = path.join(linkDir, 'demo-skill');
+    await fs.symlink(DEV_DIR, linked);
+
+    assert.strictEqual(await digestSkillDir(linked), await digestSkillDir(DEV_DIR));
+  });
+
+  it('follows a symlinked file inside a skill directory', async () => {
+    const skillDir = path.join(TEST_DIR, 'partial-link');
+    await fs.mkdir(skillDir, { recursive: true });
+    const realFile = path.join(TEST_DIR, 'real-SKILL.md');
+    await fs.writeFile(realFile, 'linked content\n');
+    await fs.symlink(realFile, path.join(skillDir, 'SKILL.md'));
+
+    const plainDir = path.join(TEST_DIR, 'plain');
+    await fs.mkdir(plainDir, { recursive: true });
+    await fs.writeFile(path.join(plainDir, 'SKILL.md'), 'linked content\n');
+
+    assert.strictEqual(await digestSkillDir(skillDir), await digestSkillDir(plainDir));
+  });
+
+  it('reports copy-current for a copy of a linked catalog entry', async () => {
+    await fs.mkdir(DEV_DIR, { recursive: true });
+    await fs.writeFile(path.join(DEV_DIR, 'SKILL.md'), '---\nname: demo-skill\n---\n\nbody\n');
+
+    const catalogDir = path.join(TEST_DIR, 'catalog2');
+    await fs.mkdir(catalogDir, { recursive: true });
+    const catalogEntry = path.join(catalogDir, SKILL_ID);
+    await fs.symlink(DEV_DIR, catalogEntry);
+
+    await copySkillDirToConfig(PROJECT_DIR, 'claude', SKILL_ID, catalogEntry, 'copy');
+
+    const placement = await inspectSkillPlacement(PROJECT_DIR, 'claude', SKILL_ID, catalogEntry);
+    assert.strictEqual(placement.state, 'copy-current');
+  });
+
+  it('survives a symlink loop without hanging', async () => {
+    const loopDir = path.join(TEST_DIR, 'loop');
+    await fs.mkdir(loopDir, { recursive: true });
+    await fs.writeFile(path.join(loopDir, 'SKILL.md'), 'x\n');
+    await fs.symlink(loopDir, path.join(loopDir, 'self'));
+
+    assert.ok(await digestSkillDir(loopDir));
+  });
+});

@@ -234,7 +234,10 @@ export async function copySkillDirToConfig(
     return;
   }
 
-  await fs.cp(sourceDir, skillDir, { recursive: true, force: true });
+  // dereference: a catalog entry may itself be a link to a development
+  // repository, and a copy must be real content — that is the whole point of
+  // copying into a project rather than linking.
+  await fs.cp(sourceDir, skillDir, { recursive: true, force: true, dereference: true });
 }
 
 /**

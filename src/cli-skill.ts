@@ -474,3 +474,171 @@ export async function skillDisable(options: SkillDisableOptions): Promise<void> 
   // For skills, disable = remove since there's no enabled flag
   await skillRemove(options);
 }
+
+// ============================================================================
+// Link Command
+// ============================================================================
+
+export interface SkillLinkOptions {
+  /** Path to the skill directory that stays the source of truth. */
+  sourcePath: string;
+  /** Catalog id. Defaults to the source directory name. */
+  skillId?: string;
+}
+
+/**
+ * Register a skill in the catalog as a symlink instead of a copy.
+ *
+ * The source stays where it is — typically its own development repository — and
+ * the catalog points at it. Combined with linked distribution, an edit in the
+ * development repository reaches every provider with no further action.
+ */
+export async function skillLink(options: SkillLinkOptions): Promise<void> {
+  const fsp = await import('node:fs/promises');
+  const { getSkillsDir: getCatalogSkillsDir } = await import('./catalog.js');
+
+  const sourcePath = path.resolve(options.sourcePath);
+  const skillId = options.skillId ?? path.basename(sourcePath);
+
+  try {
+    validateSkillName(skillId);
+  } catch (error) {
+    console.error(`Invalid skill name: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+    return;
+  }
+
+  try {
+    const stat = await fsp.stat(sourcePath);
+    if (!stat.isDirectory()) throw new Error('not a directory');
+  } catch {
+    console.error(`Not a directory: ${sourcePath}\n`);
+    process.exitCode = 1;
+    return;
+  }
+
+  try {
+    await fsp.access(path.join(sourcePath, 'SKILL.md'));
+  } catch {
+    console.error(`No SKILL.md in ${formatHomePath(sourcePath)}\n`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const catalogSkillsDir = getCatalogSkillsDir();
+  const destination = path.join(catalogSkillsDir, skillId);
+
+  // Refuse to replace real content; a link is cheap to redo, a copy is not.
+  try {
+    const existing = await fsp.lstat(destination);
+    if (!existing.isSymbolicLink()) {
+      console.error(
+        `${skillId} already exists in the catalog as a directory.\n` +
+        `Remove it first if you want to link ${formatHomePath(sourcePath)} instead.\n`
+      );
+      process.exitCode = 1;
+      return;
+    }
+    await fsp.rm(destination);
+  } catch {
+    // Nothing there yet.
+  }
+
+  await fsp.mkdir(catalogSkillsDir, { recursive: true });
+  await fsp.symlink(sourcePath, destination);
+
+  console.log(`Linked into the catalog: ${skillId} -> ${formatHomePath(sourcePath)}`);
+  console.log(`\nRun \`acm skill add ${skillId} -t <targets> -H\` to distribute it.`);
+}
+
+/**
+ * Remove a catalog link. Only links are removed, never real content.
+ */
+export async function skillUnlink(skillId: string): Promise<void> {
+  const fsp = await import('node:fs/promises');
+  const { getSkillDir: getCatalogSkillDir } = await import('./catalog.js');
+
+  try {
+    validateSkillName(skillId);
+  } catch (error) {
+    console.error(`Invalid skill name: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const destination = getCatalogSkillDir(skillId);
+
+  let stat;
+  try {
+    stat = await fsp.lstat(destination);
+  } catch {
+    console.error(`Not in the catalog: ${skillId}\n`);
+    process.exitCode = 1;
+    return;
+  }
+
+  if (!stat.isSymbolicLink()) {
+    console.error(`${skillId} is real content in the catalog, not a link. Not removing it.\n`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const target = await fsp.readlink(destination);
+  await fsp.rm(destination);
+  console.log(`Unlinked from the catalog: ${skillId} (source left at ${formatHomePath(target)})`);
+}
+
+// ============================================================================
+// Update Command
+// ============================================================================
+
+export interface SkillUpdateOptions {
+  /** Limit to one skill. Defaults to every skill that has drifted. */
+  skillName?: string;
+  targets: TargetName[];
+  allowHome?: boolean;
+  placement?: SkillPlacementMode;
+}
+
+/**
+ * Refresh distributions that no longer match the catalog.
+ *
+ * Only copies can drift, so linked and registered placements are left alone.
+ */
+export async function skillUpdate(options: SkillUpdateOptions): Promise<void> {
+  const discovery = await discoverProject(process.cwd(), { allowHome: options.allowHome });
+  const { copySkillDirToConfig } = await import('./skill-adapters.js');
+  const { inspectSkillPlacement } = await import('./skill-placement.js');
+  const { listSkills, getSkillDir: getCatalogSkillDir } = await import('./catalog.js');
+
+  const catalogIds = (await listSkills()).map((s) => s.id);
+  const candidates = options.skillName ? [options.skillName] : catalogIds;
+  const placement = options.placement ?? defaultPlacementMode(discovery.root);
+
+  let updated = 0;
+
+  for (const skillId of candidates) {
+    if (!catalogIds.includes(skillId)) {
+      console.error(`Not in the catalog: ${skillId}`);
+      process.exitCode = 1;
+      continue;
+    }
+
+    const catalogDir = getCatalogSkillDir(skillId);
+
+    for (const target of options.targets) {
+      const state = (await inspectSkillPlacement(discovery.root, target, skillId, catalogDir)).state;
+      if (state !== 'copy-stale') continue;
+
+      await copySkillDirToConfig(discovery.root, target, skillId, catalogDir, placement);
+      console.log(`Updated ${target}: ${skillId}${placement === 'link' ? ' (now a symlink)' : ''}`);
+      updated++;
+    }
+  }
+
+  if (updated === 0) {
+    console.log('Nothing to update: no distributed copy differs from the catalog.');
+  } else {
+    console.log(`\nUpdated ${updated} placement${updated === 1 ? '' : 's'}.`);
+  }
+}

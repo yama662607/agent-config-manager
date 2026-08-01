@@ -11,6 +11,8 @@ const TEST_DIR = path.join(os.tmpdir(), 'acm-config-resolution-test');
  * needed; only the environment has to be restored.
  */
 const savedEnv = process.env.ACM_CATALOG_DIR;
+const savedHome = process.env.HOME;
+const FAKE_HOME = path.join(TEST_DIR, 'home');
 
 async function loadModule() {
   // Cache-busting import so config.toml is re-read for each case.
@@ -22,6 +24,9 @@ describe('Catalog directory resolution', () => {
     delete process.env.ACM_CATALOG_DIR;
     fs.rmSync(TEST_DIR, { recursive: true, force: true });
     fs.mkdirSync(TEST_DIR, { recursive: true });
+    // Isolate from the developer's own ~/.acm/config.toml.
+    fs.mkdirSync(FAKE_HOME, { recursive: true });
+    process.env.HOME = FAKE_HOME;
   });
 
   afterEach(() => {
@@ -30,6 +35,7 @@ describe('Catalog directory resolution', () => {
     } else {
       process.env.ACM_CATALOG_DIR = savedEnv;
     }
+    if (savedHome !== undefined) process.env.HOME = savedHome;
     fs.rmSync(TEST_DIR, { recursive: true, force: true });
   });
 
@@ -49,14 +55,35 @@ describe('Catalog directory resolution', () => {
   it('expands ~ in ACM_CATALOG_DIR', async () => {
     process.env.ACM_CATALOG_DIR = '~/some-catalog';
     const { getCatalogDir } = await loadModule();
-    assert.strictEqual(getCatalogDir(), path.join(os.homedir(), 'some-catalog'));
+    assert.strictEqual(getCatalogDir(), path.join(FAKE_HOME, 'some-catalog'));
   });
 
   it('keeps the state directory fixed regardless of the catalog location', async () => {
     process.env.ACM_CATALOG_DIR = TEST_DIR;
     const { getStateDir, getConfigPath } = await loadModule();
-    assert.strictEqual(getStateDir(), path.join(os.homedir(), '.acm'));
-    assert.strictEqual(getConfigPath(), path.join(os.homedir(), '.acm', 'config.toml'));
+    assert.strictEqual(getStateDir(), path.join(FAKE_HOME, '.acm'));
+    assert.strictEqual(getConfigPath(), path.join(FAKE_HOME, '.acm', 'config.toml'));
+  });
+
+  it('reads catalog_dir from config.toml', async () => {
+    const stateDir = path.join(FAKE_HOME, '.acm');
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(path.join(stateDir, 'config.toml'), `catalog_dir = "${TEST_DIR}"\n`);
+
+    const { getCatalogDir, describeCatalogSource } = await loadModule();
+    assert.strictEqual(getCatalogDir(), path.resolve(TEST_DIR));
+    assert.strictEqual(describeCatalogSource(), 'config');
+  });
+
+  it('lets ACM_CATALOG_DIR win over config.toml', async () => {
+    const stateDir = path.join(FAKE_HOME, '.acm');
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(path.join(stateDir, 'config.toml'), 'catalog_dir = "/from/config"\n');
+    process.env.ACM_CATALOG_DIR = '/from/env';
+
+    const { getCatalogDir, describeCatalogSource } = await loadModule();
+    assert.strictEqual(getCatalogDir(), '/from/env');
+    assert.strictEqual(describeCatalogSource(), 'env');
   });
 
   it('ignores an empty ACM_CATALOG_DIR', async () => {

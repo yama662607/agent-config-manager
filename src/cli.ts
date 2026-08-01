@@ -41,6 +41,7 @@ import {
 import { validate, doctor } from './cli-diagnostics.js';
 import { scanCommand } from './cli-scan.js';
 import { parseTargetList } from './target-utils.js';
+import type { McpListFilter, SkillListFilter } from './cli-catalog.js';
 import { getDefaultTargets } from './acm-config.js';
 
 // ============================================================================
@@ -641,7 +642,7 @@ async function handleMcp(argv: string[]): Promise<void> {
     } else if (arg === '--json') {
       json = true;
       i++;
-    } else if (['--command', '--args', '--url', '--cwd', '--env', '--targets', '-t', '--file', '--display-name', '--description', '--name', '--category', '--language', '--popularity', '--source-type'].includes(arg)) {
+    } else if (['--command', '--args', '--url', '--cwd', '--env', '--targets', '-t', '--file', '--display-name', '--description', '--name', '--category', '--language', '--popularity', '--source-type', '--search'].includes(arg)) {
       filteredArgs.push(arg);
       if (i + 1 < argv.length) {
         filteredArgs.push(argv[++i]);
@@ -1667,8 +1668,9 @@ function parseFlag(argv: string[], longName: string, shortName?: string): boolea
   return argv.includes(`--${longName}`) || (shortName ? argv.includes(`-${shortName}`) : false);
 }
 
-function parseSkillListFilter(argv: string[]): Record<string, string | boolean> {
-  const filter: Record<string, string | boolean> = {};
+function parseSkillListFilter(argv: string[]): SkillListFilter {
+  // Typed so a flag that no filter implements cannot be parsed silently.
+  const filter: SkillListFilter = {};
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case '--plugin':      filter.plugin = nextVal(argv, i++, '--plugin'); break;
@@ -1683,14 +1685,15 @@ function parseSkillListFilter(argv: string[]): Record<string, string | boolean> 
   return filter;
 }
 
-function parseMcpListFilter(argv: string[]): Record<string, string | boolean> {
-  const filter: Record<string, string | boolean> = {};
+function parseMcpListFilter(argv: string[]): McpListFilter {
+  const filter: McpListFilter = {};
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case '--category':    filter.category = nextVal(argv, i++, '--category'); break;
       case '--language':    filter.language = nextVal(argv, i++, '--language'); break;
       case '--popularity':  filter.popularity = nextVal(argv, i++, '--popularity'); break;
       case '--source-type': filter.sourceType = nextVal(argv, i++, '--source-type'); break;
+      case '--search':      filter.search = nextVal(argv, i++, '--search'); break;
       case '--pinned':      filter.pinned = true; break;
       case '--deprecated':  filter.deprecated = true; break;
     }

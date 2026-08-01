@@ -1,7 +1,7 @@
 {
   "name": "@yama662607/agent-config-manager",
   "version": "0.6.2",
-  "description": "Cross-agent configuration manager for MCP servers and skills. Directly edits native config files—no manifest, no sync step.",
+  "description": "Cross-agent configuration manager for MCP servers and skills. Directly edits native config files\u2014no manifest, no sync step.",
   "type": "module",
   "publishConfig": {
     "access": "public"
@@ -22,12 +22,13 @@
     "build": "tsc -p tsconfig.json && chmod +x dist/cli.js",
     "clean": "rm -rf dist",
     "dev": "tsx src/cli.ts",
-    "prepack": "npm run clean && npm run build",
+    "prepack": "npm run check:public && npm run clean && npm run build",
     "check": "npm run clean && npm run build",
     "test": "NODE_ENV=test tsx --test test/**/*.test.ts",
     "test:unit": "NODE_ENV=test tsx --test test/unit/*.test.ts",
     "test:integration": "NODE_ENV=test tsx --test test/integration/*.test.ts",
-    "test:smoke": "node dist/cli.js --version && node dist/cli.js catalog mcp list"
+    "test:smoke": "node dist/cli.js --version && node dist/cli.js catalog mcp list",
+    "check:public": "bash scripts/check-public-safe.sh"
   },
   "keywords": [
     "mcp",

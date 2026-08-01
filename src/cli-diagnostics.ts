@@ -200,8 +200,17 @@ export async function doctor(options: DoctorOptions): Promise<{ hasErrors: boole
       }
     }
   } catch (error) {
-    console.log(`  ✗ ${(error as Error).message}`);
-    hasErrors = true;
+    const message = (error as Error).message;
+    // Running from home without -H is a common mistake, not a broken setup.
+    if (message.includes('Cannot use home directory as project root')) {
+      console.log('  ⚠ Skipped: the current directory is your home directory.');
+      console.log('    Run `acm doctor -H` to check global configuration,');
+      console.log('    or run this from a project directory.');
+      hasWarnings = true;
+    } else {
+      console.log(`  ✗ ${message}`);
+      hasErrors = true;
+    }
   }
 
   console.log('\n' + '='.repeat(50));

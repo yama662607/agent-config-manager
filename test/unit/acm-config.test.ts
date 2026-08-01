@@ -111,3 +111,39 @@ describe('Plugin config writes', () => {
     assert.deepStrictEqual(after.extraPluginPaths, ['/x']);
   });
 });
+
+describe('Default targets', () => {
+  const FAKE = path.join(TEST_DIR, 'home2');
+
+  beforeEach(() => {
+    fs.rmSync(TEST_DIR, { recursive: true, force: true });
+    fs.mkdirSync(path.join(FAKE, '.acm'), { recursive: true });
+    process.env.HOME = FAKE;
+  });
+
+  afterEach(() => {
+    if (savedHome !== undefined) process.env.HOME = savedHome;
+    fs.rmSync(TEST_DIR, { recursive: true, force: true });
+  });
+
+  it('returns null when unset, so the built-in default applies', async () => {
+    fs.writeFileSync(path.join(FAKE, '.acm', 'config.toml'), 'catalog_dir = "/x"\n');
+    const { getDefaultTargets } = await loadModule();
+    assert.strictEqual(getDefaultTargets(), null);
+  });
+
+  it('reads default_targets from config.toml', async () => {
+    fs.writeFileSync(
+      path.join(FAKE, '.acm', 'config.toml'),
+      'default_targets = ["claude", "grok"]\n'
+    );
+    const { getDefaultTargets } = await loadModule();
+    assert.deepStrictEqual(getDefaultTargets(), ['claude', 'grok']);
+  });
+
+  it('ignores an empty list', async () => {
+    fs.writeFileSync(path.join(FAKE, '.acm', 'config.toml'), 'default_targets = []\n');
+    const { getDefaultTargets } = await loadModule();
+    assert.strictEqual(getDefaultTargets(), null);
+  });
+});

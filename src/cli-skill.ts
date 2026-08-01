@@ -642,3 +642,81 @@ export async function skillUpdate(options: SkillUpdateOptions): Promise<void> {
     console.log(`\nUpdated ${updated} placement${updated === 1 ? '' : 's'}.`);
   }
 }
+
+// ============================================================================
+// Metadata Command
+// ============================================================================
+
+export interface SkillMetaOptions {
+  skillId: string;
+  deprecated?: boolean;
+  pinned?: boolean;
+  /** Replaces the existing tags. */
+  tags?: string[];
+  category?: string;
+}
+
+/**
+ * Edit a skill's catalog metadata.
+ *
+ * Without this, marking something deprecated means hand-editing
+ * skills-metadata.toml, which is easy to get wrong and easy to forget.
+ */
+export async function skillMeta(options: SkillMetaOptions): Promise<void> {
+  const { loadSkillsMetadata, saveSkillsMetadata } = await import('./skills-metadata.js');
+  const { listSkills } = await import('./catalog.js');
+
+  try {
+    validateSkillName(options.skillId);
+  } catch (error) {
+    console.error(`Invalid skill name: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const known = (await listSkills()).some((s) => s.id === options.skillId);
+  if (!known) {
+    console.error(`Not in the catalog: ${options.skillId}\n`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const changes: string[] = [];
+  const data = await loadSkillsMetadata();
+  const entry = { ...(data.skills[options.skillId] ?? {}) };
+
+  if (options.deprecated !== undefined) {
+    entry.deprecated = options.deprecated;
+    changes.push(`deprecated = ${options.deprecated}`);
+  }
+  if (options.pinned !== undefined) {
+    entry.pinned = options.pinned;
+    changes.push(`pinned = ${options.pinned}`);
+  }
+  if (options.tags !== undefined) {
+    entry.tags = options.tags;
+    changes.push(`tags = [${options.tags.join(', ')}]`);
+  }
+  if (options.category !== undefined) {
+    entry.category = options.category;
+    changes.push(`category = ${options.category}`);
+  }
+
+  if (changes.length === 0) {
+    const current = data.skills[options.skillId];
+    if (!current) {
+      console.log(`${options.skillId}: no metadata recorded`);
+      return;
+    }
+    console.log(`${options.skillId}:`);
+    for (const [key, value] of Object.entries(current)) {
+      console.log(`  ${key} = ${Array.isArray(value) ? `[${value.join(', ')}]` : String(value)}`);
+    }
+    return;
+  }
+
+  data.skills[options.skillId] = entry;
+  await saveSkillsMetadata(data);
+
+  console.log(`Updated ${options.skillId}: ${changes.join(', ')}`);
+}

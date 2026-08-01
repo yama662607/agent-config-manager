@@ -277,6 +277,22 @@ catalog_dir = "~/Code/my-catalog"
 Resolution order: `ACM_CATALOG_DIR`, then `catalog_dir`, then `~/.acm`. `acm doctor`
 shows which one is in effect.
 
+`config.toml` also sets the targets used when a command names none:
+
+```toml
+default_targets = ["claude", "codex", "antigravity", "grok"]
+```
+
+### Skill metadata
+
+```bash
+acm skill meta my-skill                       # show what is recorded
+acm skill meta my-skill --deprecated          # mark superseded
+acm skill meta my-skill --pin --tags a,b,c
+```
+
+`acm skill list -g --deprecated` filters by that flag.
+
 ## Publishing a Public Subset
 
 A personal catalog holds far more than should ever be public, so publishing is opt-in.

@@ -253,6 +253,12 @@ export async function getSkills(
   const skillsDir = getSkillsDir(projectRoot, target);
   const skills: Record<string, { enabled: boolean }> = {};
 
+  // Grok reads skills from directories registered in config.toml rather than
+  // from copies ACM places, so those registrations are part of its status.
+  if (target === 'grok') {
+    Object.assign(skills, await getGrokRegisteredSkills(projectRoot));
+  }
+
   try {
     await fs.access(skillsDir);
   } catch {
@@ -308,4 +314,55 @@ export async function isSkillEnabled(
 ): Promise<boolean> {
   const { exists } = await readSkill(projectRoot, target, skillName);
   return exists;
+}
+
+/**
+ * Skills Grok picks up through `[skills] paths` registrations, with
+ * `[skills] disabled` applied.
+ */
+async function getGrokRegisteredSkills(
+  projectRoot: string
+): Promise<Record<string, { enabled: boolean }>> {
+  const { getDisabledSkills, getRegisteredSkillPaths } = await import('./grok-skills.js');
+
+  const configPath = path.join(projectRoot, '.grok', 'config.toml');
+  const skills: Record<string, { enabled: boolean }> = {};
+
+  let registeredPaths: string[];
+  let disabled: string[];
+  try {
+    registeredPaths = await getRegisteredSkillPaths(configPath);
+    disabled = await getDisabledSkills(configPath);
+  } catch {
+    return skills; // Unreadable or unparsable config
+  }
+
+  for (const dir of registeredPaths) {
+    let entries;
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      continue; // Registered path no longer exists
+    }
+
+    for (const entry of entries) {
+      const name = entry.name;
+
+      try {
+        validateSkillName(name);
+      } catch {
+        continue;
+      }
+
+      try {
+        await fs.access(path.join(dir, name, 'SKILL.md'));
+      } catch {
+        continue; // Not a skill directory
+      }
+
+      skills[name] = { enabled: !disabled.includes(name) };
+    }
+  }
+
+  return skills;
 }

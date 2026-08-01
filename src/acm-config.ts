@@ -74,3 +74,20 @@ export function describeCatalogSource(): 'env' | 'config' | 'default' {
   if (readCatalogDirFromConfig()) return 'config';
   return 'default';
 }
+
+/**
+ * Targets used when a command does not name any.
+ * Configured as `default_targets = ["claude", "codex"]` in config.toml.
+ */
+export function getDefaultTargets(): string[] | null {
+  try {
+    const raw = fs.readFileSync(getConfigPath(), 'utf8');
+    const parsed = TOML.parse(raw) as { default_targets?: unknown };
+    if (Array.isArray(parsed.default_targets) && parsed.default_targets.length > 0) {
+      return parsed.default_targets.filter((t): t is string => typeof t === 'string');
+    }
+  } catch {
+    // Fall through to the built-in default.
+  }
+  return null;
+}

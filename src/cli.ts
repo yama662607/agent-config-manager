@@ -41,6 +41,7 @@ import {
 import { validate, doctor } from './cli-diagnostics.js';
 import { scanCommand } from './cli-scan.js';
 import { parseTargetList } from './target-utils.js';
+import { getDefaultTargets } from './acm-config.js';
 
 // ============================================================================
 // Constants
@@ -112,6 +113,7 @@ SKILL Subcommands:
   link <path>       Register a directory in the catalog as a symlink (no copy)
   unlink <id>       Remove a catalog link (never touches real content)
   update [id]       Re-place distributed copies that drifted from the catalog
+  meta <id>         Show or edit catalog metadata (deprecated, pinned, tags)
   install <id>      Install a skill from skills.directory registry
   search <query>    Search the skills.directory registry
   remove <id>        Remove a skill entry from catalog
@@ -944,6 +946,25 @@ async function handleSkill(argv: string[]): Promise<void> {
       }
       break;
 
+    case 'meta': {
+      if (options.skillId === undefined) {
+        process.stderr.write(
+          'Usage: acm skill meta <id> [--deprecated|--no-deprecated] [--pin|--unpin] [--tags a,b] [--category <c>]\n'
+        );
+        process.exitCode = 1;
+        return;
+      }
+      const { skillMeta } = await import('./cli-skill.js');
+      await skillMeta({
+        skillId: options.skillId,
+        deprecated: options.deprecated,
+        pinned: options.pinned,
+        tags: options.tags,
+        category: options.category,
+      });
+      break;
+    }
+
     case 'link': {
       if (options.skillId === undefined) {
         process.stderr.write('Usage: acm skill link <path> [--as <id>]\n');
@@ -1250,7 +1271,7 @@ interface McpOptions {
 
 function parseMcpOptions(argv: string[], subcommand?: string): McpOptions {
   const options: McpOptions = {
-    targets: ['claude', 'codex'], // Default targets
+    targets: resolveDefaultTargets(),
     noRegister: false,
   };
 
@@ -1458,6 +1479,19 @@ function parseCatalogSkillImportOptions(argv: string[]): CatalogSkillImportOptio
   return options;
 }
 
+/** Built-in default, overridable with `default_targets` in config.toml. */
+function resolveDefaultTargets(): TargetName[] {
+  const configured = getDefaultTargets();
+  if (!configured) return ['claude', 'codex'];
+
+  try {
+    return parseTargetList(configured.join(','));
+  } catch {
+    process.stderr.write('Ignoring invalid default_targets in config.toml\n');
+    return ['claude', 'codex'];
+  }
+}
+
 function parseTargets(input: string): TargetName[] {
   let targets: TargetName[];
   try {
@@ -1477,6 +1511,10 @@ interface SkillOptions {
   verbose?: boolean;
   /** Placement override for installed skill directories. */
   placement?: 'link' | 'copy';
+  deprecated?: boolean;
+  pinned?: boolean;
+  tags?: string[];
+  category?: string;
   // GitHub URL install options
   githubUrl?: string;
   skillName?: string;
@@ -1490,7 +1528,7 @@ interface SkillOptions {
 
 function parseSkillOptions(argv: string[], subcommand?: string): SkillOptions {
   const options: SkillOptions = {
-    targets: ['claude', 'codex'], // Default targets
+    targets: resolveDefaultTargets(),
     noRegister: false,
   };
 
@@ -1516,6 +1554,26 @@ function parseSkillOptions(argv: string[], subcommand?: string): SkillOptions {
         break;
       case '--as':
         options.skillName = nextVal(argv, i, arg);
+        i++;
+        break;
+      case '--deprecated':
+        options.deprecated = true;
+        break;
+      case '--no-deprecated':
+        options.deprecated = false;
+        break;
+      case '--pin':
+        options.pinned = true;
+        break;
+      case '--unpin':
+        options.pinned = false;
+        break;
+      case '--tags':
+        options.tags = nextVal(argv, i, arg).split(',').map((t) => t.trim()).filter(Boolean);
+        i++;
+        break;
+      case '--category':
+        options.category = nextVal(argv, i, arg);
         i++;
         break;
       case '--link':

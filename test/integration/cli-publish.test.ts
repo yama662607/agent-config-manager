@@ -62,7 +62,9 @@ describe('acm catalog publish', () => {
   });
 
   it('refuses to publish when a secret is present', async () => {
-    await writeSkill('public-one', 'token: ghp_AbCdEfGhIjKlMnOpQrStUvWx0123456789');
+    // Assembled at runtime so this fixture is not itself a literal secret in the repo.
+    const fakeToken = ['ghp', 'AbCdEfGhIjKlMnOpQrStUvWx0123456789'].join('_');
+    await writeSkill('public-one', `token: ${fakeToken}`);
     await fs.writeFile(path.join(CATALOG, 'PUBLIC.txt'), 'skill/public-one\n');
 
     const { stdout, stderr } = await acm(['catalog', 'publish']);
@@ -71,7 +73,8 @@ describe('acm catalog publish', () => {
   });
 
   it('refuses to publish when a personal path is present', async () => {
-    await writeSkill('public-one', 'see /Users/someone/notes.md');
+    const fakePath = ['', 'Users', 'someone', 'notes.md'].join('/');
+    await writeSkill('public-one', `see ${fakePath}`);
     await fs.writeFile(path.join(CATALOG, 'PUBLIC.txt'), 'skill/public-one\n');
 
     const { stdout, stderr } = await acm(['catalog', 'publish']);

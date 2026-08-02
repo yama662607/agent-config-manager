@@ -34,7 +34,10 @@ export const AGENT_GLOBAL_SKILLS_DIR: Record<TargetName, string> = {
 
 /** Machine-wide MCP configuration files. */
 export const AGENT_GLOBAL_MCP_CONFIG: Record<TargetName, string> = {
-  claude: path.join(home, '.mcp.json'),
+  // Claude's user scope lives inside its live state file. `~/.mcp.json` is a
+  // project file that happens to sit in the home directory, so Claude reads it
+  // only when the home directory is the project root.
+  claude: path.join(home, '.claude.json'),
   codex: path.join(home, '.codex', 'config.toml'),
   antigravity: path.join(home, '.gemini', 'config', 'mcp_config.json'),
   grok: path.join(home, '.grok', 'config.toml'),
@@ -51,4 +54,14 @@ export const AGENT_PLUGIN_DIR: Record<TargetName, string> = {
 /** Whether a path is the home directory, i.e. whether global paths apply. */
 export function isHomeScope(projectRoot: string): boolean {
   return path.resolve(projectRoot) === home;
+}
+
+/**
+ * Whether a config path is Claude's user-scope state file.
+ *
+ * That file holds the application's own runtime state, so it is written through
+ * `claude mcp` rather than edited. See claude-user-mcp.ts.
+ */
+export function isClaudeUserScope(configPath: string): boolean {
+  return path.resolve(configPath) === path.join(home, '.claude.json');
 }

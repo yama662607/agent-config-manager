@@ -391,7 +391,8 @@ async function addMcpServer(
     case 'codex': {
       const server: CodexMcpServer = { enabled: true };
       if (recipe.url) {
-        server.httpUrl = recipe.url;
+        // Codex reads `url`; `httpUrl` was never a field it understood.
+        server.url = recipe.url;
       } else if (recipe.command) {
         server.command = recipe.command;
         if (recipe.args) server.args = recipe.args;
@@ -562,8 +563,9 @@ export async function getMcpServers(
         for (const [name, server] of Object.entries(config.mcp_servers)) {
           const resolvedName = inferCanonicalServerName(name, server);
           const recipe: McpRecipe = {};
-          if (server.httpUrl) {
-            recipe.url = server.httpUrl;
+          const remoteUrl = server.url ?? server.httpUrl;
+          if (remoteUrl) {
+            recipe.url = remoteUrl;
             recipe.transport = 'http';
           } else if (server.command) {
             recipe.command = server.command;

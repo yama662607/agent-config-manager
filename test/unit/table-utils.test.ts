@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { getStringWidth, padRightWide, truncateWide } from '../../src/table-utils.js';
+import { getStringWidth, padRightWide, truncateWide, truncateMiddle } from '../../src/table-utils.js';
 
 describe('table-utils', () => {
   describe('getStringWidth', () => {
@@ -69,5 +69,25 @@ describe('table-utils', () => {
       assert.ok(truncated.endsWith('...'));
       assert.strictEqual(truncated, 'mcp-bestpractice-types...');
     });
+  });
+});
+
+describe('truncateMiddle', () => {
+  it('keeps both ends of a scoped package name', () => {
+    // The distinguishing part of `@scope/name` is its tail, so cutting the
+    // tail off would make different entries indistinguishable.
+    const result = truncateMiddle('@modelcontextprotocol/server-github', 30);
+    assert.ok(result.startsWith('@model'), result);
+    assert.ok(result.endsWith('server-github'), result);
+    assert.strictEqual(getStringWidth(result), 30);
+  });
+
+  it('returns short strings untouched', () => {
+    assert.strictEqual(truncateMiddle('short', 30), 'short');
+  });
+
+  it('handles wide characters without exceeding the budget', () => {
+    const result = truncateMiddle('日本語のとても長いスキル名です', 10);
+    assert.ok(getStringWidth(result) <= 10, `${result} (${getStringWidth(result)})`);
   });
 });

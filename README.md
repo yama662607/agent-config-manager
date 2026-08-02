@@ -252,6 +252,31 @@ Grok stores MCP servers in TOML under `[mcp_servers.<name>]`, like Codex, but us
 `httpUrl`) for HTTP/SSE transports and supports a native `enabled` flag. Editing a Grok config
 rewrites the whole TOML file, so comments in `config.toml` are not preserved (same as Codex).
 
+## MCP drift
+
+An MCP server is a launch recipe, not a file, so "drift" means a target launches
+something different from what the catalog says.
+
+```bash
+acm mcp                      # State column per server
+acm mcp --verbose            # shows what each target actually launches
+acm mcp update [server]      # re-apply the catalog recipe where it differs
+```
+
+| State | Meaning |
+|-------|---------|
+| `synced` | Matches the catalog recipe |
+| `differs` | Configured differently from the catalog |
+| `inline` | Configured here but absent from the catalog |
+| `disabled` | Configured but switched off |
+
+Environment *values* are excluded from the comparison — they routinely hold
+machine-specific secrets and paths that legitimately differ. Variable *names* are
+compared, because a missing variable is a real difference.
+
+`acm mcp update` only touches servers that exist in the catalog: an inline server
+has no catalog recipe to apply, and overwriting it would destroy the only copy.
+
 ## Where a skill came from
 
 A downloaded skill has an upstream that keeps moving. `acm` records where each one

@@ -31,11 +31,37 @@ This is the whole decision. Everything below is the evidence for applying it.
 | Claude Code | user | `~/.claude.json` → `mcpServers` | **Yes** (89 keys: caches, OAuth tokens, counters) | `claude mcp add-json -s user` |
 | Claude Code | project | `<project>/.mcp.json` | No | Direct |
 | Codex | user | `~/.codex/config.toml` → `[mcp_servers.*]` | No (21 keys, all settings) | Direct |
-| Codex | project | `<project>/.codex/config.toml` | No | Direct |
+| Codex | project | `<project>/.codex/config.toml` — **only when the directory is trusted** | No | Direct |
 | Antigravity | global | `~/.gemini/config/mcp_config.json` | No (1 key: `mcpServers`) | Direct |
-| Antigravity | project | `<project>/.agents/mcp_config.json` | No | Direct |
+| Antigravity | project | **does not exist** | — | — |
 | Grok | user | `~/.grok/config.toml` → `[mcp_servers.*]` | No (4 keys, all settings) | Direct |
 | Grok | project | `<project>/.grok/config.toml` | No | Direct |
+
+### Project scope is not universal
+
+Only Claude, Codex and Grok read a project-local MCP configuration, and Codex reads
+its own only under a condition.
+
+**Codex requires the directory to be trusted.** A project-local `.codex/config.toml`
+is loaded but then disabled unless `~/.codex/config.toml` contains
+`[projects."<absolute path>"] trust_level = "trusted"`. Codex's TUI adds that entry
+the first time it asks "Do you trust this folder?", so ordinary working repositories
+satisfy it and fresh directories do not. Verified against the loader in
+`codex-rs/config/src/loader/mod.rs` (the untrusted case reports "To load project-local
+config, hooks, and exec policies, add … as a trusted project") and reproduced with an
+isolated `CODEX_HOME`: the same `[mcp_servers.scopeprobe]` entry is absent from
+`codex mcp list` before the trust entry exists and present after.
+
+`codex mcp add` always writes the user file, so a project entry has to be written
+directly.
+
+**Antigravity has no project scope for MCP.** Its own documentation lists only the
+global file and plugin files, and a probe placing an `mcp_config.json` at six
+plausible project locations launched none of them: no process started, no
+`~/.gemini/antigravity-cli/mcp/<name>/` state directory appeared, and deliberately
+malformed JSON produced no parse error — the file is never opened. The IDE writes to
+the same global file (`~/.gemini/antigravity/mcp_config.json` is a symlink to it), so
+there is no separate desktop surface either.
 
 ### Claude Code is the exception
 
@@ -80,7 +106,7 @@ there; providers without such a field are disabled by removal.
 |----------|-----------------|------------------|
 | Claude Code | `~/.claude/skills/<name>/` | `<project>/.claude/skills/` |
 | Codex | `~/.codex/skills/<name>/` | `<project>/.codex/skills/` |
-| Antigravity | `~/.gemini/config/skills/<name>/` | `<project>/.agents/skills/` |
+| Antigravity | `~/.gemini/config/skills/<name>/` | **not read by the CLI** (see below) |
 | Grok | registered path, not a copy | `<project>/.grok/skills/` |
 
 Skills are directories, so `acm` links or copies them; no provider CLI is involved and
@@ -91,6 +117,14 @@ inside a project but `~/.gemini/config/` globally, so skills placed in `~/.agent
 are never read. Verified by asking the CLI directly: `agy --print "list the available
 skills"` returned 16 entries before a skill was linked into `~/.gemini/config/skills`
 and 24 after, with the newly linked ones present.
+
+**Antigravity's CLI does not read project skills either.** Its documentation states
+that a skill lives in a `skills/` folder inside a customization root, giving
+`.agents/skills/` as the example, but a real git repository holding eight skills under
+`.agents/skills/` produced none of them in `agy --print "list the available skills"`.
+Two independent probes agree. Whether the Antigravity IDE behaves differently is
+**unverified**; treat project-scope skills for this provider as unsupported until
+someone confirms otherwise.
 
 **Grok reads other providers' skill directories.** It scans `~/.claude/skills` and
 `~/.cursor/skills` by default, so copying a skill into `~/.grok/skills` would duplicate
@@ -133,6 +167,15 @@ codex mcp list
 grok mcp list
 cd /tmp && agy --print "利用可能なスキルの名前だけを列挙してください。"
 ```
+
+Run the same commands **from inside a project** to check project scope. A directory
+that has never been opened by Codex is untrusted, so an empty temporary directory
+tests trust rather than support — use a real repository, or add the trust entry first.
+
+Asking an agent to list what it can see is a weaker probe than watching for the
+process: a model may summarise, omit or hallucinate. When the answer matters, point
+the server's `command` at a script that writes a marker file and check whether the
+file appears.
 
 If something `acm` configured is missing from that output, `acm` is writing to a place
 the provider does not read.

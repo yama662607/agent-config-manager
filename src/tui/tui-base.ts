@@ -73,6 +73,57 @@ export abstract class TuiBaseScreen implements TuiScreen {
     }
   }
 
+  /**
+   * A list long enough that scrolling is not a way to find anything.
+   * Above this, the list is filtered before it is shown.
+   */
+  protected static readonly FILTER_THRESHOLD = 25;
+
+  /**
+   * Ask for a search term, and return the choices that match.
+   *
+   * A catalog of several hundred entries cannot be browsed by scrolling, and
+   * enquirer's own type-ahead only jumps to a prefix. `actions` are always kept:
+   * they are how the user leaves the screen.
+   */
+  protected async narrow(
+    choices: any[],
+    label = 'entries',
+    actionNames: string[] = []
+  ): Promise<any[]> {
+    const isAction = (c: any) =>
+      String(c.name).startsWith('__') || actionNames.includes(String(c.name));
+
+    const actions = choices.filter(isAction);
+    const items = choices.filter((c) => !isAction(c));
+
+    if (items.length <= TuiBaseScreen.FILTER_THRESHOLD) return choices;
+
+    const { prompt } = (await import('enquirer')).default as any;
+    const { term } = await prompt({
+      type: 'input',
+      name: 'term',
+      message: `${items.length} ${label}. Filter (blank shows all):`,
+    }).catch(() => ({ term: '' }));
+
+    const needle = String(term ?? '').trim().toLowerCase();
+    if (!needle) return choices;
+
+    const matched = items.filter((c) =>
+      [c.name, c.message, c.hint].some(
+        (field) => typeof field === 'string' && field.toLowerCase().includes(needle)
+      )
+    );
+
+    if (matched.length === 0) {
+      console.log(`\nNothing matches "${needle}".`);
+      return choices;
+    }
+
+    console.log(`\n${matched.length} of ${items.length} match "${needle}".`);
+    return [...matched, ...actions];
+  }
+
   protected async select<T = string>(message: string, choices: any[]): Promise<T | null> {
     const instance = new Select({
       name: 'choice',

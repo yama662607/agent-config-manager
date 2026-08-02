@@ -211,7 +211,10 @@ export class SkillTuiScreen extends TuiBaseScreen {
       { name: 'back', message: '← Back', hint: '' }
     );
 
-    const selected = await this.select<string>('Select skill (or action):', choices);
+    const selected = await this.select<string>(
+      'Select skill (or action):',
+      await this.narrow(choices, 'skills', ['github', 'import', 'back'])
+    );
     if (!selected || selected === 'back') return 'back';
     if (selected === 'github') return await this.installFromGithub(state);
     if (selected === 'import') return await this.importLocal(state);

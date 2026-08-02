@@ -105,11 +105,11 @@ A catalog entry can be a symlink to a directory you develop elsewhere, so an edi
 that repository reaches every provider with no further step:
 
 ```bash
-# Register ~/Code/Skills/my-skill in the catalog without copying it
-acm skill link ~/Code/Skills/my-skill
+# Register ~/src/my-skill in the catalog without copying it
+acm skill link ~/src/my-skill
 
 # Give it a different catalog id
-acm skill link ~/Code/Skills/my-skill --as other-name
+acm skill link ~/src/my-skill --as other-name
 
 # Distribute as usual; home targets link by default
 acm skill add my-skill --targets claude,codex -H
@@ -363,16 +363,22 @@ catalog in its own version-controlled repository:
 
 ```bash
 # Per invocation or per shell
-export ACM_CATALOG_DIR=~/Code/my-catalog
+export ACM_CATALOG_DIR=~/src/my-catalog
 ```
 
 ```toml
 # ~/.acm/config.toml — persistent
-catalog_dir = "~/Code/my-catalog"
+catalog_dir = "~/src/my-catalog"
 ```
 
 Resolution order: `ACM_CATALOG_DIR`, then `catalog_dir`, then `~/.acm`. `acm doctor`
 shows which one is in effect.
+
+**By default there is no separate catalog** — `~/.acm` *is* the catalog, and a linked
+skill points straight at it. Only when the catalog is moved elsewhere does `~/.acm`
+become an indirection: distribution links keep pointing at `~/.acm/skills/<id>` as
+long as it resolves to the same directory, so relocating the catalog does not break
+anything already distributed.
 
 `config.toml` also sets the targets used when a command names none:
 

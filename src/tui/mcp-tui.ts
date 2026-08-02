@@ -210,7 +210,10 @@ export class McpTuiScreen extends TuiBaseScreen {
       { name: 'back', message: '← Back', hint: '' }
     );
 
-    const selected = await this.select<string>('Select MCP (or action):', choices);
+    const selected = await this.select<string>(
+      'Select MCP (or action):',
+      await this.narrow(choices, 'MCP servers', ['npm', 'custom', 'back'])
+    );
     if (!selected || selected === 'back') return 'back';
     if (selected === 'npm') return await this.addFromNpm(state);
     if (selected === 'custom') return await this.addCustom(state);

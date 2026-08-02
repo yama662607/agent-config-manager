@@ -93,7 +93,10 @@ export class CatalogTuiScreen extends TuiBaseScreen {
         { name: '__exit__', message: '🚪 Exit', value: '__exit__', hint: '' }
       );
 
-      const selected = await this.select('Select MCP (or action):', choices);
+      const selected = await this.select(
+        'Select MCP (or action):',
+        await this.narrow(choices, 'MCP servers')
+      );
 
       if (!selected || selected === '__exit__') return 'exit';
       if (selected === '__back__') return 'back';
@@ -143,7 +146,10 @@ export class CatalogTuiScreen extends TuiBaseScreen {
         { name: '__exit__', message: '🚪 Exit', value: '__exit__', hint: '' }
       );
 
-      const selected = await this.select('Select skill (or action):', choices);
+      const selected = await this.select(
+        'Select skill (or action):',
+        await this.narrow(choices, 'skills')
+      );
 
       if (!selected || selected === '__exit__') return 'exit';
       if (selected === '__back__') return 'back';

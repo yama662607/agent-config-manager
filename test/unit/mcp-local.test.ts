@@ -84,7 +84,11 @@ describe('Recipes for servers under development', () => {
   it('tells a working copy apart from a published package', () => {
     assert.strictEqual(isLocalRecipe(packageRecipe('@scope/server')), false);
     assert.strictEqual(
-      isLocalRecipe({ command: 'uv', args: ['run', '--directory', '/Users/someone/src', 'x'] }),
+      isLocalRecipe({
+        command: 'uv',
+        // Built at runtime so this fixture is not itself a personal path.
+        args: ['run', '--directory', ['', 'Users', 'someone', 'src'].join('/'), 'x'],
+      }),
       true
     );
   });

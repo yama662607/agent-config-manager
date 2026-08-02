@@ -134,3 +134,35 @@ export function truncate(str: string, maxLen: number): string {
   }
   return str.slice(0, maxLen - 1) + '…';
 }
+
+/**
+ * Truncate through the middle, keeping both ends.
+ *
+ * Identifiers such as `@scope/package-name` carry their distinguishing part at
+ * the end, so cutting the tail off makes two different entries look identical.
+ */
+export function truncateMiddle(str: string, maxWidth: number): string {
+  const clean = stripAnsi(str);
+  if (getStringWidth(clean) <= maxWidth) return str;
+
+  const ellipsis = '…';
+  if (maxWidth <= 1) return ellipsis.slice(0, maxWidth);
+
+  const budget = maxWidth - 1;
+  const tailWidth = Math.floor(budget / 2);
+  const headWidth = budget - tailWidth;
+
+  let head = '';
+  for (const char of clean) {
+    if (getStringWidth(head + char) > headWidth) break;
+    head += char;
+  }
+
+  let tail = '';
+  for (const char of Array.from(clean).reverse()) {
+    if (getStringWidth(char + tail) > tailWidth) break;
+    tail = char + tail;
+  }
+
+  return head + ellipsis + tail;
+}

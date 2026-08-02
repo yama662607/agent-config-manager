@@ -1,7 +1,7 @@
-import type { McpRecipe, McpWorkspaceStatus, TargetName } from './types.js';
+import type { McpRecipe, McpWorkspaceStatus, TargetName, McpServerStatus, McpDeploymentState } from './types.js';
 import { discoverProject } from './project-discovery.js';
 import { getMcpServers } from './config-adapters.js';
-import { padRightWide, truncateWide, getStringWidth } from './table-utils.js';
+import { padRightWide, truncateWide, truncateMiddle, getStringWidth } from './table-utils.js';
 
 // ============================================================================
 // Status Command
@@ -28,8 +28,10 @@ export async function mcpStatus(
 
 async function buildMcpStatus(projectRoot: string, allowHome: boolean = false): Promise<McpWorkspaceStatus> {
   const { targets } = await discoverProject(process.cwd(), { allowHome });
+  const { listMcps } = await import('./catalog.js');
 
-  const serverMap = new Map<string, { name: string; enabled: boolean; targets: TargetName[]; source: 'catalog' | 'inline' }>();
+  const catalog = new Map((await listMcps()).map((entry) => [entry.id, entry]));
+  const serverMap = new Map<string, McpServerStatus>();
 
   for (const [target, configPath] of targets.entries()) {
     if (!configPath.exists) continue;
@@ -37,17 +39,29 @@ async function buildMcpStatus(projectRoot: string, allowHome: boolean = false): 
     const servers = await getMcpServers(target, configPath.path);
 
     for (const [name, info] of Object.entries(servers)) {
-      if (!info.enabled) continue;
+      const catalogEntry = catalog.get(name);
+      const state: McpDeploymentState = !info.enabled
+        ? 'disabled'
+        : !catalogEntry
+          ? 'inline'
+          : recipesMatch(catalogEntry.recipe, info.recipe)
+            ? 'synced'
+            : 'differs';
 
       const existing = serverMap.get(name);
       if (existing) {
         existing.targets.push(target);
+        existing.enabled ||= info.enabled;
+        existing.state![target] = state;
+        if (info.recipe) existing.deployed![target] = info.recipe;
       } else {
         serverMap.set(name, {
           name,
-          enabled: true,
+          enabled: info.enabled,
           targets: [target],
-          source: 'inline', // TODO: detect from catalog
+          source: catalogEntry ? 'catalog' : 'inline',
+          state: { [target]: state },
+          deployed: info.recipe ? { [target]: info.recipe } : {},
         });
       }
     }
@@ -62,6 +76,63 @@ async function buildMcpStatus(projectRoot: string, allowHome: boolean = false): 
     totalCount: servers.length,
     enabledCount,
   };
+}
+
+/**
+ * Compare a catalog recipe with what a target actually launches.
+ *
+ * Environment values are excluded: they routinely hold machine-specific
+ * secrets and paths that differ legitimately between the catalog and a
+ * deployment. Their names are compared, because a missing variable is a
+ * genuine difference.
+ */
+/** One-line summary of what a target actually launches. */
+function describeRecipe(recipe: McpRecipe): string {
+  if (recipe.url) return recipe.url;
+  if (!recipe.command) return '(nothing configured)';
+  return [recipe.command, ...(recipe.args ?? [])].join(' ');
+}
+
+const MCP_STATE_LABELS: Record<McpDeploymentState, string> = {
+  synced: 'synced',
+  differs: 'differs',
+  inline: 'inline',
+  disabled: 'disabled',
+};
+
+/** Summarize state across targets, listing them separately when they disagree. */
+function formatMcpState(server: McpServerStatus): string {
+  const entries = Object.entries(server.state ?? {}) as [TargetName, McpDeploymentState][];
+  if (entries.length === 0) return '-';
+
+  const states = new Set(entries.map(([, state]) => state));
+  if (states.size === 1) return MCP_STATE_LABELS[entries[0][1]];
+
+  const short: Record<TargetName, string> = {
+    claude: 'cl',
+    codex: 'cx',
+    antigravity: 'ag',
+    grok: 'gk',
+  };
+  return entries.map(([target, state]) => `${short[target]}:${MCP_STATE_LABELS[state]}`).join(' ');
+}
+
+function recipesMatch(catalog: McpRecipe | undefined, deployed: McpRecipe | undefined): boolean {
+  if (!catalog || !deployed) return false;
+
+  if ((catalog.command ?? '') !== (deployed.command ?? '')) return false;
+  if ((catalog.url ?? '') !== (deployed.url ?? '')) return false;
+  if ((catalog.cwd ?? '') !== (deployed.cwd ?? '')) return false;
+
+  const catalogArgs = catalog.args ?? [];
+  const deployedArgs = deployed.args ?? [];
+  if (catalogArgs.length !== deployedArgs.length) return false;
+  if (catalogArgs.some((arg, i) => arg !== deployedArgs[i])) return false;
+
+  const catalogEnv = Object.keys(catalog.env ?? {}).sort();
+  const deployedEnv = Object.keys(deployed.env ?? {}).sort();
+  if (catalogEnv.length !== deployedEnv.length) return false;
+  return catalogEnv.every((key, i) => key === deployedEnv[i]);
 }
 
 function printMcpStatus(status: McpWorkspaceStatus, verbose: boolean): void {
@@ -80,30 +151,39 @@ function printMcpStatus(status: McpWorkspaceStatus, verbose: boolean): void {
       console.log(`MCP Server: ${server.name}`);
       console.log(`  Status: ${server.enabled ? '✓' : '✗'} ${server.enabled ? 'Enabled' : 'Disabled'}`);
       console.log(`  Targets: ${server.targets.join(', ') || '(none)'}`);
-      console.log(`  Source: ${server.source}\n`);
+      console.log(`  Source: ${server.source}`);
+      console.log(`  State: ${formatMcpState(server)}`);
+      for (const [target, recipe] of Object.entries(server.deployed ?? {})) {
+        console.log(`  Launches (${target}): ${describeRecipe(recipe)}`);
+      }
+      console.log();
     }
   } else {
     // Compact table output
-    const NAME_WIDTH = 35;
+    const NAME_WIDTH = 30;
     const ENABLED_WIDTH = 7;
     const TARGETS_WIDTH = 15;
     const SOURCE_WIDTH = 7;
+    const STATE_WIDTH = 18;
 
-    const borderH = '┌' + '─'.repeat(NAME_WIDTH + 2) + '┬' + '─'.repeat(ENABLED_WIDTH + 2) + '┬' + '─'.repeat(TARGETS_WIDTH + 2) + '┬' + '─'.repeat(SOURCE_WIDTH + 2) + '┐';
-    const borderM = '├' + '─'.repeat(NAME_WIDTH + 2) + '┼' + '─'.repeat(ENABLED_WIDTH + 2) + '┼' + '─'.repeat(TARGETS_WIDTH + 2) + '┼' + '─'.repeat(SOURCE_WIDTH + 2) + '┤';
-    const borderF = '└' + '─'.repeat(NAME_WIDTH + 2) + '┴' + '─'.repeat(ENABLED_WIDTH + 2) + '┴' + '─'.repeat(TARGETS_WIDTH + 2) + '┴' + '─'.repeat(SOURCE_WIDTH + 2) + '┘';
+    const widths = [NAME_WIDTH, ENABLED_WIDTH, TARGETS_WIDTH, SOURCE_WIDTH, STATE_WIDTH];
+    const line = (l: string, m: string, r: string) => l + widths.map((w) => '─'.repeat(w + 2)).join(m) + r;
+    const borderH = line('┌', '┬', '┐');
+    const borderM = line('├', '┼', '┤');
+    const borderF = line('└', '┴', '┘');
 
     console.log(borderH);
-    console.log('│ ' + padRightWide('Name', NAME_WIDTH) + ' │ ' + padRightWide('Enabled', ENABLED_WIDTH) + ' │ ' + padRightWide('Targets', TARGETS_WIDTH) + ' │ ' + padRightWide('Source', SOURCE_WIDTH) + ' │');
+    console.log('│ ' + padRightWide('Name', NAME_WIDTH) + ' │ ' + padRightWide('Enabled', ENABLED_WIDTH) + ' │ ' + padRightWide('Targets', TARGETS_WIDTH) + ' │ ' + padRightWide('Source', SOURCE_WIDTH) + ' │ ' + padRightWide('State', STATE_WIDTH) + ' │');
     console.log(borderM);
 
     for (const server of status.servers) {
-      const name = truncateWide(server.name, NAME_WIDTH);
+      const name = truncateMiddle(server.name, NAME_WIDTH);
       const enabled = server.enabled ? '✓' : '✗';
       const targets = truncateWide(server.targets.join(', ') || '(none)', TARGETS_WIDTH);
       const source = padRightWide(server.source, SOURCE_WIDTH);
+      const state = padRightWide(truncateWide(formatMcpState(server), STATE_WIDTH), STATE_WIDTH);
 
-      console.log('│ ' + padRightWide(name, NAME_WIDTH) + ' │ ' + centerWide(enabled, ENABLED_WIDTH) + ' │ ' + padRightWide(targets, TARGETS_WIDTH) + ' │ ' + source + ' │');
+      console.log('│ ' + padRightWide(name, NAME_WIDTH) + ' │ ' + centerWide(enabled, ENABLED_WIDTH) + ' │ ' + padRightWide(targets, TARGETS_WIDTH) + ' │ ' + source + ' │ ' + state + ' │');
     }
 
     console.log(borderF);
@@ -304,4 +384,63 @@ function normalizeRecipe(recipe?: McpRecipe): McpRecipe | undefined {
   if (recipe.env && Object.keys(recipe.env).length > 0) normalized.env = recipe.env;
 
   return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+// ============================================================================
+// Update Command
+// ============================================================================
+
+export interface McpUpdateOptions {
+  /** Limit to one server. Defaults to every server that differs. */
+  serverName?: string;
+  targets: TargetName[];
+  allowHome?: boolean;
+}
+
+/**
+ * Re-apply catalog recipes to targets whose configuration has drifted.
+ *
+ * Only entries that exist in the catalog are touched: an inline server has no
+ * catalog recipe to apply, and overwriting it would destroy the only copy.
+ */
+export async function mcpUpdate(options: McpUpdateOptions): Promise<void> {
+  const { addMcpToConfig } = await import('./config-adapters.js');
+  const { listMcps } = await import('./catalog.js');
+
+  const discovery = await discoverProject(process.cwd(), { allowHome: options.allowHome });
+  const status = await buildMcpStatus(discovery.root, options.allowHome);
+  const catalog = new Map((await listMcps()).map((entry) => [entry.id, entry]));
+
+  let updated = 0;
+
+  for (const server of status.servers) {
+    if (options.serverName && server.name !== options.serverName) continue;
+
+    const entry = catalog.get(server.name);
+    if (!entry) {
+      if (options.serverName) {
+        console.error(`Not in the catalog: ${server.name} (configured inline)`);
+        process.exitCode = 1;
+      }
+      continue;
+    }
+
+    for (const target of options.targets) {
+      if (server.state?.[target] !== 'differs') continue;
+
+      const configPath = discovery.targets.get(target)?.path;
+      if (!configPath) continue;
+
+      await addMcpToConfig(target, configPath, server.name, entry.recipe);
+      console.log(`Updated ${target}: ${server.name}`);
+      updated++;
+    }
+  }
+
+  if (updated === 0) {
+    console.log('Nothing to update: no configured server differs from the catalog.');
+  } else {
+    console.log(`\nUpdated ${updated} server configuration${updated === 1 ? '' : 's'}.`);
+    console.log('Already-running agent sessions keep their old server list until restarted.');
+  }
 }

@@ -338,6 +338,12 @@ export interface CodexConfig {
 export interface CodexMcpServer {
   command?: string;
   args?: string[];
+  /** Remote server endpoint. Codex reads this field. */
+  url?: string;
+  /**
+   * Legacy field written by older versions of this tool. Codex ignores it, so
+   * it is read for migration but never written.
+   */
   httpUrl?: string;
   cwd?: string;
   env?: Record<string, string>;
@@ -389,7 +395,26 @@ export interface McpServerStatus {
   enabled: boolean;
   targets: TargetName[];
   source: 'catalog' | 'inline';
+  /** The recipe actually configured in each target. */
+  deployed?: Partial<Record<TargetName, McpRecipe>>;
+  /** How each target's configuration compares with the catalog. */
+  state?: Partial<Record<TargetName, McpDeploymentState>>;
 }
+
+/**
+ * How a configured MCP server relates to its catalog entry.
+ * A server is a launch recipe, not a file, so "drift" means the command
+ * differs — not that bytes differ.
+ */
+export type McpDeploymentState =
+  /** Matches the catalog recipe. */
+  | 'synced'
+  /** Configured differently from the catalog. */
+  | 'differs'
+  /** Configured here but absent from the catalog. */
+  | 'inline'
+  /** Configured but switched off. */
+  | 'disabled';
 
 /** Overall MCP status for the project */
 export interface McpWorkspaceStatus {

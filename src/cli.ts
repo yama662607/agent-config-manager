@@ -144,6 +144,7 @@ Subcommands:
   list, status            Show MCP status (default)
   add <package>           Add an MCP to the project or catalog
   edit <server>           Edit an MCP in the project
+  update [server]         Re-apply catalog recipes where the config differs
   remove <server>         Remove an MCP from the project or catalog
   enable <server>         Enable a disabled MCP
   disable <server>        Disable an MCP
@@ -742,6 +743,16 @@ async function handleMcp(argv: string[]): Promise<void> {
       const { catalogMcpShow } = await import('./cli-catalog.js');
       await catalogMcpShow(options.packageId!);
       break;
+
+    case 'update': {
+      const { mcpUpdate } = await import('./cli-mcp.js');
+      await mcpUpdate({
+        serverName: options.packageId,
+        targets: options.targets,
+        allowHome,
+      });
+      break;
+    }
 
     case 'edit':
       if (options.packageId === undefined) {

@@ -238,6 +238,12 @@ export async function mcpAdd(options: McpAddOptions): Promise<void> {
   // Add to each target
   const discovery = await discoverProject(process.cwd(), { allowHome: options.allowHome });
   const { addMcpToConfig } = await import('./config-adapters.js');
+  const { unsupportedScopeWarning } = await import('./provider-support.js');
+
+  for (const target of options.targets) {
+    const warning = unsupportedScopeWarning(target, 'mcp', options.allowHome === true);
+    if (warning) console.warn(warning);
+  }
 
   for (const target of options.targets) {
     const configPath = discovery.targets.get(target);

@@ -291,6 +291,25 @@ home directory, read only when the home directory is the project root.
 See [docs/provider-config-surfaces.md](docs/provider-config-surfaces.md) for every
 location, how each was verified, and how to re-check them when a provider updates.
 
+## Developing an MCP server
+
+A skill can be linked, so an edit reaches every provider at once. An MCP server cannot —
+it is a process, and the catalog holds a recipe for starting one. Point that recipe at a
+working copy while developing, and switch it to the published package when it ships:
+
+```bash
+acm mcp add my-server --local ~/src/my-server -t codex
+acm mcp add my-server --from-package @scope/my-server -t codex
+```
+
+`--local` reads the project to work out how it starts: a `pyproject.toml` becomes
+`uv run --directory <path> <script>`, a `package.json` becomes `node <bin>` — or
+`bun run <entry>` when the entry point is TypeScript. Anything else needs `--command`
+and `--args`.
+
+`acm doctor` checks that every configured command still resolves, which catches a
+recipe left pointing at a moved or uninstalled binary.
+
 ## MCP drift
 
 An MCP server is a launch recipe, not a file, so "drift" means a target launches

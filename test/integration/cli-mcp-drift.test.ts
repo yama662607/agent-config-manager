@@ -186,3 +186,79 @@ describe('Codex remote server field', () => {
     assert.strictEqual(server.deployed.codex.url, 'https://old.example.com/mcp');
   });
 });
+
+describe('Adopting a target configuration into the catalog', () => {
+  beforeEach(async () => {
+    await fs.rm(TEST_DIR, { recursive: true, force: true });
+    await fs.mkdir(PROJECT, { recursive: true });
+    await writeCatalog();
+  });
+
+  it('replaces a stale catalog recipe with what the target launches', async () => {
+    await acm(['mcp', 'add', 'demo-server', '-t', 'claude', '--no-register']);
+
+    // The deployed side is corrected in place — an application moved, a package
+    // gained a version suffix — and the catalog must be able to follow.
+    const configPath = path.join(PROJECT, '.mcp.json');
+    const config = JSON.parse(await fs.readFile(configPath, 'utf8'));
+    config.mcpServers['demo-server'].args = ['-y', '@demo/server@2.0.0'];
+    await fs.writeFile(configPath, JSON.stringify(config, null, 2));
+
+    const output = await acm(['mcp', 'adopt', 'demo-server', '-t', 'claude']);
+    assert.match(output, /Adopted into the catalog: demo-server/);
+
+    const parsed = JSON.parse(await acm(['mcp', '--json']));
+    const server = parsed.servers.find((s: any) => s.name === 'demo-server');
+    assert.strictEqual(server.state.claude, 'synced');
+  });
+
+  it('adopts a server that was configured inline', async () => {
+    await fs.writeFile(
+      path.join(PROJECT, '.mcp.json'),
+      JSON.stringify(
+        { mcpServers: { 'hand-written': { type: 'stdio', command: 'node', args: ['x.js'] } } },
+        null,
+        2
+      )
+    );
+
+    await acm(['mcp', 'adopt', 'hand-written', '-t', 'claude']);
+
+    const parsed = JSON.parse(await acm(['mcp', '--json']));
+    const server = parsed.servers.find((s: any) => s.name === 'hand-written');
+    assert.strictEqual(server.source, 'catalog');
+  });
+
+  it('warns when the adopted recipe carries a machine-specific path', async () => {
+    const personal = ['', 'Users', 'someone', 'output'].join('/');
+    await fs.writeFile(
+      path.join(PROJECT, '.mcp.json'),
+      JSON.stringify(
+        {
+          mcpServers: {
+            'path-bound': { type: 'stdio', command: 'node', args: [`--out=${personal}`] },
+          },
+        },
+        null,
+        2
+      )
+    );
+
+    const output = await acm(['mcp', 'adopt', 'path-bound', '-t', 'claude']);
+    assert.match(output, /machine-specific path/);
+    // Warned, not refused: the user configured it deliberately.
+    assert.match(output, /Adopted into the catalog/);
+  });
+
+  it('requires exactly one target, since adopting picks a winner', async () => {
+    const output = await acm(['mcp', 'adopt', 'demo-server', '-t', 'claude,codex']);
+    assert.match(output, /exactly one is required/);
+  });
+
+  it('leaves servers alone when nothing differs', async () => {
+    await acm(['mcp', 'add', 'demo-server', '-t', 'claude', '--no-register']);
+
+    const output = await acm(['mcp', 'adopt', '-t', 'claude']);
+    assert.match(output, /Nothing to adopt/);
+  });
+});

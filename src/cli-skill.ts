@@ -250,6 +250,19 @@ function centerWide(str: string, width: number): string {
   return ' '.repeat(left) + str + ' '.repeat(right);
 }
 
+/** Say so when a target will not read the scope being written. */
+async function warnUnsupportedScopes(
+  targets: TargetName[],
+  kind: 'skill' | 'mcp',
+  isHome: boolean
+): Promise<void> {
+  const { unsupportedScopeWarning } = await import('./provider-support.js');
+  for (const target of targets) {
+    const warning = unsupportedScopeWarning(target, kind, isHome);
+    if (warning) console.warn(warning);
+  }
+}
+
 /**
  * A symlink inside a repository records an absolute path from this machine.
  * Anyone else who clones it — and any container or remote runtime — gets a
@@ -392,6 +405,7 @@ Skill content for ${sanitizedId}.
   const { addSkillToConfig, copySkillDirToConfig, getSkillDir } = await import('./skill-adapters.js');
   const placement = options.placement ?? defaultPlacementMode(discovery.root);
   await warnIfLinkingIntoRepository(discovery.root, placement);
+  await warnUnsupportedScopes(options.targets, 'skill', options.allowHome === true);
 
   for (const target of options.targets) {
     if (target === 'grok') {

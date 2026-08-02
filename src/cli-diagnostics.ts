@@ -177,7 +177,19 @@ export async function doctor(options: DoctorOptions): Promise<{ hasErrors: boole
     hasWarnings = true;
   }
 
-  // 4. Environment checks
+  // 4. Configured MCP servers actually resolve
+  console.log('\n[MCP Commands]');
+  const unresolved = await checkMcpCommands(allowHome);
+  if (unresolved.length === 0) {
+    console.log('  ✓ Every configured command resolves');
+  } else {
+    for (const problem of unresolved) {
+      console.log(`  ✗ ${problem}`);
+    }
+    hasWarnings = true;
+  }
+
+  // 5. Environment checks
   console.log('\n[Environment]');
   const hasNode = await checkCommand('node', 'Node.js');
   const hasNpm = await checkCommand('npm', 'npm');
@@ -266,4 +278,71 @@ function formatHome(absolutePath: string): string {
   return absolutePath === home || absolutePath.startsWith(home + '/')
     ? '~' + absolutePath.slice(home.length)
     : absolutePath;
+}
+
+/**
+ * Check that every configured MCP server has something that can actually start.
+ *
+ * A recipe pointing at a moved or uninstalled binary fails silently: the agent
+ * simply has no tools from that server. One such entry existed here for months,
+ * pointing at an application that had been renamed.
+ */
+async function checkMcpCommands(allowHome: boolean): Promise<string[]> {
+  const { discoverProject } = await import('./project-discovery.js');
+  const { getMcpServers } = await import('./config-adapters.js');
+  const problems: string[] = [];
+
+  let discovery;
+  try {
+    discovery = await discoverProject(process.cwd(), { allowHome });
+  } catch {
+    return problems; // Scope errors are reported by the section above.
+  }
+
+  const seen = new Set<string>();
+
+  for (const [target, configPath] of discovery.targets.entries()) {
+    if (!configPath.exists) continue;
+
+    let servers: Record<string, { enabled: boolean; recipe?: any }>;
+    try {
+      servers = await getMcpServers(target, configPath.path);
+    } catch {
+      continue;
+    }
+
+    for (const [name, info] of Object.entries(servers)) {
+      if (!info.enabled || !info.recipe?.command) continue;
+
+      const command = info.recipe.command as string;
+      const key = `${name}:${command}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      if (!(await commandResolves(command))) {
+        problems.push(`${name} (${target}): cannot find ${formatHome(command)}`);
+      }
+    }
+  }
+
+  return problems;
+}
+
+/** Whether a command exists, as an absolute path or on PATH. */
+async function commandResolves(command: string): Promise<boolean> {
+  if (command.includes('/')) {
+    try {
+      await fs.access(command);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  try {
+    await execAsync(`command -v ${JSON.stringify(command)}`);
+    return true;
+  } catch {
+    return false;
+  }
 }

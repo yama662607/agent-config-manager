@@ -252,6 +252,22 @@ Grok stores MCP servers in TOML under `[mcp_servers.<name>]`, like Codex, but us
 `httpUrl`) for HTTP/SSE transports and supports a native `enabled` flag. Editing a Grok config
 rewrites the whole TOML file, so comments in `config.toml` are not preserved (same as Codex).
 
+## Plugins
+
+A plugin bundles skills, MCP servers and agent files. Bring one into the catalog from
+any directory, then install it for the agents that should have it:
+
+```bash
+acm plugin import ./some-plugin       # read the manifest, copy into the catalog
+acm plugin import ./some-plugin --as other-name
+acm plugin install <name> -t codex    # install for one agent
+acm plugin list
+acm plugin scan                       # find plugins the agents already have
+```
+
+`import` accepts any of the three manifest locations — `.claude-plugin/plugin.json`,
+`.codex-plugin/plugin.json`, or a root `plugin.json`.
+
 ## MCP drift
 
 An MCP server is a launch recipe, not a file, so "drift" means a target launches

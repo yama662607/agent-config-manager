@@ -14,7 +14,7 @@ import {
   getPluginInstallDir,
   validatePluginName,
 } from './plugins-metadata.js';
-import type { PluginEntry, TargetName } from './types.js';
+import type { PluginEntry, TargetName, PluginManifest } from './types.js';
 import { padRightWide, truncateWide } from './table-utils.js';
 import { AGENT_PLUGIN_DIR } from './agent-paths.js';
 import { getCatalogDir } from './acm-config.js';
@@ -256,10 +256,13 @@ export async function pluginInstall(name: string, argv: string[]): Promise<void>
     for (const target of targets) {
       const targetDir = path.join(AGENT_PLUGIN_DIR[target], name);
 
-      // Check registry, not filesystem, for reinstall guard
+      // Skip only the targets this plugin is already installed for. Testing a
+      // field that exists on every registry entry — `agentFiles` is an array,
+      // and an empty array is truthy — marked every registered plugin as
+      // installed everywhere, so nothing was ever copied.
       const existing = await getPluginEntry(name);
-      if (existing && existing.agentFiles) {
-        console.log(`  ⏭️  [${target}] Already installed (registry). Use --target to reinstall.`);
+      if (existing?.installedFor?.includes(target)) {
+        console.log(`  ⏭️  [${target}] Already installed. Remove it first to reinstall.`);
         installedTargets.push(target);
         continue;
       }
@@ -298,15 +301,19 @@ export async function pluginInstall(name: string, argv: string[]): Promise<void>
     }
     if (catalogSkillsAdded > 0) console.log(`  ✅ [catalog] ${catalogSkillsAdded} skills registered`);
 
-    // Save management copy to ~/.acm/plugins/
+    // Keep a management copy in the catalog. When the plugin already lives
+    // there — it was imported rather than discovered in a provider directory —
+    // there is nothing to copy.
     const acmPluginDir = getPluginInstallDir(name);
-    await fs.mkdir(acmPluginDir, { recursive: true });
-    await fs.cp(detail.sourcePath, acmPluginDir, {
-      recursive: true,
-      filter: (src) => path.basename(src) !== 'skills' && path.basename(src) !== '.mcp.json' && !src.endsWith('/skills') && !src.endsWith('/.mcp.json'),
-      dereference: false,
-      force: true,
-    });
+    if (path.resolve(detail.sourcePath) !== path.resolve(acmPluginDir)) {
+      await fs.mkdir(acmPluginDir, { recursive: true });
+      await fs.cp(detail.sourcePath, acmPluginDir, {
+        recursive: true,
+        filter: (src) => path.basename(src) !== 'skills' && path.basename(src) !== '.mcp.json' && !src.endsWith('/skills') && !src.endsWith('/.mcp.json'),
+        dereference: false,
+        force: true,
+      });
+    }
 
     // Read original manifest
     const originalManifestPath = path.join(acmPluginDir, '.codex-plugin', 'plugin.json');
@@ -640,4 +647,147 @@ export async function pluginDoctor(): Promise<void> {
     console.log(`  Run 'acm plugin install <name>' to register unregistered plugins.`);
     console.log(`  Run 'acm plugin uninstall <name>' to clean up orphans.\n`);
   }
+}
+
+// ============================================================================
+// Import Command
+// ============================================================================
+
+/**
+ * Read a plugin manifest, trying each provider's location.
+ * The three formats differ only in where the file sits.
+ */
+async function readPluginManifest(dir: string): Promise<PluginManifest | null> {
+  const candidates = [
+    path.join(dir, '.claude-plugin', 'plugin.json'),
+    path.join(dir, '.codex-plugin', 'plugin.json'),
+    path.join(dir, 'plugin.json'),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(await fs.readFile(candidate, 'utf8')) as PluginManifest;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+/** List the component names a plugin directory carries. */
+async function inventoryPlugin(dir: string): Promise<{
+  skills: string[];
+  mcps: string[];
+  agentFiles: string[];
+  commandFiles: string[];
+  knowledgeFiles: string[];
+}> {
+  const skills: string[] = [];
+  try {
+    for (const entry of await fs.readdir(path.join(dir, 'skills'), { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+      try {
+        await fs.access(path.join(dir, 'skills', entry.name, 'SKILL.md'));
+        skills.push(entry.name);
+      } catch {
+        // Not a skill directory.
+      }
+    }
+  } catch {
+    // No skills.
+  }
+
+  const mcps: string[] = [];
+  try {
+    const raw = JSON.parse(await fs.readFile(path.join(dir, '.mcp.json'), 'utf8'));
+    mcps.push(...Object.keys(raw.mcpServers ?? {}));
+  } catch {
+    // No MCP definitions.
+  }
+
+  const listFiles = async (sub: string, filter: (name: string) => boolean): Promise<string[]> => {
+    try {
+      const entries = await fs.readdir(path.join(dir, sub), { withFileTypes: true });
+      return entries.filter((e) => e.isFile() && filter(e.name)).map((e) => e.name);
+    } catch {
+      return [];
+    }
+  };
+
+  const agentFiles = await listFiles('agents', (n) => n.endsWith('.md') || n.endsWith('.yaml'));
+  const commandFiles = await listFiles('commands', (n) => n.endsWith('.md'));
+  const knowledgeFiles = await listFiles('.', (n) => n.endsWith('.md') && n !== 'README.md');
+
+  return { skills, mcps, agentFiles, commandFiles, knowledgeFiles };
+}
+
+/**
+ * Take a plugin directory into the catalog.
+ *
+ * Without this, a plugin could only enter the catalog by being discovered in a
+ * provider's own directory — so a plugin obtained any other way, or a catalog
+ * starting from empty, had no way in at all.
+ */
+export async function pluginImport(sourcePath: string, options: { as?: string } = {}): Promise<void> {
+  const { addPluginEntry, getPluginEntry, validatePluginName } = await import('./plugins-metadata.js');
+
+  const source = path.resolve(sourcePath);
+
+  const manifest = await readPluginManifest(source);
+  if (!manifest) {
+    console.error(`No plugin manifest found in ${source}`);
+    console.error('Expected .claude-plugin/plugin.json, .codex-plugin/plugin.json or plugin.json');
+    process.exitCode = 1;
+    return;
+  }
+
+  const name = options.as ?? manifest.name;
+  try {
+    validatePluginName(name);
+  } catch (error) {
+    console.error(`Invalid plugin name: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const destination = path.join(getCatalogDir(), 'plugins', name);
+  const alreadyThere = path.resolve(destination) === source;
+
+  if (!alreadyThere) {
+    await fs.mkdir(path.dirname(destination), { recursive: true });
+    await fs.rm(destination, { recursive: true, force: true });
+    await fs.cp(source, destination, { recursive: true, dereference: true });
+  }
+
+  const inventory = await inventoryPlugin(destination);
+  const existing = await getPluginEntry(name);
+
+  await addPluginEntry({
+    name,
+    version: manifest.version,
+    description: manifest.description ?? manifest.interface?.shortDescription,
+    author: manifest.author?.name,
+    homepage: manifest.homepage,
+    repository: manifest.repository,
+    license: manifest.license,
+    keywords: manifest.keywords,
+    category: manifest.interface?.category,
+    displayName: manifest.interface?.displayName,
+    longDescription: manifest.interface?.longDescription,
+    capabilities: manifest.interface?.capabilities,
+    agent: existing?.agent ?? 'claude',
+    installedFor: existing?.installedFor,
+    sourcePath: source,
+    ...inventory,
+    installedAt: existing?.installedAt ?? new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+
+  const parts = [
+    `${inventory.skills.length} skill${inventory.skills.length === 1 ? '' : 's'}`,
+    `${inventory.mcps.length} MCP server${inventory.mcps.length === 1 ? '' : 's'}`,
+    `${inventory.agentFiles.length} agent file${inventory.agentFiles.length === 1 ? '' : 's'}`,
+  ];
+  console.log(`Imported into the catalog: ${name} (${parts.join(', ')})`);
+  console.log(`\nRun \`acm plugin install ${name} -t <target>\` to install it.`);
 }

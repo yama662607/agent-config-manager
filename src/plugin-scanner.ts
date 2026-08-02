@@ -9,6 +9,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import type { TargetName, PluginManifest, PluginScanResult } from './types.js';
+import { getCatalogDir } from './acm-config.js';
 
 // ============================================================================
 // Types
@@ -34,6 +35,13 @@ function getHome(): string {
 function getPluginSources(): PluginSource[] {
   const home = getHome();
   return [
+    // The catalog itself. Listed first so an imported plugin is the one
+    // installed, rather than whichever provider happens to hold a copy.
+    {
+      baseDir: path.join(getCatalogDir(), 'plugins'),
+      agent: 'claude',
+      manifestPath: '.claude-plugin/plugin.json',
+    },
     // Codex plugins (most comprehensive)
     {
       baseDir: path.join(home, '.codex', '.tmp', 'plugins', 'plugins'),

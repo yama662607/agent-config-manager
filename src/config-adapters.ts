@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import * as TOML from 'smol-toml';
 import { normalizeEnvMap, validateEnvMap } from './mcp-env.js';
+import { isClaudeUserScope } from './agent-paths.js';
 import type {
   TargetName,
   ClaudeMcpConfig,
@@ -234,6 +235,12 @@ export async function addMcpToConfig(
   validateServerName(serverName);
   validateRecipe(recipe);
 
+  if (isClaudeUserScope(configPath)) {
+    const { addUserScopeServer } = await import('./claude-user-mcp.js');
+    await addUserScopeServer(serverName, recipe);
+    return serverName;
+  }
+
   const result = await readNativeConfig(target, configPath);
 
   let config: any;
@@ -306,6 +313,12 @@ export async function removeMcpFromConfig(
 ): Promise<void> {
   validateServerName(serverName);
 
+  if (isClaudeUserScope(configPath)) {
+    const { removeUserScopeServer } = await import('./claude-user-mcp.js');
+    await removeUserScopeServer(serverName);
+    return;
+  }
+
   const result = await readNativeConfig(target, configPath);
 
   if (!result.config) {
@@ -347,6 +360,12 @@ export async function disableMcpInConfig(
   serverName: string
 ): Promise<void> {
   validateServerName(serverName);
+
+  if (isClaudeUserScope(configPath)) {
+    const { removeUserScopeServer } = await import('./claude-user-mcp.js');
+    await removeUserScopeServer(serverName);
+    return;
+  }
 
   const result = await readNativeConfig(target, configPath);
 
@@ -527,6 +546,14 @@ export async function getMcpServers(
   target: TargetName,
   configPath: string
 ): Promise<Record<string, { enabled: boolean; recipe?: McpRecipe }>> {
+  if (isClaudeUserScope(configPath)) {
+    const { listUserScopeServers } = await import('./claude-user-mcp.js');
+    const servers = await listUserScopeServers();
+    return Object.fromEntries(
+      Object.entries(servers).map(([name, recipe]) => [name, { enabled: true, recipe }])
+    );
+  }
+
   const result = await readNativeConfig(target, configPath);
 
   if (!result.config) {

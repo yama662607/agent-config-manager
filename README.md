@@ -268,6 +268,29 @@ acm plugin scan                       # find plugins the agents already have
 `import` accepts any of the three manifest locations — `.claude-plugin/plugin.json`,
 `.codex-plugin/plugin.json`, or a root `plugin.json`.
 
+## How each provider is written
+
+`acm` edits provider configuration files directly — except where a file also holds the
+application's own runtime state.
+
+| Provider | Home scope | Written by |
+|----------|-----------|------------|
+| Claude Code | `~/.claude.json` → `mcpServers` | `claude mcp add-json -s user` |
+| Codex | `~/.codex/config.toml` | direct |
+| Antigravity | `~/.gemini/config/mcp_config.json` | direct |
+| Grok | `~/.grok/config.toml` | direct |
+
+Claude's user scope lives inside its live state file — caches, OAuth tokens, per-project
+history — so editing it behind a running session risks losing that state. `acm` delegates
+to the provider's own CLI instead, falling back to a direct edit only when the CLI is
+absent, which means Claude Code is not installed and no session can be holding the file.
+
+`~/.mcp.json` is *not* the user scope. It is a project file that happens to sit in the
+home directory, read only when the home directory is the project root.
+
+See [docs/provider-config-surfaces.md](docs/provider-config-surfaces.md) for every
+location, how each was verified, and how to re-check them when a provider updates.
+
 ## MCP drift
 
 An MCP server is a launch recipe, not a file, so "drift" means a target launches

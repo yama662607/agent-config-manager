@@ -145,6 +145,7 @@ Subcommands:
   add <package>           Add an MCP to the project or catalog
   edit <server>           Edit an MCP in the project
   update [server]         Re-apply catalog recipes where the config differs
+  adopt [server] -t <t>   Copy a target's configuration back into the catalog
   remove <server>         Remove an MCP from the project or catalog
   enable <server>         Enable a disabled MCP
   disable <server>        Disable an MCP
@@ -743,6 +744,18 @@ async function handleMcp(argv: string[]): Promise<void> {
       const { catalogMcpShow } = await import('./cli-catalog.js');
       await catalogMcpShow(options.packageId!);
       break;
+
+    case 'adopt': {
+      const { mcpAdopt } = await import('./cli-mcp.js');
+      if (options.targets.length !== 1) {
+        process.stderr.write('Usage: acm mcp adopt [server] -t <one-target>\n');
+        process.stderr.write('Adopting takes one target as correct, so exactly one is required.\n');
+        process.exitCode = 1;
+        return;
+      }
+      await mcpAdopt({ serverName: options.packageId, from: options.targets[0], allowHome });
+      break;
+    }
 
     case 'update': {
       const { mcpUpdate } = await import('./cli-mcp.js');

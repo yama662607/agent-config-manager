@@ -444,3 +444,73 @@ export async function mcpUpdate(options: McpUpdateOptions): Promise<void> {
     console.log('Already-running agent sessions keep their old server list until restarted.');
   }
 }
+
+// ============================================================================
+// Adopt Command
+// ============================================================================
+
+export interface McpAdoptOptions {
+  /** Limit to one server. Defaults to every server that differs. */
+  serverName?: string;
+  /** Which target's configuration to take as correct. */
+  from: TargetName;
+  allowHome?: boolean;
+}
+
+/**
+ * Copy a target's configuration back into the catalog.
+ *
+ * The inverse of `update`. A deployed recipe is often the correct one: an
+ * application moves, a package gains a version suffix, someone fixes a broken
+ * command in place. Without this, the catalog can only ever be corrected by
+ * hand-editing TOML.
+ */
+export async function mcpAdopt(options: McpAdoptOptions): Promise<void> {
+  const { addMcp, getMcp, normalizeMcpPackage } = await import('./catalog.js');
+
+  const discovery = await discoverProject(process.cwd(), { allowHome: options.allowHome });
+  const status = await buildMcpStatus(discovery.root, options.allowHome);
+
+  let adopted = 0;
+
+  for (const server of status.servers) {
+    if (options.serverName && server.name !== options.serverName) continue;
+
+    const state = server.state?.[options.from];
+    if (state !== 'differs' && state !== 'inline') continue;
+
+    const recipe = server.deployed?.[options.from];
+    if (!recipe || (!recipe.command && !recipe.url)) {
+      console.error(`Nothing to adopt for ${server.name}: ${options.from} has no launch recipe`);
+      process.exitCode = 1;
+      continue;
+    }
+
+    // Personal paths in a recipe are usually a mistake worth surfacing, but the
+    // user asked for this configuration, so warn rather than refuse.
+    const personal = [recipe.command, ...(recipe.args ?? [])]
+      .filter((value): value is string => typeof value === 'string')
+      .filter((value) => /\/(Users|home)\/[A-Za-z0-9._-]+/.test(value));
+    for (const value of personal) {
+      console.warn(`  Warning: ${server.name} records a machine-specific path: ${value}`);
+    }
+
+    const existing = await getMcp(server.name);
+    const entry = normalizeMcpPackage(server.name, {
+      recipe,
+      displayName: existing?.displayName,
+      description: existing?.description,
+      tags: existing?.tags,
+    });
+
+    await addMcp(entry);
+    console.log(`Adopted into the catalog: ${server.name} (from ${options.from})`);
+    adopted++;
+  }
+
+  if (adopted === 0) {
+    console.log(`Nothing to adopt: no server differs from the catalog in ${options.from}.`);
+  } else {
+    console.log(`\nAdopted ${adopted} recipe${adopted === 1 ? '' : 's'} into the catalog.`);
+  }
+}

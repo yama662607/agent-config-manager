@@ -277,6 +277,18 @@ compared, because a missing variable is a real difference.
 `acm mcp update` only touches servers that exist in the catalog: an inline server
 has no catalog recipe to apply, and overwriting it would destroy the only copy.
 
+When the deployed side is the correct one — an application moved, a package gained a
+version suffix, someone fixed a broken command in place — adopt it instead:
+
+```bash
+acm mcp adopt <server> -t claude    # copy that target's recipe into the catalog
+acm mcp adopt -t claude             # everything that differs or is inline
+```
+
+Adopting takes exactly one target, since it picks a winner. It warns when the adopted
+recipe carries a machine-specific path, but does not refuse: the configuration was
+deliberate.
+
 ## Where a skill came from
 
 A downloaded skill has an upstream that keeps moving. `acm` records where each one

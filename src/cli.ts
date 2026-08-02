@@ -645,7 +645,7 @@ async function handleMcp(argv: string[]): Promise<void> {
     } else if (arg === '--json') {
       json = true;
       i++;
-    } else if (['--command', '--args', '--url', '--cwd', '--env', '--targets', '-t', '--file', '--display-name', '--description', '--name', '--category', '--language', '--popularity', '--source-type', '--search', '--source'].includes(arg)) {
+    } else if (['--command', '--args', '--url', '--local', '--from-package', '--cwd', '--env', '--targets', '-t', '--file', '--display-name', '--description', '--name', '--category', '--language', '--popularity', '--source-type', '--search', '--source'].includes(arg)) {
       filteredArgs.push(arg);
       if (i + 1 < argv.length) {
         filteredArgs.push(argv[++i]);
@@ -729,7 +729,7 @@ async function handleMcp(argv: string[]): Promise<void> {
           packageId: options.packageId!,
           targets: options.targets,
           noRegister: options.noRegister,
-          recipe: buildRecipeFromMcpOptions(options),
+          recipe: await buildRecipeFromMcpOptions(options),
           allowHome,
         });
       }
@@ -781,7 +781,7 @@ async function handleMcp(argv: string[]): Promise<void> {
       await mcpEdit({
         serverName: options.packageId!,
         targets: options.targets,
-        recipe: buildRecipeFromMcpOptions(options) ?? {},
+        recipe: (await buildRecipeFromMcpOptions(options)) ?? {},
         allowHome,
       });
       break;
@@ -1335,6 +1335,10 @@ async function init(options: InitOptions): Promise<void> {
 
 interface McpOptions {
   packageId?: string;
+  /** Working copy to launch the server from. */
+  local?: string;
+  /** Published package to launch the server from. */
+  fromPackage?: string;
   targets: TargetName[];
   noRegister: boolean;
   verbose?: boolean;
@@ -1388,6 +1392,14 @@ function parseMcpOptions(argv: string[], subcommand?: string): McpOptions {
         break;
       case '--url':
         options.url = nextVal(argv, i, arg);
+        i++;
+        break;
+      case '--local':
+        options.local = nextVal(argv, i, arg);
+        i++;
+        break;
+      case '--from-package':
+        options.fromPackage = nextVal(argv, i, arg);
         i++;
         break;
       case '--cwd':
@@ -1476,7 +1488,18 @@ function parseCatalogMcpAddOptions(argv: string[]): CatalogMcpAddOptions {
   return options;
 }
 
-function buildRecipeFromMcpOptions(options: McpOptions): McpAddOptions['recipe'] | McpEditOptions['recipe'] | undefined {
+async function buildRecipeFromMcpOptions(options: McpOptions): Promise<McpAddOptions['recipe'] | McpEditOptions['recipe'] | undefined> {
+  // A working copy or a published package fully determines how to start the
+  // server, so they replace the individual fields rather than merging with them.
+  if (options.local) {
+    const { localRecipe } = await import('./mcp-local.js');
+    return localRecipe(options.local);
+  }
+  if (options.fromPackage) {
+    const { packageRecipe } = await import('./mcp-local.js');
+    return packageRecipe(options.fromPackage);
+  }
+
   const recipe: NonNullable<McpAddOptions['recipe']> = {};
 
   if (options.url) recipe.url = options.url;

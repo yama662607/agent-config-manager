@@ -252,6 +252,34 @@ Grok stores MCP servers in TOML under `[mcp_servers.<name>]`, like Codex, but us
 `httpUrl`) for HTTP/SSE transports and supports a native `enabled` flag. Editing a Grok config
 rewrites the whole TOML file, so comments in `config.toml` are not preserved (same as Codex).
 
+## Plugins bundled in desktop applications
+
+The most current agent tooling is often not in a user-facing directory: it is bundled
+inside a desktop application and replaced when that application updates.
+
+```bash
+acm plugin discover            # search applications for bundled plugins
+acm plugin discover --import   # and take the new ones into the catalog
+```
+
+Nothing is located by a fixed path. A plugin is anything carrying a manifest
+(`.claude-plugin/`, `.codex-plugin/`, or a root `plugin.json`) or a `skills/`
+directory, and it is attributed to the application that contains it, with that
+application's version.
+
+That version matters for updates. An application replaces its whole bundle — often at a
+new path — so `acm doctor` compares the digest recorded at import against the source's
+digest now, locating the plugin by name rather than by where it used to be:
+
+```
+[Catalog Drift]
+  ● visualize: changed in ChatGPT 26.700.00000 -> 26.727.51351
+  ● 4 uncommitted changes in the catalog (4 in skills)
+```
+
+Two separate questions, because the fixes differ: **the source moved** (refresh from it)
+and **the catalog moved** (commit it).
+
 ## Plugins
 
 A plugin bundles skills, MCP servers and agent files. Bring one into the catalog from

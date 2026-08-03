@@ -58,7 +58,7 @@ Commands:
   catalog     Browse and manage catalog (TUI mode) [DEPRECATED: Use "-g" or "--global" instead]
   mcp         Manage MCP servers (TUI mode by default)
   skill       Manage skills (TUI mode by default)
-  plugin      Manage plugins (import, scan, list, install, uninstall)
+  plugin      Manage plugins (discover, import, scan, list, install, uninstall)
   scan        Discover skills and MCPs already configured across agents
   validate    Validate current project configuration [DEPRECATED: Use "acm doctor --strict" instead]
   doctor      Run diagnostics and health checks
@@ -1197,6 +1197,12 @@ async function handlePlugin(argv: string[]): Promise<void> {
       }
       await (await import('./cli-plugin.js')).pluginShow(args[0]);
       break;
+
+    case 'discover': {
+      const { pluginDiscover } = await import('./cli-plugin.js');
+      await pluginDiscover({ import: argv.includes('--import') });
+      break;
+    }
 
     case 'import': {
       if (argv.length < 2) {

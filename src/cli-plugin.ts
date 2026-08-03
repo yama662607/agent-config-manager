@@ -762,6 +762,13 @@ export async function pluginImport(sourcePath: string, options: { as?: string } 
   const inventory = await inventoryPlugin(destination);
   const existing = await getPluginEntry(name);
 
+  // Record what the source looked like, so a later scan can tell whether the
+  // application replaced it.
+  const { digestSkillDir } = await import('./skill-placement.js');
+  const { describeSource } = await import('./desktop-scanner.js');
+  const sourceDigest = (await digestSkillDir(source)) ?? undefined;
+  const origin = await describeSource(source);
+
   await addPluginEntry({
     name,
     version: manifest.version,
@@ -781,6 +788,10 @@ export async function pluginImport(sourcePath: string, options: { as?: string } 
     ...inventory,
     installedAt: existing?.installedAt ?? new Date().toISOString(),
     updatedAt: new Date().toISOString(),
+    sourceDigest,
+    sourceApp: origin.app,
+    sourceAppVersion: origin.appVersion,
+    reportedUpdatedAt: origin.reportedUpdatedAt,
   });
 
   const parts = [
@@ -790,4 +801,58 @@ export async function pluginImport(sourcePath: string, options: { as?: string } 
   ];
   console.log(`Imported into the catalog: ${name} (${parts.join(', ')})`);
   console.log(`\nRun \`acm plugin install ${name} -t <target>\` to install it.`);
+}
+
+
+// ============================================================================
+// Desktop Discovery
+// ============================================================================
+
+/**
+ * Report plugins bundled inside desktop applications, and optionally take them
+ * into the catalog.
+ */
+export async function pluginDiscover(options: { import?: boolean } = {}): Promise<void> {
+  const formatHomePath = (p: string) =>
+    p.startsWith(home + '/') ? '~' + p.slice(home.length) : p;
+  const { scanDesktopPlugins } = await import('./desktop-scanner.js');
+  const { getPluginEntry } = await import('./plugins-metadata.js');
+
+  console.log('Searching desktop applications for bundled plugins...\n');
+  const found = await scanDesktopPlugins();
+
+  if (found.length === 0) {
+    console.log('None found.');
+    return;
+  }
+
+  for (const plugin of found) {
+    const known = await getPluginEntry(plugin.name);
+    const where = plugin.app ? `${plugin.app}${plugin.appVersion ? ` ${plugin.appVersion}` : ''}` : 'unknown app';
+    const parts = [where];
+    if (plugin.skills.length > 0) parts.push(`${plugin.skills.length} skills`);
+    if (plugin.reportedUpdatedAt) parts.push(`updated ${plugin.reportedUpdatedAt.slice(0, 10)}`);
+
+    console.log(`${known ? '=' : '+'} ${plugin.name}  (${parts.join(', ')})`);
+    console.log(`    ${formatHomePath(plugin.sourcePath)}`);
+  }
+
+  const newcomers = [];
+  for (const plugin of found) {
+    if (!(await getPluginEntry(plugin.name))) newcomers.push(plugin);
+  }
+
+  console.log();
+  console.log(`${found.length} found, ${newcomers.length} not in the catalog.`);
+
+  if (!options.import) {
+    if (newcomers.length > 0) {
+      console.log('Run with --import to take them into the catalog.');
+    }
+    return;
+  }
+
+  for (const plugin of newcomers) {
+    await pluginImport(plugin.sourcePath, { as: plugin.name });
+  }
 }

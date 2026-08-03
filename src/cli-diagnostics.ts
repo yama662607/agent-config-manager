@@ -189,7 +189,11 @@ export async function doctor(options: DoctorOptions): Promise<{ hasErrors: boole
     hasWarnings = true;
   }
 
-  // 5. Environment checks
+  // 5. What has changed since the catalog last agreed with the world
+  console.log('\n[Catalog Drift]');
+  await reportDrift();
+
+  // 6. Environment checks
   console.log('\n[Environment]');
   const hasNode = await checkCommand('node', 'Node.js');
   const hasNpm = await checkCommand('npm', 'npm');
@@ -344,5 +348,57 @@ async function commandResolves(command: string): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Report both kinds of drift: sources that moved ahead of the catalog, and
+ * catalog files that moved ahead of their last commit.
+ *
+ * Skills with a recorded upstream are counted but not queried — that needs the
+ * network, and `acm skill outdated` is the command that asks for it.
+ */
+async function reportDrift(): Promise<void> {
+  const { pluginSourceDrift, catalogGitDrift, summarizeGitDrift } = await import('./catalog-drift.js');
+
+  try {
+    const plugins = await pluginSourceDrift();
+    if (plugins.length === 0) {
+      console.log('  ✓ Every tracked plugin matches its source');
+    } else {
+      for (const item of plugins) {
+        console.log(`  ● ${item.id}: ${item.detail}`);
+      }
+      console.log(`    Refresh with \`acm plugin import <path> --as <name>\``);
+    }
+  } catch (error) {
+    console.log(`  ⚠ Could not compare plugin sources: ${error instanceof Error ? error.message : error}`);
+  }
+
+  try {
+    const { loadSkillsMetadata } = await import('./skills-metadata.js');
+    const skills = Object.values((await loadSkillsMetadata()).skills);
+    const tracked = skills.filter((s) => s.sourceUrl).length;
+    if (tracked > 0) {
+      console.log(`  ○ ${tracked} skills record an upstream — run \`acm skill outdated\` to check (uses the network)`);
+    }
+  } catch {
+    // Metadata is optional.
+  }
+
+  try {
+    const git = await catalogGitDrift();
+    if (git === null) {
+      console.log('  ○ The catalog is not a git repository, so changes are not tracked');
+    } else if (git.length === 0) {
+      console.log('  ✓ The catalog matches its last commit');
+    } else {
+      const areas = [...summarizeGitDrift(git)]
+        .map(([area, count]) => `${count} in ${area}`)
+        .join(', ');
+      console.log(`  ● ${git.length} uncommitted change${git.length === 1 ? '' : 's'} in the catalog (${areas})`);
+    }
+  } catch (error) {
+    console.log(`  ⚠ Could not read catalog git status: ${error instanceof Error ? error.message : error}`);
   }
 }

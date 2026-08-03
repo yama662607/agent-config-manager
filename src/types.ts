@@ -291,6 +291,17 @@ export interface PluginEntry {
   updatedAt?: string;
   /** User favorite flag */
   pinned?: boolean;
+
+  // --- Provenance: where this came from, so updates can be noticed ---
+
+  /** Digest of the source at import time, to detect an upstream change. */
+  sourceDigest?: string;
+  /** Application the source belongs to, when it was bundled in one. */
+  sourceApp?: string;
+  /** Version of that application at import time. */
+  sourceAppVersion?: string;
+  /** Update time the plugin reported about itself at import time. */
+  reportedUpdatedAt?: string;
 }
 
 /** Result of scanning for an available plugin */

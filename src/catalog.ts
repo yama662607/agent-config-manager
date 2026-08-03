@@ -240,6 +240,8 @@ export async function loadCatalog(): Promise<CatalogFile> {
   }
 
   // 2. Skill Drag-and-Drop Auto-Discovery & Synchronization
+  await adoptAddedAtFromCatalog(catalog);
+  const { skillAddedAt, skillTags } = await loadSkillIndexMetadata();
   const skillsDir = getSkillsDir();
   try {
     const entries = await fs.readdir(skillsDir, { withFileTypes: true });
@@ -274,24 +276,18 @@ export async function loadCatalog(): Promise<CatalogFile> {
         const content = await fs.readFile(skillFilePath, 'utf8');
         const recipe = parseSkillFrontmatter(content);
 
-        const existing = catalog.skills[skillId];
-        const updatedEntry: SkillCatalogEntry = {
+        // The index is derived, not stored: every field here comes from the
+        // directory or the file's own frontmatter. Only `addedAt` is knowledge
+        // the filesystem does not hold, and that lives in skills-metadata.toml.
+        catalog.skills[skillId] = {
           id: skillId,
           displayName: recipe.name || skillId,
           description: recipe.description || '',
           path: `skills/${skillId}`,
-          addedAt: existing?.addedAt ?? new Date().toISOString(),
-          tags: existing?.tags ?? [],
+          addedAt: skillAddedAt.get(skillId) ?? new Date().toISOString(),
+          tags: skillTags.get(skillId) ?? [],
           license: recipe.license,
         };
-
-        if (!existing ||
-            existing.displayName !== updatedEntry.displayName ||
-            existing.description !== updatedEntry.description ||
-            existing.license !== updatedEntry.license) {
-          catalog.skills[skillId] = updatedEntry;
-          needsSync = true;
-        }
       } catch {
         // Skip directory if SKILL.md not accessible
       }
@@ -300,7 +296,6 @@ export async function loadCatalog(): Promise<CatalogFile> {
     for (const skillId of Object.keys(catalog.skills)) {
       if (!activeSkillIds.has(skillId)) {
         delete catalog.skills[skillId];
-        needsSync = true;
       }
     }
   } catch {
@@ -374,9 +369,15 @@ async function writeCatalogAtomic(catalog: CatalogFile): Promise<void> {
   const catalogPath = getCatalogPath();
   const tempPath = `${catalogPath}.tmp`;
 
+  // The skill index is rebuilt from the directory on every load, so persisting
+  // it only produced a second place to disagree with — and the two did, by 62
+  // entries. The file holds MCP recipes, which have no directory to derive
+  // them from.
+  const { skills: _derived, ...persisted } = catalog;
+
   await acquireLock();
   try {
-    await fs.writeFile(tempPath, TOML.stringify(catalog as any), 'utf8');
+    await fs.writeFile(tempPath, TOML.stringify(persisted as any), 'utf8');
     await fs.rename(tempPath, catalogPath);
   } finally {
     await releaseLock();
@@ -531,6 +532,64 @@ function validateSkillId(id: string): void {
 /**
  * List all skill entries in the catalog (metadata only).
  */
+/**
+ * Read the parts of a skill's record the filesystem cannot supply.
+ *
+ * `addedAt` and user tags are knowledge, not derivable from files, so they live
+ * in skills-metadata.toml. Everything else in the index — id, path, display
+ * name, description, license — is read from the directory and its frontmatter,
+ * which is why the index is no longer written back to catalog.toml.
+ */
+/**
+ * Move `addedAt` out of a catalog file written by an older version.
+ *
+ * Runs once: after the index stops being persisted, there is nothing left to
+ * adopt. Existing metadata always wins, so re-running cannot rewrite history.
+ */
+async function adoptAddedAtFromCatalog(catalog: CatalogFile): Promise<void> {
+  const stored = Object.values(catalog.skills ?? {});
+  if (stored.length === 0) return;
+
+  try {
+    const { loadSkillsMetadata, saveSkillsMetadata } = await import('./skills-metadata.js');
+    const data = await loadSkillsMetadata();
+
+    let adopted = 0;
+    for (const entry of stored) {
+      if (!entry.addedAt) continue;
+      const meta = data.skills[entry.id] ?? {};
+      if (meta.installedAt) continue;
+      data.skills[entry.id] = { ...meta, installedAt: entry.addedAt };
+      adopted++;
+    }
+
+    if (adopted > 0) await saveSkillsMetadata(data);
+  } catch {
+    // Metadata is optional; the index still works without it.
+  }
+}
+
+async function loadSkillIndexMetadata(): Promise<{
+  skillAddedAt: Map<string, string>;
+  skillTags: Map<string, string[]>;
+}> {
+  const skillAddedAt = new Map<string, string>();
+  const skillTags = new Map<string, string[]>();
+
+  try {
+    const { loadSkillsMetadata } = await import('./skills-metadata.js');
+    const data = await loadSkillsMetadata();
+    for (const [id, meta] of Object.entries(data.skills)) {
+      if (meta.installedAt) skillAddedAt.set(id, meta.installedAt);
+      if (meta.tags) skillTags.set(id, meta.tags);
+    }
+  } catch {
+    // Metadata is optional.
+  }
+
+  return { skillAddedAt, skillTags };
+}
+
 export async function listSkills(): Promise<SkillCatalogEntry[]> {
   const catalog = await loadCatalog();
   return Object.values(catalog.skills);

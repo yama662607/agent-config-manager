@@ -435,6 +435,22 @@ acm skill -H --json | jq '.skills[] | select(.placement.claude == "copy-stale") 
 acm mcp --json | jq '.servers[].name'
 ```
 
+## What the catalog stores
+
+| Held in | What |
+|---------|------|
+| `skills/<id>/` | The skills themselves — the directory *is* the index |
+| `skills-metadata.toml` | What files cannot say: when it was added, tags, category, upstream, pinned, deprecated |
+| `catalog.toml` | MCP recipes, which have no directory to derive them from |
+
+The skill index is rebuilt from the directory on every load: id from the folder name,
+display name and description from the frontmatter. It is therefore not written back to
+`catalog.toml` — storing it created a second place to disagree with, and on a real
+catalog of 623 skills the two had drifted apart by 62 entries.
+
+Dropping a skill directory in works with no further step, and editing frontmatter shows
+up immediately.
+
 ## Catalog Location
 
 `acm` keeps two directories apart:

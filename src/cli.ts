@@ -61,7 +61,7 @@ Commands:
   plugin      Manage plugins (discover, import, scan, list, install, uninstall)
   scan        Discover skills and MCPs already configured across agents
   validate    Validate current project configuration [DEPRECATED: Use "acm doctor --strict" instead]
-  doctor      Run diagnostics and health checks
+  doctor      Run diagnostics and health checks (--offline skips network checks)
 
 Scopes (a command acts on exactly one):
   --project           The current directory's config (default)
@@ -1256,7 +1256,8 @@ async function handleDoctor(argv: string[]): Promise<void> {
   const fix = parseFlag(argv, 'fix');
   const strict = parseFlag(argv, 'strict');
   const allowHome = parseFlag(argv, 'allow-home', 'H') || parseFlag(argv, 'allowHome');
-  await doctor({ fix, strict, allowHome });
+  const offline = parseFlag(argv, 'offline');
+  await doctor({ fix, strict, allowHome, offline });
 }
 
 // ============================================================================

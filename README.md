@@ -280,6 +280,11 @@ digest now, locating the plugin by name rather than by where it used to be:
 Two separate questions, because the fixes differ: **the source moved** (refresh from it)
 and **the catalog moved** (commit it).
 
+`acm doctor` also compares skills against their recorded upstream, which needs the
+network. It runs by default — a diagnosis that quietly skips a class of problem is worse
+than a slow one, and it is not slow. `--offline` skips it for CI or a missing
+connection.
+
 ## Plugins
 
 A plugin bundles skills, MCP servers and agent files. Bring one into the catalog from

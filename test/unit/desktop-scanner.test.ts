@@ -50,3 +50,19 @@ describe('Desktop plugin discovery', () => {
     }
   });
 });
+
+describe('Search scope', () => {
+  it('skips application bundles with no agent content', async () => {
+    // Two audio applications alone accounted for 24,000 directories of the
+    // old search. The check is one readdir per bundle, before walking.
+    const { scanDesktopPlugins } = await import('../../src/desktop-scanner.js');
+
+    const started = Date.now();
+    const found = await scanDesktopPlugins();
+    const elapsed = Date.now() - started;
+
+    // Generous: the point is that it is seconds, not tens of seconds.
+    assert.ok(elapsed < 15_000, `scan took ${elapsed}ms`);
+    assert.ok(Array.isArray(found));
+  });
+});

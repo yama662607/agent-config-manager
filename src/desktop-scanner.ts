@@ -21,19 +21,86 @@ import type { PluginManifest } from './types.js';
 
 const run = promisify(execFile);
 
-/** Where applications keep bundled agent content. */
-function searchRoots(): string[] {
+/**
+ * Where to look, and how deep.
+ *
+ * An application bundle is mostly frameworks and compiled code; only
+ * `Contents/Resources` holds shipped content, so the rest is never walked.
+ * The depths come from the deepest layout observed in practice — an app's
+ * `Resources/plugins/<marketplace>/plugins/<name>` and Claude Desktop's
+ * `<app>/local-agent-mode-sessions/<uuid>/<uuid>/rpm/<plugin>` — plus one level
+ * of headroom. Walking further multiplies cost without finding anything: at
+ * depth 9 the search visited 119,000 directories, at these depths it visits a
+ * fraction of that.
+ */
+interface SearchRoot {
+  dir: string;
+  depth: number;
+}
+
+async function searchRoots(): Promise<SearchRoot[]> {
   const home = os.homedir();
-  return [
-    '/Applications',
-    path.join(home, 'Applications'),
-    path.join(home, 'Library', 'Application Support'),
-  ];
+  const roots: SearchRoot[] = [];
+
+  for (const applications of ['/Applications', path.join(home, 'Applications')]) {
+    let entries;
+    try {
+      entries = await fs.readdir(applications, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (!entry.name.endsWith('.app')) continue;
+
+      const resources = path.join(applications, entry.name, 'Contents', 'Resources');
+      if (await looksLikeAgentApp(resources)) {
+        roots.push({ dir: resources, depth: 7 });
+      }
+    }
+  }
+
+  roots.push({ dir: path.join(home, 'Library', 'Application Support'), depth: 7 });
+  return roots;
+}
+
+/**
+ * Whether an application ships anything an agent would use.
+ *
+ * Checked one level down, before walking: most applications are not agent
+ * tooling at all, and two audio applications alone accounted for 24,000
+ * directories of the search. A bundle qualifies when its resources mention
+ * plugins, skills, agents or prompts near the top.
+ */
+async function looksLikeAgentApp(resources: string): Promise<boolean> {
+  let entries;
+  try {
+    entries = await fs.readdir(resources, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+
+  const interesting = /^(plugins?|skills?|agents?|prompts?|bundled|app|.*-resources)$/i;
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (interesting.test(entry.name)) return true;
+  }
+
+  return false;
 }
 
 /** Directory names that never contain agent content and are expensive to walk. */
 const SKIP_DIRECTORIES = new Set([
   'node_modules',
+  'Frameworks',
+  'MacOS',
+  '_CodeSignature',
+  'PlugIns',
+  'locales',
+  'fonts',
+  'images',
+  'icons',
   'Cache',
   'Caches',
   'Code Cache',
@@ -216,11 +283,11 @@ async function walk(dir: string, depth: number, found: DesktopPlugin[]): Promise
 }
 
 /** Find plugins bundled inside desktop applications. */
-export async function scanDesktopPlugins(maxDepth = 9): Promise<DesktopPlugin[]> {
+export async function scanDesktopPlugins(): Promise<DesktopPlugin[]> {
   const found: DesktopPlugin[] = [];
 
-  for (const root of searchRoots()) {
-    await walk(root, maxDepth, found);
+  for (const root of await searchRoots()) {
+    await walk(root.dir, root.depth, found);
   }
 
   return found.sort((a, b) => a.name.localeCompare(b.name));

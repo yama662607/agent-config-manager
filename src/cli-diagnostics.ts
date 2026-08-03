@@ -101,6 +101,8 @@ export interface DoctorOptions {
   fix: boolean;
   strict?: boolean;
   allowHome?: boolean;
+  /** Skip the checks that need the network. */
+  offline?: boolean;
 }
 
 /**
@@ -191,7 +193,7 @@ export async function doctor(options: DoctorOptions): Promise<{ hasErrors: boole
 
   // 5. What has changed since the catalog last agreed with the world
   console.log('\n[Catalog Drift]');
-  await reportDrift();
+  await reportDrift(options.offline === true);
 
   // 6. Environment checks
   console.log('\n[Environment]');
@@ -358,7 +360,7 @@ async function commandResolves(command: string): Promise<boolean> {
  * Skills with a recorded upstream are counted but not queried — that needs the
  * network, and `acm skill outdated` is the command that asks for it.
  */
-async function reportDrift(): Promise<void> {
+async function reportDrift(offline: boolean): Promise<void> {
   const { pluginSourceDrift, catalogGitDrift, summarizeGitDrift } = await import('./catalog-drift.js');
 
   try {
@@ -375,16 +377,7 @@ async function reportDrift(): Promise<void> {
     console.log(`  ⚠ Could not compare plugin sources: ${error instanceof Error ? error.message : error}`);
   }
 
-  try {
-    const { loadSkillsMetadata } = await import('./skills-metadata.js');
-    const skills = Object.values((await loadSkillsMetadata()).skills);
-    const tracked = skills.filter((s) => s.sourceUrl).length;
-    if (tracked > 0) {
-      console.log(`  ○ ${tracked} skills record an upstream — run \`acm skill outdated\` to check (uses the network)`);
-    }
-  } catch {
-    // Metadata is optional.
-  }
+  await reportUpstreamSkills(offline);
 
   try {
     const git = await catalogGitDrift();
@@ -401,4 +394,49 @@ async function reportDrift(): Promise<void> {
   } catch (error) {
     console.log(`  ⚠ Could not read catalog git status: ${error instanceof Error ? error.message : error}`);
   }
+}
+
+/**
+ * Compare skills against their recorded upstream.
+ *
+ * This is the one part of the diagnosis that leaves the machine. It runs by
+ * default because a diagnosis that quietly skips a whole class of problem is
+ * worse than a slow one — and it is not slow: twenty entries take about three
+ * seconds. `--offline` skips it for CI, aeroplanes, and upstreams that are down.
+ */
+async function reportUpstreamSkills(offline: boolean): Promise<void> {
+  const { loadSkillsMetadata } = await import('./skills-metadata.js');
+
+  let tracked;
+  try {
+    tracked = Object.entries((await loadSkillsMetadata()).skills).filter(
+      ([, meta]) => meta.sourceUrl
+    );
+  } catch {
+    return; // Metadata is optional.
+  }
+
+  if (tracked.length === 0) return;
+
+  if (offline) {
+    console.log(`  ○ ${tracked.length} skills record an upstream (not checked: --offline)`);
+    return;
+  }
+
+  const { checkUpstreamAll } = await import('./skill-provenance.js');
+  const results = await checkUpstreamAll(tracked.map(([id, meta]) => ({ id, meta })));
+
+  const behind = results.filter((r) => r.state === 'behind');
+  const unreachable = results.filter((r) => r.state === 'unreachable');
+
+  if (behind.length === 0) {
+    const suffix = unreachable.length > 0 ? `, ${unreachable.length} unreachable` : '';
+    console.log(`  ✓ ${results.length} tracked skills match their upstream${suffix}`);
+    return;
+  }
+
+  for (const item of behind) {
+    console.log(`  ● ${item.skillId}: upstream moved (${item.recordedRef?.slice(0, 8)} -> ${item.latestRef?.slice(0, 8)})`);
+  }
+  console.log('    Review, then re-install what you want with `acm skill install <url> --force`');
 }

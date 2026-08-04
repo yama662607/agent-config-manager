@@ -106,7 +106,7 @@ export async function catalogMcpList(filter?: McpListFilter): Promise<void> {
 
   console.log(borderF);
   console.log();
-  console.log('Run `acm catalog mcp show <id>` for details.');
+  console.log('Run `acm mcp show -g <id>` for details.');
   console.log('Filter: --category <cat>  --language <lang>  --popularity <high|medium|low>  --pinned  --deprecated');
 }
 
@@ -145,7 +145,7 @@ export async function catalogMcpShow(id: string): Promise<void> {
 
   if (!entry) {
     console.error(`MCP entry not found: ${id}\n`);
-    console.log('Run `acm catalog mcp list` to see available entries.');
+    console.log('Run `acm mcp list -g` to see available entries.');
     process.exitCode = 1;
     return;
   }
@@ -222,7 +222,7 @@ export async function catalogMcpAdd(options: CatalogMcpAddOptions): Promise<void
   const existing = await getMcp(options.packageId);
   if (existing) {
     console.error(`MCP entry already exists: ${options.packageId}\n`);
-    console.log('Use `acm catalog mcp edit` to modify the entry.');
+    console.log('Use `acm mcp edit` to modify the entry.');
     process.exitCode = 1;
     return;
   }
@@ -266,7 +266,7 @@ export async function catalogMcpRemove(id: string): Promise<void> {
 
   if (!removed) {
     console.error(`MCP entry not found: ${id}\n`);
-    console.log('Run `acm catalog mcp list` to see available entries.');
+    console.log('Run `acm mcp list -g` to see available entries.');
     process.exitCode = 1;
     return;
   }
@@ -295,7 +295,7 @@ export async function catalogSkillInstall(options: CatalogSkillInstallOptions): 
 
   if (!info) {
     console.error(`Skill not found in registry: ${options.skillId}\n`);
-    console.log('Run `acm catalog skill search <query>` to search the registry.');
+    console.log('Run `acm skill search <query>` to search the registry.');
     process.exitCode = 1;
     return;
   }
@@ -317,7 +317,7 @@ export async function catalogSkillInstall(options: CatalogSkillInstallOptions): 
   const existing = await getSkill(options.skillId);
   if (existing && !options.force) {
     console.error(`Skill already exists in catalog: ${options.skillId}\n`);
-    console.log('Use `acm catalog skill install ' + options.skillId + ' --force` to reinstall.');
+    console.log('Use `acm skill install ' + options.skillId + ' -g --force` to reinstall.');
     process.exitCode = 1;
     return;
   }
@@ -380,7 +380,7 @@ export async function catalogSkillSearch(query: string): Promise<void> {
     console.log(`\n... and ${results.length - 20} more results`);
   }
 
-  console.log(`\nRun \`acm catalog skill install <name>\` to install a skill.`);
+  console.log(`\nRun \`acm skill install <url>\` to install a skill.`);
   console.log(`Visit https://skills.directory for more information.\n`);
 }
 
@@ -564,7 +564,7 @@ export async function catalogSkillList(filter?: SkillListFilter): Promise<void> 
   if (enriched.length === 0) {
     const filterDesc = filter ? ` (${describeFilter(filter)})` : '';
     console.log(`No matching skill entries${filterDesc}.\n`);
-    console.log('Run `acm catalog skill add <name>` to add an entry.');
+    console.log('Run `acm skill import <path> -g` to add an entry.');
     return;
   }
 
@@ -640,7 +640,7 @@ export async function catalogSkillShow(id: string): Promise<void> {
 
   if (!skillWithData) {
     console.error(`Skill entry not found: ${id}\n`);
-    console.log('Run `acm catalog skill list` to see available entries.');
+    console.log('Run `acm skill list -g` to see available entries.');
     process.exitCode = 1;
     return;
   }
@@ -749,7 +749,7 @@ export async function catalogSkillRemove(id: string): Promise<void> {
 
   if (!removed) {
     console.error(`Skill entry not found: ${id}\n`);
-    console.log('Run `acm catalog skill list` to see available entries.');
+    console.log('Run `acm skill list -g` to see available entries.');
     process.exitCode = 1;
     return;
   }

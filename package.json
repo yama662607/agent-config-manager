@@ -39,14 +39,14 @@
     "codex",
     "claude-code",
     "claude",
-    "gemini-cli",
-    "gemini",
     "cli",
     "config-sync",
     "agents",
     "agent-tools",
     "skill-management",
-    "developer-tools"
+    "developer-tools",
+    "grok",
+    "antigravity"
   ],
   "author": "Daisuke Yamashiki",
   "license": "MIT",

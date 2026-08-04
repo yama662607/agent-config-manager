@@ -5,6 +5,8 @@
 [![license](https://img.shields.io/npm/l/@yama662607/agent-config-manager)](LICENSE)
 [![Node.js Version](https://img.shields.io/node/v/@yama662607/agent-config-manager)](https://github.com/yama662607/agent-config-manager)
 
+[English version is here](README.md)
+
 `acm`は、MCPサーバーとスキルのためのクロスエージェント設定管理ツールです。マニフェストベースのツールとは異なり、`acm`はプロジェクト内のネイティブ設定ファイルを直接編集します—中間マニフェストは不要、「同期」ステップも不要です。
 
 ## デザイン原則
@@ -141,15 +143,90 @@ acm doctor --fix # 自動修正を試みる
 
 ## サポート対象ターゲット
 
-| ターゲット | 設定ファイル | MCP | スキル |
-|-----------|-------------|-----|--------|
-| Claude Code | `.mcp.json` | ✓ | ✓ |
-| Codex | `.codex/config.toml` | ✓ | ✓ |
-| Antigravity CLI | `.gemini/antigravity/mcp_config.json` | ✓ | ✓ |
+4 つのエージェントに対応しています。スコープごとに保存先が異なります。
+
+| ターゲット | 別名 | ホームスコープの MCP | ホームスコープのスキル |
+|-----------|------|---------------------|----------------------|
+| Claude Code | `c` | `~/.claude.json` の `mcpServers` | `~/.claude/skills/` |
+| Codex | `x` | `~/.codex/config.toml` | `~/.codex/skills/` |
+| Antigravity | `agy` `a` `g` | `~/.gemini/config/mcp_config.json` | `~/.gemini/config/skills/` |
+| Grok | `k` | `~/.grok/config.toml` | カタログのパスを登録 |
+
+プロジェクトスコープを読むのは Claude・Codex・Grok の 3 つです。Antigravity の CLI は
+プロジェクト設定を読まないため、書き込む際に警告します。
+
+各プロバイダの保存先、検証方法、更新時の再確認手順は
+[docs/provider-config-surfaces.md](docs/provider-config-surfaces.md) に記載しています。
+
+## スキルの配置: symlink とコピー
+
+カタログのスキルを配布する方法は 2 つあります。
+
+| 配布先 | 既定 | 理由 |
+|--------|------|------|
+| ホーム（`-H`） | symlink | 個人環境。実体が 1 つなのでズレようがない |
+| プロジェクト | コピー | リポジトリは共有される。絶対パスの symlink は他環境で壊れる |
+
+`--link` / `--copy` で明示的に切り替えられます。`acm skill` の Placement 列が状態を示します。
+
+| 表示 | 意味 |
+|------|------|
+| `link` | symlink。常に最新 |
+| `copy` | コピーで内容一致 |
+| `stale` | コピーがカタログと異なる（`acm skill update` で入れ直す） |
+| `broken` | symlink 先が消えている |
+| `catalog` | Grok が登録経由で読んでいる |
+
+## 開発リポジトリと繋ぐ
+
+スキルはコピーせず symlink で登録できます。開発中の編集が全プロバイダへ即座に届きます。
+
+```bash
+acm skill link ~/src/my-skill
+acm skill unlink my-skill
+```
+
+MCP はプロセスなので symlink では繋がりません。代わりにレシピを作業コピーに向けます。
+
+```bash
+acm mcp add my-server --local ~/src/my-server -t codex
+acm mcp add my-server --from-package @scope/my-server -t codex
+```
+
+## 出所の記録と更新の検知
+
+ダウンロードしたスキルは上流が更新されます。`acm` は出所を記録して追跡します。
+
+```bash
+acm skill install <github-url>          # URL と解決済みコミットを自動記録
+acm skill meta <id> --source <url> --ref <sha>
+acm skill meta <id> --forked            # 意図的な改変は追従対象外にする
+acm skill outdated                      # 上流と照合
+```
+
+デスクトップアプリに同梱されたプラグインも扱えます。パスは固定せず、マニフェストや
+`skills/` を持つかどうかで判定し、アプリのバージョンとともに記録します。
+
+```bash
+acm plugin discover            # アプリ内のプラグインを探す
+acm plugin discover --import   # カタログへ取り込む
+```
+
+## 診断
+
+```bash
+acm doctor -H              # カタログ位置、コマンドの実在、ずれを確認
+acm doctor -H --offline    # 通信を伴う確認を省略
+```
+
+`[Catalog Drift]` は 2 つの問いを分けて表示します。**参照元が進んだ**（取り込み直す）と
+**カタログが進んだ**（コミットする）は対処が違うためです。
 
 ## カタログの手動編集と高度な機能
 
-`acm`のカタログデータベース（`~/.acm/catalog.toml`）はTOMLフォーマットで保存されており、開発者がテキストエディタで直接開いて手動で編集やインポートを行いやすくなっています。
+カタログの実体はディレクトリです。スキルは `skills/<id>/` に置くだけで認識され、
+索引は読み込みのたびにディレクトリと frontmatter から再構築されます。
+`catalog.toml` が保持するのは MCP レシピだけです（ディレクトリから導出できないため）。
 
 ### 1. Claude/Codex設定のコピペインポート（MCP Server自動正規化）
 既存のClaude CodeやCodexの設定ファイルから、以下のような生の `mcpServers`（または `mcp_servers`）ブロックをコピーして、そのまま `~/.acm/catalog.toml` のルートレベルに貼り付けることができます。

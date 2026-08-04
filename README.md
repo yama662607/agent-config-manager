@@ -5,6 +5,8 @@
 [![license](https://img.shields.io/npm/l/@yama662607/agent-config-manager)](LICENSE)
 [![Node.js Version](https://img.shields.io/node/v/@yama662607/agent-config-manager)](https://github.com/yama662607/agent-config-manager)
 
+[日本語版はこちら (Japanese version is here)](README_JA.md)
+
 `acm` is a cross-agent configuration manager for MCP servers and skills. Unlike manifest-based tools, `acm` directly edits native config files in your project—no intermediate manifest, no "sync" step.
 
 ## Design Principles

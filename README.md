@@ -35,8 +35,8 @@ acm mcp
 acm skill
 
 # List catalog entries
-acm catalog mcp list
-acm catalog skill list
+acm mcp list -g
+acm skill list -g
 ```
 
 ## Commands
@@ -176,59 +176,28 @@ acm skill install https://github.com/anthropics/skills/tree/main/frontend-design
 acm skill remove frontend-design
 ```
 
-### `acm catalog mcp`
+### Working with the catalog
 
-Manage reusable MCP definitions in your local catalog (`~/.acm/`).
-
-```bash
-# List all catalog entries
-acm catalog mcp list
-
-# Show details
-acm catalog mcp show @modelcontextprotocol/server-github
-
-# Add to catalog
-acm catalog mcp add @modelcontextprotocol/server-github
-
-# Remove from catalog
-acm catalog mcp remove @modelcontextprotocol/server-github
-```
-
-### `acm catalog skill`
-
-Manage reusable skill definitions in your local catalog.
+Every command takes `-g` (or `--catalog`) to act on the catalog instead of a project.
 
 ```bash
-# List all catalog entries
-acm catalog skill list
+# MCP entries
+acm mcp list -g
+acm mcp show -g @modelcontextprotocol/server-github
+acm mcp add @modelcontextprotocol/server-github -g
+acm mcp remove @modelcontextprotocol/server-github -g
 
-# Show details
-acm catalog skill show skill-creator
-
-# Add to catalog from file
-acm catalog skill add my-skill --file ./skills/my-skill/SKILL.md
-
-# Import from local directory
-acm catalog skill import ~/.claude/skills/frontend-design
-
-# Install from GitHub
-acm skill install https://github.com/anthropics/skills --name frontend-design
-
-# Search skills.directory registry
-acm catalog skill search typescript
-
-# Remove from catalog
-acm catalog skill remove skill-creator
+# Skill entries
+acm skill list -g
+acm skill list -g --search typescript
+acm skill show -g skill-creator
+acm skill import ~/.claude/skills/frontend-design -g
+acm skill install https://github.com/anthropics/skills/tree/main/skills/pdf
+acm skill remove skill-creator -g
 ```
 
-### `acm validate`
-
-Validate project configuration without making changes.
-
-```bash
-acm validate          # Warnings allowed
-acm validate --strict # Fail on warnings
-```
+The older `acm catalog …` spelling still works but prints a deprecation notice
+naming its replacement.
 
 ### `acm doctor`
 

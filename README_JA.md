@@ -35,8 +35,8 @@ acm mcp
 acm skill
 
 # カタログエントリを一覧表示
-acm catalog mcp list
-acm catalog skill list
+acm mcp list -g
+acm skill list -g
 ```
 
 ## コマンド
@@ -78,22 +78,22 @@ acm skill install https://github.com/anthropics/skills/tree/main/frontend-design
 acm skill remove frontend-design
 ```
 
-### `acm catalog mcp`
+### カタログの操作
 
 ローカルカタログ（`~/.acm/`）で再利用可能なMCP定義を管理します。
 
 ```bash
 # すべてのカタログエントリを一覧表示
-acm catalog mcp list
+acm mcp list -g
 
 # 詳細を表示
-acm catalog mcp show @modelcontextprotocol/server-github
+acm mcp show -g @modelcontextprotocol/server-github
 
 # カタログに追加
-acm catalog mcp add @modelcontextprotocol/server-github
+acm mcp add -g @modelcontextprotocol/server-github
 
 # カタログから削除
-acm catalog mcp remove @modelcontextprotocol/server-github
+acm mcp remove -g @modelcontextprotocol/server-github
 ```
 
 ### `acm catalog skill`
@@ -102,25 +102,25 @@ acm catalog mcp remove @modelcontextprotocol/server-github
 
 ```bash
 # すべてのカタログエントリを一覧表示
-acm catalog skill list
+acm skill list -g
 
 # 詳細を表示
-acm catalog skill show skill-creator
+acm skill show -g skill-creator
 
 # ファイルからカタログに追加
 acm catalog skill add my-skill --file ./skills/my-skill/SKILL.md
 
 # ローカルディレクトリからインポート
-acm catalog skill import ~/.claude/skills/frontend-design
+acm skill import -g ~/.claude/skills/frontend-design
 
 # GitHubからインストール
 acm skill install https://github.com/anthropics/skills --name frontend-design
 
 # skills.directoryレジストリを検索
-acm catalog skill search typescript
+acm skill list -g --search typescript
 
 # カタログから削除
-acm catalog skill remove skill-creator
+acm skill remove -g skill-creator
 ```
 
 ### `acm validate`

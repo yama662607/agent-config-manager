@@ -1,6 +1,6 @@
 {
   "name": "@yama662607/agent-config-manager",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Cross-agent configuration manager for MCP servers and skills. Directly edits native config files\u2014no manifest, no sync step.",
   "type": "module",
   "publishConfig": {
@@ -13,7 +13,9 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "README_JA.md",
+    "LICENSE",
+    "docs"
   ],
   "engines": {
     "node": ">=20.0.0"

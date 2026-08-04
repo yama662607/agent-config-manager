@@ -145,6 +145,8 @@ export interface DesktopPlugin {
   skills: string[];
   /** Update time the plugin records about itself, when it does. */
   reportedUpdatedAt?: string;
+  /** Marketplace the application installed it from, when it records one. */
+  marketplace?: string;
 }
 
 async function readJson(file: string): Promise<any | null> {
@@ -211,15 +213,35 @@ async function listSkillNames(dir: string): Promise<string[]> {
 }
 
 /**
- * An update time the plugin states about itself.
- * Claude Desktop writes one into `manifest.json` as epoch milliseconds.
+ * What the application says about a plugin, rather than what the plugin says
+ * about itself.
+ *
+ * Claude Desktop keeps this in a `manifest.json`, in one of two shapes. A
+ * plugin the application manages directly carries its own, with `lastUpdated`
+ * as epoch milliseconds. A plugin installed from a marketplace sits in a
+ * directory named after an opaque id — `plugin_01KmRf…` — and the manifest one
+ * level up lists every such id with a name and an update time. Without that
+ * outer file the directory name is the only name available, and it says
+ * nothing.
  */
-async function reportedUpdate(dir: string): Promise<string | undefined> {
-  const manifest = await readJson(path.join(dir, 'manifest.json'));
-  const value = manifest?.lastUpdated;
-  if (typeof value === 'number') return new Date(value).toISOString();
-  if (typeof value === 'string') return value;
-  return undefined;
+async function applicationRecord(
+  dir: string
+): Promise<{ name?: string; updatedAt?: string; marketplace?: string }> {
+  const own = await readJson(path.join(dir, 'manifest.json'));
+  const lastUpdated = own?.lastUpdated;
+  if (typeof lastUpdated === 'number') return { updatedAt: new Date(lastUpdated).toISOString() };
+  if (typeof lastUpdated === 'string') return { updatedAt: lastUpdated };
+
+  const parent = await readJson(path.join(dir, '..', 'manifest.json'));
+  const id = path.basename(dir);
+  const listed = (parent?.plugins as any[] | undefined)?.find((p) => p?.id === id);
+  if (!listed) return {};
+
+  return {
+    name: listed.name,
+    updatedAt: typeof listed.updatedAt === 'string' ? listed.updatedAt : undefined,
+    marketplace: listed.marketplaceName,
+  };
 }
 
 /** Inspect one directory. Returns null when it is not a plugin. */
@@ -237,16 +259,18 @@ async function inspect(dir: string): Promise<DesktopPlugin | null> {
   if (!manifest && skills.length === 0) return null;
 
   const { app, appVersion } = await attributeApp(dir);
+  const record = await applicationRecord(dir);
 
   return {
-    name: manifest?.name ?? path.basename(dir),
+    name: manifest?.name ?? record.name ?? path.basename(dir),
     sourcePath: dir,
     app,
     appVersion,
     version: manifest?.version,
     description: manifest?.description ?? manifest?.interface?.shortDescription,
     skills,
-    reportedUpdatedAt: await reportedUpdate(dir),
+    reportedUpdatedAt: record.updatedAt,
+    marketplace: record.marketplace,
   };
 }
 
@@ -298,7 +322,9 @@ export async function describeSource(dir: string): Promise<{
   app?: string;
   appVersion?: string;
   reportedUpdatedAt?: string;
+  marketplace?: string;
 }> {
   const { app, appVersion } = await attributeApp(dir);
-  return { app, appVersion, reportedUpdatedAt: await reportedUpdate(dir) };
+  const record = await applicationRecord(dir);
+  return { app, appVersion, reportedUpdatedAt: record.updatedAt, marketplace: record.marketplace };
 }

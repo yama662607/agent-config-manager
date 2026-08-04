@@ -302,6 +302,8 @@ export interface PluginEntry {
   sourceAppVersion?: string;
   /** Update time the plugin reported about itself at import time. */
   reportedUpdatedAt?: string;
+  /** Marketplace it was installed from, when the application records one. */
+  sourceMarketplace?: string;
 }
 
 /** Result of scanning for an available plugin */

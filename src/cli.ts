@@ -247,6 +247,7 @@ Subcommands:
   discover [--import]     Find plugins bundled inside desktop applications
   import <path> [--as N]  Take a plugin directory into the catalog
   install <name>          Install a plugin (skills + MCPs + agents + knowledge)
+  convert <name> [--all]  Write a plugin where other providers will load it
   uninstall <name>        Uninstall a plugin
   repair [--apply]        Restore skill files an earlier import dropped
   doctor                  Check for orphan/unregistered plugins
@@ -1238,6 +1239,12 @@ async function handlePlugin(argv: string[]): Promise<void> {
       }
       await (await import('./cli-plugin.js')).pluginUninstall(args[0], args.slice(1));
       break;
+
+    case 'convert': {
+      const { pluginConvert } = await import('./cli-plugin.js');
+      await pluginConvert(args);
+      break;
+    }
 
     case 'repair': {
       const { pluginRepair } = await import('./cli-plugin.js');

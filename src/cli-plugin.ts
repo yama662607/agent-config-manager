@@ -37,6 +37,20 @@ function parseFlag(argv: string[], ...names: string[]): boolean {
   return argv.some(a => names.includes(a));
 }
 
+/** Arguments that are neither a flag nor the value belonging to one. */
+function positionalArgs(argv: string[], flagsTakingValue: string[]): string[] {
+  const positional: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (flagsTakingValue.includes(argv[i])) {
+      i++;
+      continue;
+    }
+    if (argv[i].startsWith('-')) continue;
+    positional.push(argv[i]);
+  }
+  return positional;
+}
+
 function parseTargets(argv: string[]): TargetName[] {
   const idx = argv.findIndex(a => a === "--target" || a === "-t");
   if (idx < 0 || idx + 1 >= argv.length) return ["claude"];
@@ -813,6 +827,102 @@ export async function pluginImport(sourcePath: string, options: { as?: string } 
   console.log(`\nRun \`acm plugin install ${name} -t <target>\` to install it.`);
 }
 
+
+// ============================================================================
+// Cross-provider Conversion
+// ============================================================================
+
+/**
+ * Make catalog plugins available to other providers.
+ *
+ * There is no format to translate between: the four providers differ only in
+ * where they look for a manifest, so one assembled directory is read by all of
+ * them. What they do not share is installation — a plugin is enabled state a
+ * provider records, so each one's own CLI has to perform it. Both halves are
+ * here: assemble a local marketplace, then hand it to each provider.
+ */
+export async function pluginConvert(argv: string[]): Promise<void> {
+  const { buildMarketplace, registerMarketplace, installCommand, getMarketplaceDir } =
+    await import('./plugin-marketplace.js');
+
+  const targets = parseTargets(argv);
+  const dryRun = parseFlag(argv, '--dry-run', '-n');
+  const all = parseFlag(argv, '--all');
+  const names = positionalArgs(argv, ['--target', '-t']);
+
+  const catalog = await listPlugins();
+  const chosen = all ? catalog : catalog.filter((p) => names.includes(p.name));
+
+  if (chosen.length === 0) {
+    console.error(all ? 'The catalog has no plugins.' : `Not in the catalog: ${names.join(', ')}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const destination = getMarketplaceDir();
+
+  if (dryRun) {
+    console.log(`Would assemble ${chosen.length} plugins into ${destination}`);
+    console.log(`Would register that marketplace with: ${targets.join(', ')}\n`);
+    for (const entry of chosen.slice(0, 10)) console.log(`  ${entry.name}`);
+    if (chosen.length > 10) console.log(`  … and ${chosen.length - 10} more`);
+    return;
+  }
+
+  console.log(`Assembling ${chosen.length} plugins into ${destination}...`);
+  const built = await buildMarketplace(chosen, destination);
+
+  let restored = 0;
+  const problems: string[] = [];
+  const ignored = new Map<string, Set<TargetName>>();
+
+  for (const { entry, report } of built) {
+    restored += report.skillsRestored.length;
+    if (report.skillsMissing.length > 0) {
+      problems.push(`${entry.name}: the catalog no longer holds ${report.skillsMissing.join(', ')}`);
+    }
+    // Name what a provider will not use, rather than letting it vanish quietly.
+    for (const field of report.providerSpecific) {
+      const losers = targets.filter((t) => !field.usedBy.includes(t));
+      if (losers.length === 0) continue;
+      const set = ignored.get(field.field) ?? new Set<TargetName>();
+      losers.forEach((t) => set.add(t));
+      ignored.set(field.field, set);
+    }
+  }
+
+  console.log(`  ${built.length} plugins, ${restored} skill directories pulled from the catalog`);
+
+  console.log('\nRegistering the marketplace:');
+  for (const target of targets) {
+    const result = await registerMarketplace(target, destination);
+    if (!result) {
+      // Antigravity has no marketplace command; it installs per plugin.
+      console.log(`  [${target}] installs per plugin — see below`);
+      continue;
+    }
+    console.log(`  [${target}] ${result.ok ? 'ok' : 'failed'}: ${result.command}`);
+    if (!result.ok && result.output) console.log(`      ${result.output.split('\n')[0]}`);
+  }
+
+  console.log('\nInstall a plugin with:');
+  const example = built[0]?.entry.name ?? '<name>';
+  for (const target of targets) {
+    console.log(`  [${target}] ${installCommand(target, example, destination)}`);
+  }
+
+  if (ignored.size > 0) {
+    console.log('\nCarried but unused:');
+    for (const [field, losers] of ignored) {
+      console.log(`  \`${field}\` — ignored by ${[...losers].join(', ')}`);
+    }
+  }
+
+  if (problems.length > 0) {
+    console.log('\nNeeds attention:');
+    for (const problem of problems) console.log(`  ${problem}`);
+  }
+}
 
 // ============================================================================
 // Payload Repair

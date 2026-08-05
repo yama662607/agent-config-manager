@@ -901,7 +901,8 @@ export async function pluginConvert(argv: string[]): Promise<void> {
       console.log(`  [${target}] installs per plugin — see below`);
       continue;
     }
-    console.log(`  [${target}] ${result.ok ? 'ok' : 'failed'}: ${result.command}`);
+    const state = result.alreadyRegistered ? 'already registered' : result.ok ? 'ok' : 'failed';
+    console.log(`  [${target}] ${state}: ${result.command}`);
     if (!result.ok && result.output) console.log(`      ${result.output.split('\n')[0]}`);
   }
 
@@ -936,13 +937,28 @@ export async function pluginConvert(argv: string[]): Promise<void> {
  * since edited keeps their version.
  */
 export async function pluginRepair(options: { apply?: boolean } = {}): Promise<void> {
-  const { findTruncatedSkills, restoreSkill } = await import('./plugin-payload.js');
+  const { findTruncatedSkills, restoreSkill, findMissingMcpConfigs, restoreMcpConfig } =
+    await import('./plugin-payload.js');
 
-  console.log('Comparing catalog skills against the plugins they came from...\n');
+  console.log('Comparing the catalog against the plugins it came from...\n');
   const truncated = await findTruncatedSkills();
+  const mcpMissing = await findMissingMcpConfigs();
+
+  if (mcpMissing.length > 0) {
+    console.log(`${mcpMissing.length} plugins are missing their .mcp.json:`);
+    console.log(`    ${mcpMissing.map((m) => m.plugin).join(', ')}`);
+    if (options.apply) {
+      for (const entry of mcpMissing) await restoreMcpConfig(entry);
+      console.log(`  Restored ${mcpMissing.length}.`);
+    }
+    console.log();
+  }
 
   if (truncated.length === 0) {
     console.log('Every catalog skill has all the files its source has.');
+    if (mcpMissing.length > 0 && !options.apply) {
+      console.log('Run with --apply to restore the MCP configurations above.');
+    }
     return;
   }
 

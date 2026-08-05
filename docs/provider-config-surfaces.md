@@ -165,6 +165,22 @@ skills by itself**, and Claude ignores fields it does not recognise rather than
 failing. So `acm` writes every manifest and lets each provider decide, instead of
 maintaining a translation per pair.
 
+### One real difference: where a plugin's MCP servers are declared
+
+Claude, Codex and Grok read them from `.mcp.json`. **Antigravity reads
+`mcp_config.json`** and ignores the other name. Probed by running
+`agy plugin validate` against each candidate:
+
+| Candidate | `agy` reports |
+|-----------|---------------|
+| `.mcp.json` | `mcpServers: skipped (not found)` |
+| `mcpServers` inlined in `plugin.json` | `mcpServers: skipped (not found)` |
+| `mcpServers: "./.mcp.json"` in `plugin.json` | `mcpServers: skipped (not found)` |
+| `mcp_config.json` | `mcpServers: 1 processed` |
+
+So `acm` writes both names. This is the only content-level adaptation the
+assembly performs.
+
 ### Installing still goes through the CLI
 
 Placing a valid plugin directory in `~/.grok/plugins/` is not enough: `grok plugin

@@ -111,6 +111,21 @@ export async function assemblePlugin(
     skillsRestored.push(id);
   }
 
+  // The one place the providers genuinely differ on content rather than
+  // filename. Claude, Codex and Grok read a plugin's servers from `.mcp.json`;
+  // Antigravity reads `mcp_config.json` and ignores the other name. Probed by
+  // running `agy plugin validate` against each candidate: `.mcp.json` and an
+  // inlined `mcpServers` in the manifest both report "skipped (not found)",
+  // while `mcp_config.json` reports "1 processed".
+  const mcp = await readJson(path.join(destination, '.mcp.json'));
+  if (mcp) {
+    await fs.writeFile(
+      path.join(destination, 'mcp_config.json'),
+      JSON.stringify(mcp, null, 2) + '\n',
+      'utf8'
+    );
+  }
+
   const manifest = (await readManifest(destination)) ?? { name: entry.name };
   // acm's own bookkeeping belongs in the catalog, not in what a provider loads.
   delete manifest.installedFor;

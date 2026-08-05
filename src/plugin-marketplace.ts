@@ -121,7 +121,14 @@ export interface RegisterResult {
   /** What was run, for the user to repeat or undo. */
   command: string;
   ok: boolean;
+  /** Already registered from an earlier run — the desired state, not a failure. */
+  alreadyRegistered: boolean;
   output: string;
+}
+
+/** Registering twice is how a rebuild looks, and every provider says so differently. */
+function meansAlreadyRegistered(output: string): boolean {
+  return /already (configured|added|exists|registered)|duplicate marketplace/i.test(output);
 }
 
 /**
@@ -142,14 +149,17 @@ export async function registerMarketplace(
 
   try {
     const { stdout, stderr } = await run(spec.cli, args, { timeout: 120_000 });
-    return { target, command, ok: true, output: (stdout || stderr).trim() };
-  } catch (error: any) {
     return {
       target,
       command,
-      ok: false,
-      output: (error?.stderr || error?.stdout || error?.message || '').trim(),
+      ok: true,
+      alreadyRegistered: false,
+      output: (stdout || stderr).trim(),
     };
+  } catch (error: any) {
+    const output = (error?.stderr || error?.stdout || error?.message || '').trim();
+    const already = meansAlreadyRegistered(output);
+    return { target, command, ok: already, alreadyRegistered: already, output };
   }
 }
 

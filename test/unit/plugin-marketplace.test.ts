@@ -143,6 +143,40 @@ describe('Assembling a plugin every provider can read', () => {
     assert.strictEqual(manifest.sourceAgent, undefined);
   });
 
+  it("writes Antigravity's own name for the MCP configuration", async () => {
+    // The one place the providers differ on content rather than filename.
+    // Probed with `agy plugin validate`: `.mcp.json` and an inlined
+    // `mcpServers` both report "skipped (not found)"; `mcp_config.json`
+    // reports "1 processed".
+    const { assemblePlugin } = await import('../../src/plugin-assemble.js');
+    const servers = { mcpServers: { demo: { command: 'npx', args: ['-y', 'demo'] } } };
+    await write(
+      path.join(CATALOG, 'plugins', 'demo', '.mcp.json'),
+      JSON.stringify(servers)
+    );
+    const destination = path.join(OUT, 'demo');
+
+    await assemblePlugin(ENTRY, path.join(CATALOG, 'plugins', 'demo'), destination);
+
+    // Both names, because the other three providers read the original.
+    for (const name of ['.mcp.json', 'mcp_config.json']) {
+      const written = JSON.parse(await fs.readFile(path.join(destination, name), 'utf8'));
+      assert.deepStrictEqual(written, servers, `${name} should hold the servers`);
+    }
+  });
+
+  it('writes no MCP configuration when the plugin has none', async () => {
+    const { assemblePlugin } = await import('../../src/plugin-assemble.js');
+    const destination = path.join(OUT, 'demo');
+
+    await assemblePlugin(ENTRY, path.join(CATALOG, 'plugins', 'demo'), destination);
+
+    assert.strictEqual(
+      await fs.stat(path.join(destination, 'mcp_config.json')).catch(() => null),
+      null
+    );
+  });
+
   it('carries the rest of the plugin across', async () => {
     const { assemblePlugin } = await import('../../src/plugin-assemble.js');
     const destination = path.join(OUT, 'demo');

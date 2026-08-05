@@ -15,6 +15,7 @@ import {
   validatePluginName,
 } from './plugins-metadata.js';
 import type { PluginEntry, TargetName, PluginManifest } from './types.js';
+import type { DesktopPlugin } from './desktop-scanner.js';
 import { padRightWide, truncateWide } from './table-utils.js';
 import { AGENT_PLUGIN_DIR } from './agent-paths.js';
 import { getCatalogDir } from './acm-config.js';
@@ -285,17 +286,19 @@ export async function pluginInstall(name: string, argv: string[]): Promise<void>
       installedTargets.push(target);
     }
 
-    // Add skills to acm catalog
-    const { addSkill, normalizeSkillPackage, getSkill } = await import('./catalog.js');
+    // Add skills to acm catalog.
+    //
+    // A skill is a directory, not a file: SKILL.md is the entry point but the
+    // references, scripts and assets beside it are what the instructions point
+    // at. Registering only SKILL.md silently drops them.
+    const { addSkillFromDir, getSkill } = await import('./catalog.js');
     let catalogSkillsAdded = 0;
     for (const skill of detail.skills) {
       const existing = await getSkill(skill.id);
       if (!existing) {
-        const skillContent = await fs.readFile(skill.skillPath, 'utf8');
-        const entry = normalizeSkillPackage(skill.id, skillContent, {
+        await addSkillFromDir(skill.id, path.dirname(skill.skillPath), {
           tags: ['plugin', detail.manifest.name],
         });
-        await addSkill(entry, skillContent);
         catalogSkillsAdded++;
       }
     }
@@ -733,15 +736,21 @@ export async function pluginImport(sourcePath: string, options: { as?: string } 
 
   const source = path.resolve(sourcePath);
 
-  const manifest = await readPluginManifest(source);
-  if (!manifest) {
-    console.error(`No plugin manifest found in ${source}`);
+  // Some applications ship a bare `skills/` directory with no manifest at all —
+  // VS Code's bundled prompts and Dia's are both like this. Discovery finds them
+  // by their skills, so import has to accept them the same way; the caller
+  // supplies the name the manifest would have given.
+  const manifest = (await readPluginManifest(source)) ?? ({} as PluginManifest);
+  const hasSkills = (await inventoryPlugin(source)).skills.length > 0;
+
+  if (!manifest.name && !options.as && !hasSkills) {
+    console.error(`No plugin manifest or skills found in ${source}`);
     console.error('Expected .claude-plugin/plugin.json, .codex-plugin/plugin.json or plugin.json');
     process.exitCode = 1;
     return;
   }
 
-  const name = options.as ?? manifest.name;
+  const name = options.as ?? manifest.name ?? path.basename(source);
   try {
     validatePluginName(name);
   } catch (error) {
@@ -792,6 +801,7 @@ export async function pluginImport(sourcePath: string, options: { as?: string } 
     sourceApp: origin.app,
     sourceAppVersion: origin.appVersion,
     reportedUpdatedAt: origin.reportedUpdatedAt,
+    sourceMarketplace: origin.marketplace,
   });
 
   const parts = [
@@ -803,6 +813,63 @@ export async function pluginImport(sourcePath: string, options: { as?: string } 
   console.log(`\nRun \`acm plugin install ${name} -t <target>\` to install it.`);
 }
 
+
+// ============================================================================
+// Payload Repair
+// ============================================================================
+
+/**
+ * Restore skill files that an earlier import dropped.
+ *
+ * Reports by default; `--apply` performs the copies. Nothing is overwritten —
+ * only files absent from the catalog are written — so a skill the user has
+ * since edited keeps their version.
+ */
+export async function pluginRepair(options: { apply?: boolean } = {}): Promise<void> {
+  const { findTruncatedSkills, restoreSkill } = await import('./plugin-payload.js');
+
+  console.log('Comparing catalog skills against the plugins they came from...\n');
+  const truncated = await findTruncatedSkills();
+
+  if (truncated.length === 0) {
+    console.log('Every catalog skill has all the files its source has.');
+    return;
+  }
+
+  const byPlugin = new Map<string, typeof truncated>();
+  for (const entry of truncated) {
+    const list = byPlugin.get(entry.plugin) ?? [];
+    list.push(entry);
+    byPlugin.set(entry.plugin, list);
+  }
+
+  let totalFiles = 0;
+  for (const [plugin, entries] of [...byPlugin].sort()) {
+    const files = entries.reduce((sum, e) => sum + e.missing.length, 0);
+    totalFiles += files;
+    console.log(`${plugin}  (${entries.length} skills, ${files} files)`);
+    for (const entry of entries) {
+      console.log(`    ${entry.skill}: ${entry.missing.length} missing`);
+    }
+  }
+
+  console.log();
+  console.log(
+    `${truncated.length} skills across ${byPlugin.size} plugins are missing ${totalFiles} files.`
+  );
+
+  if (!options.apply) {
+    console.log('Run with --apply to restore them.');
+    return;
+  }
+
+  console.log('\nRestoring...');
+  let restored = 0;
+  for (const entry of truncated) {
+    restored += await restoreSkill(entry);
+  }
+  console.log(`Restored ${restored} files.`);
+}
 
 // ============================================================================
 // Desktop Discovery
@@ -826,20 +893,37 @@ export async function pluginDiscover(options: { import?: boolean } = {}): Promis
     return;
   }
 
+  // Generic names collide: Dia and Visual Studio Code both ship a plugin called
+  // `prompts`, and importing them in turn would leave the catalog with whichever
+  // came last. Only the ambiguous ones are qualified, so ordinary names stay as
+  // the plugin itself declares them.
+  const nameCounts = new Map<string, number>();
   for (const plugin of found) {
-    const known = await getPluginEntry(plugin.name);
+    nameCounts.set(plugin.name, (nameCounts.get(plugin.name) ?? 0) + 1);
+  }
+  const catalogNames = new Map<DesktopPlugin, string>();
+  for (const plugin of found) {
+    const ambiguous = (nameCounts.get(plugin.name) ?? 0) > 1;
+    const prefix = plugin.app ? plugin.app.toLowerCase().replace(/[^a-z0-9]+/g, '-') : 'unknown';
+    catalogNames.set(plugin, ambiguous ? `${prefix}-${plugin.name}` : plugin.name);
+  }
+
+  for (const plugin of found) {
+    const catalogName = catalogNames.get(plugin)!;
+    const known = await getPluginEntry(catalogName);
     const where = plugin.app ? `${plugin.app}${plugin.appVersion ? ` ${plugin.appVersion}` : ''}` : 'unknown app';
     const parts = [where];
     if (plugin.skills.length > 0) parts.push(`${plugin.skills.length} skills`);
+    if (plugin.marketplace) parts.push(`from ${plugin.marketplace}`);
     if (plugin.reportedUpdatedAt) parts.push(`updated ${plugin.reportedUpdatedAt.slice(0, 10)}`);
 
-    console.log(`${known ? '=' : '+'} ${plugin.name}  (${parts.join(', ')})`);
+    console.log(`${known ? '=' : '+'} ${catalogName}  (${parts.join(', ')})`);
     console.log(`    ${formatHomePath(plugin.sourcePath)}`);
   }
 
   const newcomers = [];
   for (const plugin of found) {
-    if (!(await getPluginEntry(plugin.name))) newcomers.push(plugin);
+    if (!(await getPluginEntry(catalogNames.get(plugin)!))) newcomers.push(plugin);
   }
 
   console.log();
@@ -853,6 +937,6 @@ export async function pluginDiscover(options: { import?: boolean } = {}): Promis
   }
 
   for (const plugin of newcomers) {
-    await pluginImport(plugin.sourcePath, { as: plugin.name });
+    await pluginImport(plugin.sourcePath, { as: catalogNames.get(plugin)! });
   }
 }

@@ -6,6 +6,8 @@ import { discoverProject } from './project-discovery.js';
 import { loadCatalog } from './catalog.js';
 import os from 'node:os';
 import { describeCatalogSource, getCatalogDir, getConfigPath } from './acm-config.js';
+import { unsupportedScopeWarning } from './provider-support.js';
+import { isHomeScope } from './agent-paths.js';
 
 const execAsync = promisify(exec);
 
@@ -212,6 +214,11 @@ export async function doctor(options: DoctorOptions): Promise<{ hasErrors: boole
       if (configPath.exists) {
         const size = (await fs.stat(configPath.path)).size;
         console.log(`  ✓ ${target}: config exists (${size} bytes)`);
+      } else if (unsupportedScopeWarning(target, 'mcp', isHomeScope(discovery.root))) {
+        // Not a gap in the setup: the provider has no such scope to configure.
+        // Telling the user to run `acm mcp init` here would produce a file its
+        // CLI never opens.
+        console.log(`  - ${target}: no project-scope MCP configuration to check`);
       } else {
         console.log(`  ⚠ ${target}: config not found (run \`acm mcp init\`)`);
         hasWarnings = true;

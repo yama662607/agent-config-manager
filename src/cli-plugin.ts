@@ -745,7 +745,10 @@ async function inventoryPlugin(dir: string): Promise<{
  * provider's own directory — so a plugin obtained any other way, or a catalog
  * starting from empty, had no way in at all.
  */
-export async function pluginImport(sourcePath: string, options: { as?: string } = {}): Promise<void> {
+export async function pluginImport(
+  sourcePath: string,
+  options: { as?: string; quiet?: boolean } = {}
+): Promise<void> {
   const { addPluginEntry, getPluginEntry, validatePluginName } = await import('./plugins-metadata.js');
 
   const source = path.resolve(sourcePath);
@@ -823,6 +826,13 @@ export async function pluginImport(sourcePath: string, options: { as?: string } 
     `${inventory.mcps.length} MCP server${inventory.mcps.length === 1 ? '' : 's'}`,
     `${inventory.agentFiles.length} agent file${inventory.agentFiles.length === 1 ? '' : 's'}`,
   ];
+
+  // An update imports many plugins in a row and prints its own summary.
+  if (options.quiet) {
+    console.log(`      ${parts.join(', ')}`);
+    return;
+  }
+
   console.log(`Imported into the catalog: ${name} (${parts.join(', ')})`);
   console.log(`\nRun \`acm plugin install ${name} -t <target>\` to install it.`);
 }
@@ -922,6 +932,79 @@ export async function pluginConvert(argv: string[]): Promise<void> {
   if (problems.length > 0) {
     console.log('\nNeeds attention:');
     for (const problem of problems) console.log(`  ${problem}`);
+  }
+}
+
+// ============================================================================
+// Following the Source
+// ============================================================================
+
+/**
+ * Take a newer copy of a plugin from wherever it now lives.
+ *
+ * A bundled plugin is replaced wholesale when its application updates, and the
+ * path it sits at changes with it — Claude Desktop nests them under session
+ * UUIDs, ChatGPT under a versioned bundle. So the source is located by name
+ * rather than by the path recorded at import, and the import is a full replace.
+ *
+ * With no names, only plugins whose source has actually changed are touched;
+ * `acm doctor` reports the same set.
+ */
+export async function pluginUpdate(argv: string[]): Promise<void> {
+  const { pluginSourceDrift } = await import('./catalog-drift.js');
+  const { scanDesktopPlugins } = await import('./desktop-scanner.js');
+
+  const names = positionalArgs(argv, []);
+  const dryRun = parseFlag(argv, '--dry-run', '-n');
+
+  console.log('Looking for plugins whose source has moved on...\n');
+
+  const drift = await pluginSourceDrift();
+  const wanted = names.length > 0 ? drift.filter((d) => names.includes(d.id)) : drift;
+
+  const unknown = names.filter((n) => !drift.some((d) => d.id === n));
+  for (const name of unknown) {
+    console.log(`  ${name}: unchanged, or not tracked against a source`);
+  }
+
+  if (wanted.length === 0) {
+    console.log(names.length > 0 ? '\nNothing to update.' : 'Every tracked plugin is current.');
+    return;
+  }
+
+  // Located by name: an application update moves the directory as well as its
+  // contents, so the recorded path is the less reliable of the two.
+  const discovered = new Map((await scanDesktopPlugins()).map((p) => [p.name, p]));
+
+  if (dryRun) {
+    for (const entry of wanted) console.log(`  ${entry.id}: ${entry.detail}`);
+    console.log('\nDry run. Re-run without --dry-run to take the newer copies.');
+    return;
+  }
+
+  let updated = 0;
+  const stuck: string[] = [];
+
+  for (const entry of wanted) {
+    const current = discovered.get(entry.id);
+    if (!current) {
+      stuck.push(`${entry.id}: the source is no longer on this machine`);
+      continue;
+    }
+    console.log(`  ${entry.id}: ${entry.detail}`);
+    await pluginImport(current.sourcePath, { as: entry.id, quiet: true });
+    updated++;
+  }
+
+  console.log(`\n${updated} plugin${updated === 1 ? '' : 's'} updated.`);
+
+  if (stuck.length > 0) {
+    console.log('\nCould not update:');
+    for (const problem of stuck) console.log(`  ${problem}`);
+  }
+
+  if (updated > 0) {
+    console.log('\nRun `acm plugin convert --all` to rebuild what the providers install from.');
   }
 }
 
@@ -1063,6 +1146,7 @@ export async function pluginDiscover(options: { import?: boolean } = {}): Promis
   }
 
   for (const plugin of newcomers) {
-    await pluginImport(plugin.sourcePath, { as: catalogNames.get(plugin)! });
+    console.log(`  ${catalogNames.get(plugin)!}`);
+    await pluginImport(plugin.sourcePath, { as: catalogNames.get(plugin)!, quiet: true });
   }
 }

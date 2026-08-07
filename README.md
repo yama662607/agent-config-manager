@@ -258,19 +258,64 @@ connection.
 
 ## Plugins
 
-A plugin bundles skills, MCP servers and agent files. Bring one into the catalog from
-any directory, then install it for the agents that should have it:
+A plugin bundles skills, commands, agents, hooks and MCP servers. Bring one into the
+catalog from any directory, then keep it current:
 
 ```bash
 acm plugin import ./some-plugin       # read the manifest, copy into the catalog
 acm plugin import ./some-plugin --as other-name
-acm plugin install <name> -t codex    # install for one agent
 acm plugin list
-acm plugin scan                       # find plugins the agents already have
+acm plugin update                     # take newer copies where the source changed
+acm plugin repair                     # restore files an older import dropped
 ```
 
-`import` accepts any of the three manifest locations — `.claude-plugin/plugin.json`,
-`.codex-plugin/plugin.json`, or a root `plugin.json`.
+`import` accepts any of the manifest locations — `.claude-plugin/plugin.json`,
+`.codex-plugin/plugin.json`, `.grok-plugin/plugin.json`, or a root `plugin.json` — and
+also a bare `skills/` directory with no manifest at all, which is how some applications
+ship theirs.
+
+### Every plugin on every provider
+
+There is nothing to convert between them. The four providers agree on what a plugin is
+and disagree only on where the manifest sits, so one directory carrying all four
+locations is read by all of them. Each then applies its own handling — Antigravity turns
+`commands/` into skills by itself, Claude ignores fields it does not recognise.
+
+Installing is different: a plugin is enabled state a provider records, so that part goes
+through each provider's own CLI. `acm plugin convert` publishes the catalog as a local
+marketplace and hands it over:
+
+```bash
+acm plugin convert --all -t claude,codex,antigravity,grok
+```
+
+```
+Assembling 107 plugins into ~/…/agent-catalog/marketplace...
+  107 plugins, 553 skill directories pulled from the catalog
+
+Registering the marketplace:
+  [claude] ok: claude plugin marketplace add …
+  [codex] ok: codex plugin marketplace add …
+  [antigravity] installs per plugin — see below
+  [grok] already registered: grok plugin marketplace add …
+
+Install a plugin with:
+  [claude] claude plugin install build-ios-apps@acm-catalog
+  [codex] codex plugin add build-ios-apps@acm-catalog
+  [grok] grok plugin install …/marketplace/plugins/build-ios-apps --trust
+  [antigravity] agy plugin install …/marketplace/plugins/build-ios-apps
+
+Carried but unused:
+  `apps` — ignored by antigravity, grok
+```
+
+The last section is the point of the command: a field a provider will not read is
+carried across and named, rather than dropped quietly. The generated marketplace is
+derived output — rebuild it any time, and keep it out of version control.
+
+See [docs/provider-config-surfaces.md](docs/provider-config-surfaces.md) for the
+evidence behind all of this, including the one genuine difference (Antigravity reads a
+plugin's MCP servers from `mcp_config.json`, not `.mcp.json`).
 
 ## How each provider is written
 

@@ -407,7 +407,9 @@ export interface McpServerStatus {
   name: string;
   enabled: boolean;
   targets: TargetName[];
-  source: 'catalog' | 'inline';
+  source: 'catalog' | 'inline' | 'plugin';
+  /** The catalog plugin that brings this server, when one does. */
+  plugin?: string;
   /** The recipe actually configured in each target. */
   deployed?: Partial<Record<TargetName, McpRecipe>>;
   /** How each target's configuration compares with the catalog. */
@@ -426,6 +428,8 @@ export type McpDeploymentState =
   | 'differs'
   /** Configured here but absent from the catalog. */
   | 'inline'
+  /** Brought by an installed plugin, which owns it. */
+  | 'plugin'
   /** Configured but switched off. */
   | 'disabled';
 

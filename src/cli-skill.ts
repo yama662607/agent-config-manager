@@ -438,6 +438,51 @@ export interface SkillInstallFromGitHubOptions {
   allowHome?: boolean;
   /** Placement override. Defaults to link for home, copy for projects. */
   placement?: SkillPlacementMode;
+  /** Replace a skill the catalog already holds. */
+  force?: boolean;
+}
+
+/**
+ * Fetch everything beside SKILL.md into the catalog's copy of the skill.
+ *
+ * Best effort by design: the listing needs the GitHub API, which is rate
+ * limited without a token, and a skill whose SKILL.md alone installed is still
+ * more useful than a failed install. Returns how many extra files landed.
+ */
+async function downloadSkillDirectory(githubUrl: string, name: string): Promise<number> {
+  const { listSkillDirectory, downloadSkillFile } = await import('./registry.js');
+  const { getSkillDir } = await import('./catalog.js');
+  const fsp = await import('node:fs/promises');
+  const pathMod = await import('node:path');
+
+  const files = await listSkillDirectory(githubUrl);
+  if (!files) return 0;
+
+  const destination = getSkillDir(name);
+  let written = 0;
+
+  for (const file of files) {
+    if (file.path === 'SKILL.md') continue;
+    // A skill directory is documentation and small scripts. Anything larger is
+    // not something to pull into every provider's config directory.
+    if (file.size > 1024 * 1024) {
+      console.log(`  skipped ${file.path} (${Math.round(file.size / 1024)}KB)`);
+      continue;
+    }
+
+    const content = await downloadSkillFile(githubUrl, file.path);
+    if (!content) continue;
+
+    const target = pathMod.join(destination, file.path);
+    // The listing comes from an external service; keep writes inside the skill.
+    if (!pathMod.resolve(target).startsWith(pathMod.resolve(destination) + pathMod.sep)) continue;
+
+    await fsp.mkdir(pathMod.dirname(target), { recursive: true });
+    await fsp.writeFile(target, content);
+    written++;
+  }
+
+  return written;
 }
 
 /**
@@ -466,7 +511,7 @@ export async function skillInstallFromGitHub(options: SkillInstallFromGitHubOpti
   // Add to catalog if requested
   if (options.addToCatalog !== false) {
     const existing = await getSkill(name);
-    if (existing && !options.skillName) {
+    if (existing && !options.force && !options.skillName) {
       console.log(`\nSkill already exists in catalog. Use --force to reinstall.`);
       return;
     }
@@ -477,7 +522,13 @@ export async function skillInstallFromGitHub(options: SkillInstallFromGitHubOpti
     });
 
     await addSkill(entry, content);
-    console.log(`✓ Added to catalog: ${entry.id}`);
+
+    // A skill is a directory, so bring the rest of it too. SKILL.md is already
+    // written above, and stays authoritative if the listing cannot be read.
+    const extra = await downloadSkillDirectory(options.githubUrl, name);
+    console.log(
+      `✓ Added to catalog: ${entry.id}${extra > 0 ? ` (SKILL.md + ${extra} files)` : ''}`
+    );
   }
 
   // Record where this came from, so it can be revisited when upstream moves.

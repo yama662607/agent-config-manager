@@ -1002,6 +1002,7 @@ async function handleSkill(argv: string[]): Promise<void> {
           addToCatalog: options.addToCatalog,
           allowHome,
           placement: options.placement,
+          force: options.force,
         });
       }
       break;

@@ -96,6 +96,44 @@ describe('MCP drift detection', () => {
     assert.strictEqual(server.source, 'inline');
   });
 
+  it('names the plugin that owns a server, rather than calling it inline', async () => {
+    // A server a plugin brings is the plugin's to manage: installing writes it
+    // and uninstalling removes it. Calling it inline invited a pointless
+    // `acm mcp adopt`, and the next plugin install would put it back anyway.
+    await fs.mkdir(path.join(CATALOG, 'plugins', 'demo-plugin'), { recursive: true });
+    await fs.writeFile(
+      path.join(CATALOG, 'plugins', 'demo-plugin', '.mcp.json'),
+      JSON.stringify({ mcpServers: { 'plugin-server': { command: 'npx', args: ['-y', 'x'] } } })
+    );
+    await fs.writeFile(
+      path.join(CATALOG, 'plugins-metadata.toml'),
+      [
+        'version = "1.0"',
+        '',
+        '[plugins.demo-plugin]',
+        'name = "demo-plugin"',
+        'sourcePath = "/nowhere"',
+        'agent = "claude"',
+        'installedAt = "2026-01-01T00:00:00.000Z"',
+        'updatedAt = "2026-01-01T00:00:00.000Z"',
+        '',
+      ].join('\n')
+    );
+
+    await fs.writeFile(
+      path.join(PROJECT, '.mcp.json'),
+      JSON.stringify({
+        mcpServers: { 'plugin-server': { type: 'stdio', command: 'npx', args: ['-y', 'x'] } },
+      })
+    );
+
+    const parsed = JSON.parse(await acm(['mcp', '--json']));
+    const server = parsed.servers.find((s: any) => s.name === 'plugin-server');
+    assert.strictEqual(server.state.claude, 'plugin');
+    assert.strictEqual(server.source, 'plugin');
+    assert.strictEqual(server.plugin, 'demo-plugin');
+  });
+
   it('lists disabled servers instead of hiding them', async () => {
     // A disabled server used to vanish from status, leaving no way to see it.
     // A plain command is used here because Codex entries launched through npx

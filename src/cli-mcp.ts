@@ -31,6 +31,11 @@ async function buildMcpStatus(projectRoot: string, allowHome: boolean = false): 
   const { listMcps } = await import('./catalog.js');
 
   const catalog = new Map((await listMcps()).map((entry) => [entry.id, entry]));
+  // A server a plugin brings is the plugin's to manage: installing the plugin
+  // writes it and uninstalling removes it. Reporting it as an untracked inline
+  // server invited a pointless `acm mcp adopt`, and the next plugin install
+  // would have put it back anyway.
+  const fromPlugins = await pluginOwnedServers();
   const serverMap = new Map<string, McpServerStatus>();
 
   for (const [target, configPath] of targets.entries()) {
@@ -40,13 +45,16 @@ async function buildMcpStatus(projectRoot: string, allowHome: boolean = false): 
 
     for (const [name, info] of Object.entries(servers)) {
       const catalogEntry = catalog.get(name);
+      const owningPlugin = fromPlugins.get(name);
       const state: McpDeploymentState = !info.enabled
         ? 'disabled'
-        : !catalogEntry
-          ? 'inline'
-          : recipesMatch(catalogEntry.recipe, info.recipe)
+        : catalogEntry
+          ? recipesMatch(catalogEntry.recipe, info.recipe)
             ? 'synced'
-            : 'differs';
+            : 'differs'
+          : owningPlugin
+            ? 'plugin'
+            : 'inline';
 
       const existing = serverMap.get(name);
       if (existing) {
@@ -59,7 +67,8 @@ async function buildMcpStatus(projectRoot: string, allowHome: boolean = false): 
           name,
           enabled: info.enabled,
           targets: [target],
-          source: catalogEntry ? 'catalog' : 'inline',
+          source: catalogEntry ? 'catalog' : owningPlugin ? 'plugin' : 'inline',
+          plugin: owningPlugin,
           state: { [target]: state },
           deployed: info.recipe ? { [target]: info.recipe } : {},
         });
@@ -97,8 +106,34 @@ const MCP_STATE_LABELS: Record<McpDeploymentState, string> = {
   synced: 'synced',
   differs: 'differs',
   inline: 'inline',
+  plugin: 'plugin',
   disabled: 'disabled',
 };
+
+/** Server name to the catalog plugin whose `.mcp.json` declares it. */
+async function pluginOwnedServers(): Promise<Map<string, string>> {
+  const { listPlugins, getPluginInstallDir } = await import('./plugins-metadata.js');
+  const fsp = await import('node:fs/promises');
+  const pathMod = await import('node:path');
+
+  const owned = new Map<string, string>();
+
+  for (const plugin of await listPlugins()) {
+    try {
+      const raw = await fsp.readFile(
+        pathMod.join(getPluginInstallDir(plugin.name), '.mcp.json'),
+        'utf8'
+      );
+      for (const name of Object.keys(JSON.parse(raw)?.mcpServers ?? {})) {
+        if (!owned.has(name)) owned.set(name, plugin.name);
+      }
+    } catch {
+      // No MCP servers in this plugin.
+    }
+  }
+
+  return owned;
+}
 
 /** Summarize state across targets, listing them separately when they disagree. */
 function formatMcpState(server: McpServerStatus): string {

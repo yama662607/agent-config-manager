@@ -48,37 +48,39 @@ function validateServerName(serverName: string): void {
 }
 
 /**
- * Validate MCP command to prevent command injection.
- * Only allows simple command names without paths or shell metacharacters.
+ * Validate an MCP command.
+ *
+ * What this defends against is shell injection: a command that, if anything
+ * ever passes it through a shell, would run something else besides itself.
+ * Metacharacters, newlines and null bytes are refused for that reason.
+ *
+ * It does **not** restrict where the executable lives. An earlier version
+ * allowed only `npx`, `node` and `./relative` forms, which had two problems.
+ * It gave little real protection — `npx <anything>` runs arbitrary code, so an
+ * attacker who could set the command was never stopped by the list. And it
+ * blocked the servers people actually run locally: `acm mcp adopt` records an
+ * absolute path with a warning, and `acm mcp update` then refused to deploy the
+ * very recipe adopt had just written. A recipe you can record but never apply
+ * is worse than no rule.
+ *
+ * Whether the command exists is a separate question, and `acm doctor` answers
+ * it. It is deliberately not checked here: `acm` can configure a machine before
+ * the tools are installed on it.
  */
 function validateCommand(command: string): void {
   if (!command || command.length === 0 || command.length > 200) {
     throw new Error('Command must be 1-200 characters');
   }
 
-  // Check for shell metacharacters
   const dangerousChars = /[;&|`$()<>]/;
   if (dangerousChars.test(command)) {
     throw new Error('Command cannot contain shell metacharacters');
   }
 
-  // For commands with paths, allow common safe prefixes
-  if (command.includes('/') || command.includes('\\')) {
-    // Only allow specific safe paths
-    const allowedPaths = [
-      /^npx$/,
-      /^npm$/,
-      /^node$/,
-      /^python$/,
-      /^python3$/,
-      /^\.\/[a-zA-Z0-9._-]+$/,  // Current directory relative
-      /^\.\.\/[a-zA-Z0-9._-]+$/, // Parent directory relative (risky but needed)
-    ];
-
-    const isAllowed = allowedPaths.some(pattern => pattern.test(command));
-    if (!isAllowed) {
-      throw new Error('Command path not allowed. Use npx, npm, node, or relative paths like ./command');
-    }
+  // A newline splits a command in most files that hold one; a null byte
+  // truncates it in most things that read one.
+  if (/[\n\r\0]/.test(command)) {
+    throw new Error('Command cannot contain newlines or null bytes');
   }
 }
 

@@ -244,6 +244,43 @@ async function applicationRecord(
   };
 }
 
+/**
+ * Fields an application rewrites without the plugin having changed.
+ *
+ * Claude Desktop stamps `lastUpdated` into a plugin's `manifest.json` whenever
+ * it touches the file — observed moving 73 minutes with every skill byte
+ * identical. Hashing it made `acm doctor` report `anthropic-skills` as changed
+ * more or less hourly, and a signal that fires when nothing happened is one
+ * people learn to ignore.
+ *
+ * Only the application's own write timestamp is dropped. The per-skill
+ * `updatedAt` and `enabled` entries beside it are kept, because those move when
+ * the plugin really does.
+ */
+const VOLATILE_MANIFEST_FIELDS = ['lastUpdated'];
+
+/**
+ * Digest a plugin source, ignoring the application's bookkeeping.
+ *
+ * Import and drift detection must both use this, or every comparison fails.
+ */
+export async function digestPluginSource(dir: string): Promise<string | null> {
+  const { digestSkillDir } = await import('./skill-placement.js');
+
+  return digestSkillDir(dir, (relative, contents) => {
+    if (path.basename(relative) !== 'manifest.json') return contents;
+
+    try {
+      const parsed = JSON.parse(contents.toString('utf8'));
+      if (!parsed || typeof parsed !== 'object') return contents;
+      for (const field of VOLATILE_MANIFEST_FIELDS) delete parsed[field];
+      return Buffer.from(JSON.stringify(parsed));
+    } catch {
+      return contents; // Not JSON after all; hash it as it is.
+    }
+  });
+}
+
 /** Inspect one directory. Returns null when it is not a plugin. */
 async function inspect(dir: string): Promise<DesktopPlugin | null> {
   let manifest: PluginManifest | null = null;

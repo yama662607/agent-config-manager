@@ -394,7 +394,7 @@ async function checkMcpCommands(allowHome: boolean): Promise<string[]> {
       if (seen.has(key)) continue;
       seen.add(key);
 
-      if (!(await commandResolves(command))) {
+      if ((await commandResolves(command, info.recipe.cwd)) === 'missing') {
         problems.push(`${name} (${target}): cannot find ${formatHome(command)}`);
       }
     }
@@ -403,22 +403,41 @@ async function checkMcpCommands(allowHome: boolean): Promise<string[]> {
   return problems;
 }
 
-/** Whether a command exists, as an absolute path or on PATH. */
-async function commandResolves(command: string): Promise<boolean> {
+/**
+ * Whether a command exists: as a path, or on PATH.
+ *
+ * A relative command is resolved against the working directory the server is
+ * configured to start in, not against wherever `acm` happens to be running.
+ * Codex writes such entries for its own bundled servers — `./Codex Computer
+ * Use.app/…` with `cwd = "."` — and checking those from `acm`'s directory
+ * reported a server that works fine as missing.
+ *
+ * `unknown` is for a relative command whose working directory is itself
+ * relative: only the application launching it knows what that resolves to, so
+ * neither "found" nor "missing" would be honest.
+ */
+async function commandResolves(
+  command: string,
+  cwd?: string
+): Promise<'found' | 'missing' | 'unknown'> {
   if (command.includes('/')) {
+    if (!path.isAbsolute(command)) {
+      if (!cwd || !path.isAbsolute(cwd)) return 'unknown';
+      command = path.resolve(cwd, command);
+    }
     try {
       await fs.access(command);
-      return true;
+      return 'found';
     } catch {
-      return false;
+      return 'missing';
     }
   }
 
   try {
     await execAsync(`command -v ${JSON.stringify(command)}`);
-    return true;
+    return 'found';
   } catch {
-    return false;
+    return 'missing';
   }
 }
 

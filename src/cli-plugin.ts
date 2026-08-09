@@ -18,7 +18,7 @@ import type { PluginEntry, TargetName, PluginManifest } from './types.js';
 import type { DesktopPlugin } from './desktop-scanner.js';
 import { padRightWide, truncateWide } from './table-utils.js';
 import { AGENT_PLUGIN_DIR } from './agent-paths.js';
-import { getCatalogDir } from './acm-config.js';
+import { getCatalogDir, toPortablePath, fromPortablePath } from './acm-config.js';
 import { parseTargetList } from './target-utils.js';
 
 const home = os.homedir();
@@ -361,7 +361,7 @@ export async function pluginInstall(name: string, argv: string[]): Promise<void>
       capabilities: iface?.capabilities, defaultPrompt: iface?.defaultPrompt,
       brandColor: iface?.brandColor, privacyPolicyURL: iface?.privacyPolicyURL,
       termsOfServiceURL: iface?.termsOfServiceURL,
-      agent: detail.agent, installedFor: installedTargets, sourcePath: detail.sourcePath,
+      agent: detail.agent, installedFor: installedTargets, sourcePath: toPortablePath(detail.sourcePath),
       skills: detail.skills.map(s => s.id),
       mcps: Object.keys(detail.mcpServers).filter(k => k !== 'mcpServers'),
       agentFiles: detail.agentFiles, knowledgeFiles: detail.knowledgeFiles,
@@ -809,7 +809,9 @@ export async function pluginImport(
     capabilities: manifest.interface?.capabilities,
     agent: existing?.agent ?? 'claude',
     installedFor: existing?.installedFor,
-    sourcePath: source,
+    // Stored home-relative: the catalog is shared between machines, and an
+    // absolute path would be rewritten by whichever one ran the import last.
+    sourcePath: toPortablePath(source),
     ...inventory,
     installedAt: existing?.installedAt ?? new Date().toISOString(),
     updatedAt: new Date().toISOString(),

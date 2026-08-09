@@ -74,20 +74,72 @@ describe('Noticing that a plugin source moved on', () => {
     );
   });
 
-  it('reports a changed source, and a source that is gone', async () => {
+  it('reports a source whose contents changed', async () => {
     const { pluginSourceDrift } = await import('../../src/catalog-drift.js');
 
     // Same file count, same version — only the contents differ.
     await write(path.join(SOURCE, 'skills', 'demo', 'SKILL.md'), '# demo v2\n');
-    let drift = await pluginSourceDrift();
-    let mine = drift.find((d) => d.id === 'bundled-demo');
+
+    const drift = await pluginSourceDrift();
+    const mine = drift.find((d) => d.id === 'bundled-demo');
+
     assert.ok(mine, 'a changed source should be reported');
     assert.match(mine.detail, /changed/);
+  });
+
+  it('says nothing about a source that is not on this machine', async () => {
+    // Once a catalog is shared between machines, this is the normal state for
+    // every application the second machine does not have. Reporting it as drift
+    // would mean a permanent, unactionable entry that never clears, and a
+    // report people stop reading. It belongs under portability instead.
+    const { pluginSourceDrift } = await import('../../src/catalog-drift.js');
 
     await fs.rm(SOURCE, { recursive: true, force: true });
-    drift = await pluginSourceDrift();
-    mine = drift.find((d) => d.id === 'bundled-demo');
-    assert.ok(mine, 'a missing source should be reported');
-    assert.match(mine.detail, /gone/);
+
+    const drift = await pluginSourceDrift();
+    assert.strictEqual(
+      drift.find((d) => d.id === 'bundled-demo'),
+      undefined
+    );
+  });
+
+  it('reports that source under portability, naming the application', async () => {
+    const { machineReferences } = await import('../../src/catalog-portability.js');
+
+    await fs.rm(SOURCE, { recursive: true, force: true });
+
+    const references = await machineReferences(CATALOG);
+    const mine = references.find((r) => r.id === 'bundled-demo');
+
+    assert.ok(mine, 'an absent plugin source should be reported');
+    assert.strictEqual(mine.kind, 'plugin source');
+    assert.strictEqual(mine.present, false);
+    assert.strictEqual(mine.variable, 'DemoApp');
+  });
+});
+
+describe('Storing where a plugin came from', () => {
+  it('records a path under the home directory as ~-relative', async () => {
+    // The catalog is shared between machines. The same location spelled
+    // with one user name here and another there is one place described twice,
+    // and every import would rewrite what the other machine had just committed.
+    const { toPortablePath, fromPortablePath } = await import('../../src/acm-config.js');
+
+    const inside = path.join(os.homedir(), 'Library', 'Application Support', 'Demo');
+    assert.strictEqual(toPortablePath(inside), '~/Library/Application Support/Demo');
+    assert.strictEqual(fromPortablePath(toPortablePath(inside)), inside);
+  });
+
+  it('leaves a path outside the home directory alone', async () => {
+    // An application bundle is a fact about the machine, not about the user.
+    const { toPortablePath } = await import('../../src/acm-config.js');
+
+    assert.strictEqual(toPortablePath('/Applications/Warp.app'), '/Applications/Warp.app');
+  });
+
+  it('still resolves the absolute paths written before this change', async () => {
+    const { fromPortablePath } = await import('../../src/acm-config.js');
+
+    assert.strictEqual(fromPortablePath('/Applications/Warp.app'), '/Applications/Warp.app');
   });
 });

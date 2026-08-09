@@ -13,6 +13,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fromPortablePath } from './acm-config.js';
 
 /** Provider directories that hold unpacked plugins, in preference order. */
 function pluginRoots(): string[] {
@@ -95,7 +96,7 @@ export async function findMissingMcpConfigs(): Promise<MissingMcpConfig[]> {
     if (await fs.stat(catalogFile).catch(() => null)) continue;
 
     const candidates = [
-      ...(plugin.sourcePath ? [path.join(plugin.sourcePath, '.mcp.json')] : []),
+      ...(plugin.sourcePath ? [path.join(fromPortablePath(plugin.sourcePath), '.mcp.json')] : []),
       ...pluginRoots().map((root) => path.join(root, plugin.name, '.mcp.json')),
     ];
 
@@ -146,7 +147,11 @@ export async function findTruncatedSkills(): Promise<TruncatedSkill[]> {
       const link = await fs.lstat(catalogDir).catch(() => null);
       if (!link || link.isSymbolicLink()) continue;
 
-      const source = await findSkillSource(plugin.name, skillId, plugin.sourcePath);
+      const source = await findSkillSource(
+        plugin.name,
+        skillId,
+        plugin.sourcePath ? fromPortablePath(plugin.sourcePath) : undefined
+      );
       if (!source) continue;
 
       const have = await relativeFiles(catalogDir);

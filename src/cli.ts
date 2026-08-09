@@ -190,8 +190,13 @@ Usage:
 Subcommands:
   list, status            Show skill status (default)
   add <name>              Add a skill to the project from catalog
-  install <github-url>    Install a skill directly from GitHub
+  install <github-url>    Install a skill directly from GitHub (--force to replace)
   import <path>           Import a skill from local directory
+  link <path>             Register a directory in the catalog as a symlink (no copy)
+  unlink <name>           Remove the catalog link, leaving the directory alone
+  update [name]           Re-place distributed copies that drifted from the catalog
+  meta <name>             Show or edit catalog metadata (pinned, tags, deprecated)
+  outdated [name]         Check recorded GitHub sources for upstream changes
   search <query>          Search skills.directory registry
   remove <name>           Remove a skill from the project or catalog
   enable <name>           Enable a skill (skills are always enabled if present)

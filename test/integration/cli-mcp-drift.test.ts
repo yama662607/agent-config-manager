@@ -96,6 +96,77 @@ describe('MCP drift detection', () => {
     assert.strictEqual(server.source, 'inline');
   });
 
+  it('matches a catalog entry by what the server launches, not only by name', async () => {
+    // A catalog entry is keyed by package id, but Codex and Claude reject
+    // `@scope/name` as a server name, so what lands in a provider's config is a
+    // sanitized form -- or, from another tool, the full id. Matching on the
+    // name alone reported `@yama662607/obsidian-companion-mcp` as unmanaged
+    // while its catalog entry sat right there.
+    await fs.writeFile(
+      path.join(PROJECT, '.mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          // The catalog calls this `demo-server`.
+          '@demo/server': { type: 'stdio', command: 'npx', args: ['-y', '@demo/server'] },
+        },
+      })
+    );
+
+    const parsed = JSON.parse(await acm(['mcp', '--json']));
+    const server = parsed.servers.find((s: any) => s.name === '@demo/server');
+    assert.strictEqual(server.source, 'catalog');
+    assert.strictEqual(server.state.claude, 'synced');
+  });
+
+  it('still reports a genuinely unknown server as inline', async () => {
+    // The fallbacks must not match anything that merely looks similar.
+    await fs.writeFile(
+      path.join(PROJECT, '.mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          'other-server': { type: 'stdio', command: 'npx', args: ['-y', '@other/thing'] },
+        },
+      })
+    );
+
+    const parsed = JSON.parse(await acm(['mcp', '--json']));
+    const server = parsed.servers.find((s: any) => s.name === 'other-server');
+    assert.strictEqual(server.source, 'inline');
+  });
+
+  it('picks the entry whose recipe matches when several install one package', async () => {
+    // Two catalog entries can launch the same package -- the catalog here has
+    // picked up both a package-id-keyed and a sanitized-name-keyed copy. The
+    // matching one must win, or the report invents a `differs`.
+    await fs.appendFile(
+      path.join(CATALOG, 'catalog.toml'),
+      [
+        '[mcps.demo_server]',
+        'id = "demo_server"',
+        'displayName = "Demo (old)"',
+        'description = "same package, older pin"',
+        'addedAt = "2026-08-02T00:00:00.000Z"',
+        '[mcps.demo_server.recipe]',
+        'command = "npx"',
+        'args = ["-y", "@demo/server@0.0.1"]',
+        '',
+      ].join('\n')
+    );
+
+    await fs.writeFile(
+      path.join(PROJECT, '.mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          '@demo/server': { type: 'stdio', command: 'npx', args: ['-y', '@demo/server'] },
+        },
+      })
+    );
+
+    const parsed = JSON.parse(await acm(['mcp', '--json']));
+    const server = parsed.servers.find((s: any) => s.name === '@demo/server');
+    assert.strictEqual(server.state.claude, 'synced');
+  });
+
   it('names the plugin that owns a server, rather than calling it inline', async () => {
     // A server a plugin brings is the plugin's to manage: installing writes it
     // and uninstalling removes it. Calling it inline invited a pointless

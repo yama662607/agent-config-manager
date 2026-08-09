@@ -28,13 +28,24 @@ export interface SkillPlacement {
 }
 
 /**
+ * Rewrite a file's bytes before they are hashed.
+ *
+ * For dropping content that changes without the directory meaningfully
+ * changing — see `digestPluginSource` in desktop-scanner.ts.
+ */
+export type DigestNormaliser = (relativePath: string, contents: Buffer) => Buffer;
+
+/**
  * Compute a digest over a skill directory's contents.
  *
  * Covers every regular file's relative path and bytes, so both edits and
  * added/removed files change the result. Symlinks inside the directory are
  * hashed by their target string rather than followed.
  */
-export async function digestSkillDir(dir: string): Promise<string | null> {
+export async function digestSkillDir(
+  dir: string,
+  normalise?: DigestNormaliser
+): Promise<string | null> {
   const files: string[] = [];
   const visited = new Set<string>();
 
@@ -83,9 +94,11 @@ export async function digestSkillDir(dir: string): Promise<string | null> {
 
   const hash = crypto.createHash('sha256');
   for (const file of files) {
-    hash.update(path.relative(dir, file));
+    const relative = path.relative(dir, file);
+    const contents = await fs.readFile(file);
+    hash.update(relative);
     hash.update('\0');
-    hash.update(await fs.readFile(file));
+    hash.update(normalise ? normalise(relative, contents) : contents);
     hash.update('\0');
   }
 

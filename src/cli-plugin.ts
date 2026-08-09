@@ -790,9 +790,8 @@ export async function pluginImport(
 
   // Record what the source looked like, so a later scan can tell whether the
   // application replaced it.
-  const { digestSkillDir } = await import('./skill-placement.js');
-  const { describeSource } = await import('./desktop-scanner.js');
-  const sourceDigest = (await digestSkillDir(source)) ?? undefined;
+  const { describeSource, digestPluginSource } = await import('./desktop-scanner.js');
+  const sourceDigest = (await digestPluginSource(source)) ?? undefined;
   const origin = await describeSource(source);
 
   await addPluginEntry({

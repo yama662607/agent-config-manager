@@ -39,8 +39,7 @@ export interface SourceDrift {
  */
 export async function pluginSourceDrift(): Promise<SourceDrift[]> {
   const { listPlugins } = await import('./plugins-metadata.js');
-  const { digestSkillDir } = await import('./skill-placement.js');
-  const { scanDesktopPlugins } = await import('./desktop-scanner.js');
+  const { scanDesktopPlugins, digestPluginSource } = await import('./desktop-scanner.js');
 
   const plugins = await listPlugins();
   const tracked = plugins.filter((p) => p.sourceDigest);
@@ -56,7 +55,7 @@ export async function pluginSourceDrift(): Promise<SourceDrift[]> {
     const current = discovered.get(plugin.name);
     const sourcePath = current?.sourcePath ?? plugin.sourcePath;
 
-    const digest = await digestSkillDir(sourcePath);
+    const digest = await digestPluginSource(sourcePath);
     if (digest === null) {
       drift.push({
         kind: 'plugin',

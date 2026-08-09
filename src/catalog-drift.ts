@@ -16,7 +16,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import path from 'node:path';
-import { getCatalogDir } from './acm-config.js';
+import { getCatalogDir, fromPortablePath } from './acm-config.js';
 
 const run = promisify(execFile);
 
@@ -36,6 +36,11 @@ export interface SourceDrift {
  * it lives at may change with it, so the comparison is by content: the digest
  * recorded at import versus the digest of the source now. The application's
  * version is reported alongside because it explains the change.
+ *
+ * A source that is simply *not on this machine* is not drift and is not
+ * reported here. Once a catalog is shared between machines that is the normal
+ * state for every application the second machine does not have — permanent, not
+ * actionable, and reported under portability instead. See `absentPluginSources`.
  */
 export async function pluginSourceDrift(): Promise<SourceDrift[]> {
   const { listPlugins } = await import('./plugins-metadata.js');
@@ -53,17 +58,11 @@ export async function pluginSourceDrift(): Promise<SourceDrift[]> {
 
   for (const plugin of tracked) {
     const current = discovered.get(plugin.name);
-    const sourcePath = current?.sourcePath ?? plugin.sourcePath;
+    const sourcePath = current?.sourcePath ?? fromPortablePath(plugin.sourcePath);
 
     const digest = await digestPluginSource(sourcePath);
-    if (digest === null) {
-      drift.push({
-        kind: 'plugin',
-        id: plugin.name,
-        detail: `source is gone (${plugin.sourceApp ?? 'unknown app'})`,
-      });
-      continue;
-    }
+    // Absent, not changed. Reported under portability.
+    if (digest === null) continue;
 
     if (digest === plugin.sourceDigest) continue;
 

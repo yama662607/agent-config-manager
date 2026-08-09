@@ -331,17 +331,32 @@ async function reportPortability(): Promise<boolean> {
   const missing = references.filter((reference) => !reference.present);
 
   for (const reference of missing) {
+    if (reference.kind === 'plugin source') {
+      // The application is what is missing; its path here means nothing.
+      console.log(
+        `  ✗ ${reference.id}: bundled in ${reference.variable ?? 'an application'}, not installed here`
+      );
+      continue;
+    }
     const where = reference.variable ? `${reference.kind} ${reference.variable}` : reference.kind;
     console.log(`  ✗ ${reference.id}: ${where} -> ${formatHome(reference.target)}`);
   }
 
-  const here = references.length - missing.length;
   if (missing.length === 0) {
-    console.log(`  ✓ ${here} references to this machine, all present`);
+    console.log(`  ✓ ${references.length} references to this machine, all present`);
     console.log('    They will need attention if you clone this catalog elsewhere.');
-  } else {
-    console.log(`  ${missing.length} of ${references.length} not found on this machine.`);
+    return false;
+  }
+
+  console.log(`  ${missing.length} of ${references.length} not found on this machine.`);
+
+  // The two kinds need different answers, so only mention the ones present.
+  const kinds = new Set(missing.map((reference) => reference.kind));
+  if (kinds.size > (kinds.has('plugin source') ? 1 : 0)) {
     console.log('    Re-link the skill, or point the recipe at where it lives here.');
+  }
+  if (kinds.has('plugin source')) {
+    console.log('    A plugin from an application you do not have here is fine to leave.');
   }
 
   return missing.length > 0;

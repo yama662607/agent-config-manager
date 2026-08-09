@@ -18,7 +18,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-export type ReferenceKind = 'skill link' | 'command' | 'argument' | 'environment';
+export type ReferenceKind =
+  | 'skill link'
+  | 'command'
+  | 'argument'
+  | 'environment'
+  | 'plugin source';
 
 export interface MachineReference {
   kind: ReferenceKind;
@@ -104,12 +109,54 @@ async function recipePaths(): Promise<MachineReference[]> {
 }
 
 /**
+ * Applications a plugin was imported from.
+ *
+ * Once a catalog is shared, the second machine will not have every application
+ * the first one had — Warp, Dia, ChatGPT. That is a permanent, unremarkable
+ * fact about the machine, so it belongs here rather than in drift, where it
+ * would be reported as a change forever and never go away.
+ *
+ * Located by name first, because an application update moves the directory.
+ */
+async function pluginSources(): Promise<MachineReference[]> {
+  const { listPlugins } = await import('./plugins-metadata.js');
+  const { scanDesktopPlugins } = await import('./desktop-scanner.js');
+  const { fromPortablePath } = await import('./acm-config.js');
+
+  const tracked = (await listPlugins()).filter((plugin) => plugin.sourceDigest);
+  if (tracked.length === 0) return [];
+
+  const discovered = new Map((await scanDesktopPlugins()).map((p) => [p.name, p]));
+
+  const found: MachineReference[] = [];
+
+  for (const plugin of tracked) {
+    const here = discovered.get(plugin.name);
+    const target = here?.sourcePath ?? fromPortablePath(plugin.sourcePath);
+
+    found.push({
+      kind: 'plugin source',
+      id: plugin.name,
+      target,
+      variable: plugin.sourceApp,
+      present: here !== undefined || (await exists(target)),
+    });
+  }
+
+  return found;
+}
+
+/**
  * Everything in the catalog that names a location on this machine.
  *
  * Sorted with the missing ones first, because those are the ones to act on.
  */
 export async function machineReferences(catalogDir: string): Promise<MachineReference[]> {
-  const found = [...(await skillLinks(catalogDir)), ...(await recipePaths())];
+  const found = [
+    ...(await skillLinks(catalogDir)),
+    ...(await recipePaths()),
+    ...(await pluginSources()),
+  ];
 
   return found.sort((a, b) => {
     if (a.present !== b.present) return a.present ? 1 : -1;

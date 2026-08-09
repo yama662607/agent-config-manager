@@ -40,6 +40,28 @@ function expandHome(p: string): string {
   return p;
 }
 
+/**
+ * Store a path so a catalog shared between machines does not churn.
+ *
+ * `/Users/<one user>/…` on one machine and `/Users/<another>/…` on the other is the
+ * same location described twice, and every command that re-records one produces
+ * a diff the other has to undo. Writing `~/…` makes the two agree.
+ *
+ * Paths outside the home directory — an application bundle, a volume — are left
+ * alone: they are absolute facts about the machine, not about the user.
+ */
+export function toPortablePath(absolute: string): string {
+  const home = os.homedir();
+  if (absolute === home) return '~';
+  if (absolute.startsWith(home + path.sep)) return '~/' + absolute.slice(home.length + 1);
+  return absolute;
+}
+
+/** Resolve a stored path. Absolute paths from before this change still work. */
+export function fromPortablePath(stored: string): string {
+  return expandHome(stored);
+}
+
 function readCatalogDirFromConfig(): string | null {
   try {
     const raw = fs.readFileSync(getConfigPath(), 'utf8');

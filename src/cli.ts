@@ -280,6 +280,20 @@ Options:
   --strict      Fail on warnings as well as errors
 `;
 
+const SCAN_HELP = `acm scan - Discover skills and MCP servers the agents already have
+
+Usage:
+  acm scan [options]
+
+DESCRIPTION:
+  Walks every provider's configuration and registers what it finds into the
+  catalog. This writes: expect new entries afterwards, and review them before
+  committing.
+
+EXAMPLES:
+  acm scan                    # Discover and register
+`;
+
 const DOCTOR_HELP = `acm doctor - Run diagnostics and health checks
 
 Usage:
@@ -334,6 +348,18 @@ async function main(): Promise<void> {
   }
 
   const command = argv[0];
+
+  // `--help` must never do the thing it is asking about. Each command below
+  // handles its own, but `acm scan --help` did not: it ran a full scan and
+  // wrote 66 skills and 25 servers into the catalog. Commands are added over
+  // time, so the guarantee belongs here rather than in each handler.
+  if (argv.slice(1).some((arg) => arg === '--help' || arg === '-h')) {
+    const help = COMMAND_HELP[command];
+    if (help) {
+      process.stdout.write(help);
+      return;
+    }
+  }
 
   switch (command) {
     case 'init':
@@ -1304,6 +1330,24 @@ EXAMPLES:
   acm init                        # Full interactive setup
   acm init --targets claude       # Skip target selection
 `;
+
+/**
+ * Help text by command, so `--help` can be answered before dispatch.
+ *
+ * Anything not listed here falls through to the command, which must then
+ * handle `--help` itself — every one of them does today.
+ */
+const COMMAND_HELP: Record<string, string> = {
+  init: INIT_HELP,
+  catalog: CATALOG_HELP,
+  mcp: MCP_HELP,
+  skill: SKILL_HELP,
+  plugin: PLUGIN_HELP,
+  validate: VALIDATE_HELP,
+  doctor: DOCTOR_HELP,
+  scan: SCAN_HELP,
+};
+
 
 async function handleInit(argv: string[]): Promise<void> {
   if (argv.includes('--help') || argv.includes('-h')) {

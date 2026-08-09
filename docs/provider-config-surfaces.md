@@ -137,18 +137,76 @@ CLI.
 
 ## Plugins
 
-| Provider | Location |
-|----------|----------|
-| Claude Code | `~/.claude/plugins/` |
-| Codex | `~/.codex/.tmp/plugins/plugins/` |
-| Antigravity | `~/.gemini/config/plugins/` (also `agy plugin` CLI) |
-| Grok | `~/.grok/plugins/` (auto-trusted; project plugins need trust) |
+All four providers agree on what a plugin *is* — a directory holding any of
+`skills/`, `commands/`, `agents/`, `hooks/hooks.json` and `.mcp.json` — and disagree
+only on where its manifest sits.
 
-Plugin support is deliberately shallow: `acm` imports a plugin into the catalog and
-copies it into these directories. Providers are diverging here — Antigravity has an
-`agy plugin` CLI, Grok has a trust model, Codex uses a marketplace cache — so the same
-rule applies as everywhere else: delegate once a provider's own CLI becomes the only
-correct way in.
+| Provider | Manifest location | Marketplace index |
+|----------|-------------------|-------------------|
+| Claude Code | `.claude-plugin/plugin.json` | `.claude-plugin/marketplace.json` |
+| Codex | `.codex-plugin/plugin.json` | `.agents/plugins/marketplace.json` |
+| Antigravity | `plugin.json` at the root | none — installs from a path |
+| Grok | `.grok-plugin/plugin.json`, or any of the above | `.grok-plugin/marketplace.json` |
+
+### There is nothing to convert
+
+Because the disagreement is only about filenames, writing the same manifest to all
+four locations produces one directory every provider reads as its own. Verified
+against an assembled copy of the `zoom` plugin:
+
+```
+claude plugin validate <dir>   → passes (warns that it ignores `apps`, `interface`)
+grok plugin validate <dir>     → valid: 1 skill dir, 1 command dir, 1 agent dir
+agy plugin validate <dir>      → 27 skills, 3 agents, 26 commands converted to skills
+```
+
+Each provider then applies its own handling. **Antigravity converts `commands/` into
+skills by itself**, and Claude ignores fields it does not recognise rather than
+failing. So `acm` writes every manifest and lets each provider decide, instead of
+maintaining a translation per pair.
+
+### One real difference: where a plugin's MCP servers are declared
+
+Claude, Codex and Grok read them from `.mcp.json`. **Antigravity reads
+`mcp_config.json`** and ignores the other name. Probed by running
+`agy plugin validate` against each candidate:
+
+| Candidate | `agy` reports |
+|-----------|---------------|
+| `.mcp.json` | `mcpServers: skipped (not found)` |
+| `mcpServers` inlined in `plugin.json` | `mcpServers: skipped (not found)` |
+| `mcpServers: "./.mcp.json"` in `plugin.json` | `mcpServers: skipped (not found)` |
+| `mcp_config.json` | `mcpServers: 1 processed` |
+
+So `acm` writes both names. This is the only content-level adaptation the
+assembly performs.
+
+### Installing still goes through the CLI
+
+Placing a valid plugin directory in `~/.grok/plugins/` is not enough: `grok plugin
+list` shows nothing until the plugin is installed, because an enabled plugin is state
+the provider records. This is the rule at the top of this document, so `acm` publishes
+the catalog as a local marketplace and delegates:
+
+```bash
+claude plugin marketplace add <dir> && claude plugin install <name>@acm-catalog
+codex  plugin marketplace add <dir> && codex  plugin add     <name>@acm-catalog
+grok   plugin marketplace add <dir> && grok   plugin install <dir>/plugins/<name> --trust
+agy    plugin install <dir>/plugins/<name>
+```
+
+Antigravity has no marketplace command, so it is pointed at the same plugin
+directories one at a time. Grok records the plugin by *path*, not by copying it, so
+the generated marketplace has to live somewhere stable — `acm` puts it in the catalog.
+
+Where a provider unpacks what it installed:
+
+| Provider | Installed to |
+|----------|--------------|
+| Claude Code | `~/.claude/plugins/` |
+| Codex | `~/.codex/plugins/cache/<marketplace>/<name>/<version>/` |
+| Antigravity | `~/.gemini/config/plugins/<name>/` (copied) |
+| Grok | referenced in place; `~/.grok/plugins/` is auto-trusted |
 
 ---
 

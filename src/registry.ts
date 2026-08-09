@@ -108,7 +108,86 @@ export async function downloadSkillContent(githubUrl: string): Promise<string> {
     if (message.includes('Only GitHub') || message.includes('Invalid GitHub')) {
       throw new Error(message);
     }
-    throw new Error(`Failed to download skill. Check the URL and try again.`);
+    // A 404 here almost always means the repository moved the skill rather than
+    // that the user mistyped: the URL came from the catalog, where it worked
+    // when the skill was installed. Saying "check the URL" sent people looking
+    // in the wrong place.
+    if (message.includes('404')) {
+      throw new Error(
+        `${skillUrl} is gone (404). The repository has moved or removed this ` +
+          `skill; find its new path and reinstall from there.`
+      );
+    }
+    throw new Error(`Could not download ${skillUrl}: ${message}`);
+  }
+}
+
+/**
+ * Every file in a skill directory on GitHub, as paths relative to it.
+ *
+ * A skill is a directory: SKILL.md is the entry point, and the references,
+ * scripts and assets beside it are what the instructions point at. Fetching
+ * only SKILL.md leaves a skill whose own instructions refer to files that are
+ * not there — the same defect that cost 522 catalog skills 3,533 files when
+ * plugins were imported.
+ *
+ * Returns null when the layout cannot be read, so the caller can still install
+ * the SKILL.md it already has.
+ */
+export async function listSkillDirectory(
+  githubUrl: string
+): Promise<{ path: string; size: number }[] | null> {
+  const parsed = githubUrl.match(
+    /github\.com\/([^/]+)\/([^/]+)\/(?:tree|blob)\/([^/]+)\/(.+?)\/?$/
+  );
+  if (!parsed) return null;
+
+  const [, owner, repo, ref, directory] = parsed;
+  const base = directory.replace(/\/SKILL\.md$/, '');
+
+  // The recursive tree is one request for any depth, and it is the only
+  // endpoint that does not need a request per subdirectory.
+  const url = `https://api.github.com/repos/${owner}/${repo}/git/trees/${ref}?recursive=1`;
+
+  try {
+    const response = await fetch(url, {
+      headers: { Accept: 'application/vnd.github+json' },
+    });
+    if (!response.ok) return null;
+
+    const tree = (await response.json())?.tree;
+    if (!Array.isArray(tree)) return null;
+
+    const prefix = `${base}/`;
+    return tree
+      .filter((node: any) => node.type === 'blob' && node.path.startsWith(prefix))
+      .map((node: any) => ({ path: node.path.slice(prefix.length), size: node.size ?? 0 }));
+  } catch {
+    return null;
+  }
+}
+
+/** Fetch one file from a skill directory on GitHub. */
+export async function downloadSkillFile(
+  githubUrl: string,
+  relativePath: string
+): Promise<Buffer | null> {
+  const base = githubUrl
+    .replace('github.com', 'raw.githubusercontent.com')
+    .replace('/blob/', '/')
+    .replace('/tree/', '/')
+    .replace(/\/SKILL\.md$/, '')
+    .replace(/\/$/, '');
+
+  const url = `${base}/${relativePath}`;
+  if (!validateGitHubUrl(url)) return null;
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    return Buffer.from(await response.arrayBuffer());
+  } catch {
+    return null;
   }
 }
 

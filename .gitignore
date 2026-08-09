@@ -17,3 +17,4 @@ npm-*.exp
 # Local editor settings & data
 .claude/
 .data/
+.grok/

@@ -71,6 +71,52 @@ export async function findSkillSource(
   return null;
 }
 
+/**
+ * Plugins whose `.mcp.json` never reached the catalog.
+ *
+ * The same import dropped this for the same reason it dropped a skill's
+ * references: the servers were registered in the catalog's MCP list, so the
+ * file itself looked redundant. It is not — it is how a provider learns which
+ * servers the plugin brings, and without it an installed plugin has none.
+ */
+export interface MissingMcpConfig {
+  plugin: string;
+  /** The copy this can be restored from. */
+  source: string;
+}
+
+export async function findMissingMcpConfigs(): Promise<MissingMcpConfig[]> {
+  const { listPlugins, getPluginInstallDir } = await import('./plugins-metadata.js');
+
+  const missing: MissingMcpConfig[] = [];
+
+  for (const plugin of await listPlugins()) {
+    const catalogFile = path.join(getPluginInstallDir(plugin.name), '.mcp.json');
+    if (await fs.stat(catalogFile).catch(() => null)) continue;
+
+    const candidates = [
+      ...(plugin.sourcePath ? [path.join(plugin.sourcePath, '.mcp.json')] : []),
+      ...pluginRoots().map((root) => path.join(root, plugin.name, '.mcp.json')),
+    ];
+
+    for (const candidate of candidates) {
+      if (await fs.stat(candidate).catch(() => null)) {
+        missing.push({ plugin: plugin.name, source: candidate });
+        break;
+      }
+    }
+  }
+
+  return missing;
+}
+
+export async function restoreMcpConfig(entry: MissingMcpConfig): Promise<void> {
+  const { getPluginInstallDir } = await import('./plugins-metadata.js');
+  const destination = path.join(getPluginInstallDir(entry.plugin), '.mcp.json');
+  await fs.mkdir(path.dirname(destination), { recursive: true });
+  await fs.cp(entry.source, destination, { dereference: true });
+}
+
 export interface TruncatedSkill {
   plugin: string;
   skill: string;

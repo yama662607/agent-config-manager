@@ -37,6 +37,20 @@ function parseFlag(argv: string[], ...names: string[]): boolean {
   return argv.some(a => names.includes(a));
 }
 
+/** Arguments that are neither a flag nor the value belonging to one. */
+function positionalArgs(argv: string[], flagsTakingValue: string[]): string[] {
+  const positional: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (flagsTakingValue.includes(argv[i])) {
+      i++;
+      continue;
+    }
+    if (argv[i].startsWith('-')) continue;
+    positional.push(argv[i]);
+  }
+  return positional;
+}
+
 function parseTargets(argv: string[]): TargetName[] {
   const idx = argv.findIndex(a => a === "--target" || a === "-t");
   if (idx < 0 || idx + 1 >= argv.length) return ["claude"];
@@ -731,7 +745,10 @@ async function inventoryPlugin(dir: string): Promise<{
  * provider's own directory — so a plugin obtained any other way, or a catalog
  * starting from empty, had no way in at all.
  */
-export async function pluginImport(sourcePath: string, options: { as?: string } = {}): Promise<void> {
+export async function pluginImport(
+  sourcePath: string,
+  options: { as?: string; quiet?: boolean } = {}
+): Promise<void> {
   const { addPluginEntry, getPluginEntry, validatePluginName } = await import('./plugins-metadata.js');
 
   const source = path.resolve(sourcePath);
@@ -809,10 +826,187 @@ export async function pluginImport(sourcePath: string, options: { as?: string } 
     `${inventory.mcps.length} MCP server${inventory.mcps.length === 1 ? '' : 's'}`,
     `${inventory.agentFiles.length} agent file${inventory.agentFiles.length === 1 ? '' : 's'}`,
   ];
+
+  // An update imports many plugins in a row and prints its own summary.
+  if (options.quiet) {
+    console.log(`      ${parts.join(', ')}`);
+    return;
+  }
+
   console.log(`Imported into the catalog: ${name} (${parts.join(', ')})`);
   console.log(`\nRun \`acm plugin install ${name} -t <target>\` to install it.`);
 }
 
+
+// ============================================================================
+// Cross-provider Conversion
+// ============================================================================
+
+/**
+ * Make catalog plugins available to other providers.
+ *
+ * There is no format to translate between: the four providers differ only in
+ * where they look for a manifest, so one assembled directory is read by all of
+ * them. What they do not share is installation — a plugin is enabled state a
+ * provider records, so each one's own CLI has to perform it. Both halves are
+ * here: assemble a local marketplace, then hand it to each provider.
+ */
+export async function pluginConvert(argv: string[]): Promise<void> {
+  const { buildMarketplace, registerMarketplace, installCommand, getMarketplaceDir } =
+    await import('./plugin-marketplace.js');
+
+  const targets = parseTargets(argv);
+  const dryRun = parseFlag(argv, '--dry-run', '-n');
+  const all = parseFlag(argv, '--all');
+  const names = positionalArgs(argv, ['--target', '-t']);
+
+  const catalog = await listPlugins();
+  const chosen = all ? catalog : catalog.filter((p) => names.includes(p.name));
+
+  if (chosen.length === 0) {
+    console.error(all ? 'The catalog has no plugins.' : `Not in the catalog: ${names.join(', ')}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const destination = getMarketplaceDir();
+
+  if (dryRun) {
+    console.log(`Would assemble ${chosen.length} plugins into ${destination}`);
+    console.log(`Would register that marketplace with: ${targets.join(', ')}\n`);
+    for (const entry of chosen.slice(0, 10)) console.log(`  ${entry.name}`);
+    if (chosen.length > 10) console.log(`  … and ${chosen.length - 10} more`);
+    return;
+  }
+
+  console.log(`Assembling ${chosen.length} plugins into ${destination}...`);
+  const built = await buildMarketplace(chosen, destination);
+
+  let restored = 0;
+  const problems: string[] = [];
+  const ignored = new Map<string, Set<TargetName>>();
+
+  for (const { entry, report } of built) {
+    restored += report.skillsRestored.length;
+    if (report.skillsMissing.length > 0) {
+      problems.push(`${entry.name}: the catalog no longer holds ${report.skillsMissing.join(', ')}`);
+    }
+    // Name what a provider will not use, rather than letting it vanish quietly.
+    for (const field of report.providerSpecific) {
+      const losers = targets.filter((t) => !field.usedBy.includes(t));
+      if (losers.length === 0) continue;
+      const set = ignored.get(field.field) ?? new Set<TargetName>();
+      losers.forEach((t) => set.add(t));
+      ignored.set(field.field, set);
+    }
+  }
+
+  console.log(`  ${built.length} plugins, ${restored} skill directories pulled from the catalog`);
+
+  console.log('\nRegistering the marketplace:');
+  for (const target of targets) {
+    const result = await registerMarketplace(target, destination);
+    if (!result) {
+      // Antigravity has no marketplace command; it installs per plugin.
+      console.log(`  [${target}] installs per plugin — see below`);
+      continue;
+    }
+    const state = result.alreadyRegistered ? 'already registered' : result.ok ? 'ok' : 'failed';
+    console.log(`  [${target}] ${state}: ${result.command}`);
+    if (!result.ok && result.output) console.log(`      ${result.output.split('\n')[0]}`);
+  }
+
+  console.log('\nInstall a plugin with:');
+  const example = built[0]?.entry.name ?? '<name>';
+  for (const target of targets) {
+    console.log(`  [${target}] ${installCommand(target, example, destination)}`);
+  }
+
+  if (ignored.size > 0) {
+    console.log('\nCarried but unused:');
+    for (const [field, losers] of ignored) {
+      console.log(`  \`${field}\` — ignored by ${[...losers].join(', ')}`);
+    }
+  }
+
+  if (problems.length > 0) {
+    console.log('\nNeeds attention:');
+    for (const problem of problems) console.log(`  ${problem}`);
+  }
+}
+
+// ============================================================================
+// Following the Source
+// ============================================================================
+
+/**
+ * Take a newer copy of a plugin from wherever it now lives.
+ *
+ * A bundled plugin is replaced wholesale when its application updates, and the
+ * path it sits at changes with it — Claude Desktop nests them under session
+ * UUIDs, ChatGPT under a versioned bundle. So the source is located by name
+ * rather than by the path recorded at import, and the import is a full replace.
+ *
+ * With no names, only plugins whose source has actually changed are touched;
+ * `acm doctor` reports the same set.
+ */
+export async function pluginUpdate(argv: string[]): Promise<void> {
+  const { pluginSourceDrift } = await import('./catalog-drift.js');
+  const { scanDesktopPlugins } = await import('./desktop-scanner.js');
+
+  const names = positionalArgs(argv, []);
+  const dryRun = parseFlag(argv, '--dry-run', '-n');
+
+  console.log('Looking for plugins whose source has moved on...\n');
+
+  const drift = await pluginSourceDrift();
+  const wanted = names.length > 0 ? drift.filter((d) => names.includes(d.id)) : drift;
+
+  const unknown = names.filter((n) => !drift.some((d) => d.id === n));
+  for (const name of unknown) {
+    console.log(`  ${name}: unchanged, or not tracked against a source`);
+  }
+
+  if (wanted.length === 0) {
+    console.log(names.length > 0 ? '\nNothing to update.' : 'Every tracked plugin is current.');
+    return;
+  }
+
+  // Located by name: an application update moves the directory as well as its
+  // contents, so the recorded path is the less reliable of the two.
+  const discovered = new Map((await scanDesktopPlugins()).map((p) => [p.name, p]));
+
+  if (dryRun) {
+    for (const entry of wanted) console.log(`  ${entry.id}: ${entry.detail}`);
+    console.log('\nDry run. Re-run without --dry-run to take the newer copies.');
+    return;
+  }
+
+  let updated = 0;
+  const stuck: string[] = [];
+
+  for (const entry of wanted) {
+    const current = discovered.get(entry.id);
+    if (!current) {
+      stuck.push(`${entry.id}: the source is no longer on this machine`);
+      continue;
+    }
+    console.log(`  ${entry.id}: ${entry.detail}`);
+    await pluginImport(current.sourcePath, { as: entry.id, quiet: true });
+    updated++;
+  }
+
+  console.log(`\n${updated} plugin${updated === 1 ? '' : 's'} updated.`);
+
+  if (stuck.length > 0) {
+    console.log('\nCould not update:');
+    for (const problem of stuck) console.log(`  ${problem}`);
+  }
+
+  if (updated > 0) {
+    console.log('\nRun `acm plugin convert --all` to rebuild what the providers install from.');
+  }
+}
 
 // ============================================================================
 // Payload Repair
@@ -826,13 +1020,28 @@ export async function pluginImport(sourcePath: string, options: { as?: string } 
  * since edited keeps their version.
  */
 export async function pluginRepair(options: { apply?: boolean } = {}): Promise<void> {
-  const { findTruncatedSkills, restoreSkill } = await import('./plugin-payload.js');
+  const { findTruncatedSkills, restoreSkill, findMissingMcpConfigs, restoreMcpConfig } =
+    await import('./plugin-payload.js');
 
-  console.log('Comparing catalog skills against the plugins they came from...\n');
+  console.log('Comparing the catalog against the plugins it came from...\n');
   const truncated = await findTruncatedSkills();
+  const mcpMissing = await findMissingMcpConfigs();
+
+  if (mcpMissing.length > 0) {
+    console.log(`${mcpMissing.length} plugins are missing their .mcp.json:`);
+    console.log(`    ${mcpMissing.map((m) => m.plugin).join(', ')}`);
+    if (options.apply) {
+      for (const entry of mcpMissing) await restoreMcpConfig(entry);
+      console.log(`  Restored ${mcpMissing.length}.`);
+    }
+    console.log();
+  }
 
   if (truncated.length === 0) {
     console.log('Every catalog skill has all the files its source has.');
+    if (mcpMissing.length > 0 && !options.apply) {
+      console.log('Run with --apply to restore the MCP configurations above.');
+    }
     return;
   }
 
@@ -937,6 +1146,7 @@ export async function pluginDiscover(options: { import?: boolean } = {}): Promis
   }
 
   for (const plugin of newcomers) {
-    await pluginImport(plugin.sourcePath, { as: catalogNames.get(plugin)! });
+    console.log(`  ${catalogNames.get(plugin)!}`);
+    await pluginImport(plugin.sourcePath, { as: catalogNames.get(plugin)!, quiet: true });
   }
 }

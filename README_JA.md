@@ -132,6 +132,53 @@ acm validate          # 警告は許容
 acm validate --strict # 警告で失敗
 ```
 
+### `acm plugin`
+
+プラグインは skills・commands・agents・hooks・MCP サーバーをまとめた単位です。
+
+```bash
+# デスクトップアプリに同梱されたプラグインを探す
+acm plugin discover
+acm plugin discover --import
+
+# 任意のディレクトリからカタログへ取り込む
+acm plugin import ./some-plugin
+acm plugin import ./some-plugin --as other-name
+
+acm plugin list
+acm plugin update    # 参照元が変わったものだけ取り直す
+acm plugin repair    # 古い取り込みが落としたファイルを復元する
+```
+
+`import` はマニフェストの置き場所を問いません（`.claude-plugin/plugin.json`、
+`.codex-plugin/plugin.json`、`.grok-plugin/plugin.json`、ルートの `plugin.json`）。
+マニフェストを持たず `skills/` だけのディレクトリも受け付けます。一部のアプリは
+その形で同梱しているためです。
+
+#### 全プロバイダーで使えるようにする
+
+変換は不要です。4 プロバイダーはプラグインの中身については一致しており、
+マニフェストの置き場所だけが異なります。4 箇所すべてに書いたディレクトリは、
+どのプロバイダーも自分のものとして読みます。適応は各プロバイダーが自前で行います
+（Antigravity は `commands/` を skills へ自動変換し、Claude は知らないフィールドを
+無視します）。
+
+インストールだけは別です。有効化されたプラグインはプロバイダーが記録する状態なので、
+そこは各 CLI に委譲します。`acm plugin convert` はカタログをローカルマーケットプレイス
+として公開し、各プロバイダーに渡します。
+
+```bash
+acm plugin convert --all -t claude,codex,antigravity,grok
+```
+
+出力の最後に「Carried but unused」が出ます。**そのプロバイダーが読まないフィールドを、
+落とさずに運びつつ名指しする**のがこのコマンドの要点です。生成されたマーケットプレイス
+は派生物なので、いつでも作り直せます。バージョン管理には入れないでください。
+
+根拠は [docs/provider-config-surfaces.md](docs/provider-config-surfaces.md) にあります。
+唯一の実質的な差異（Antigravity はプラグインの MCP サーバーを `.mcp.json` ではなく
+`mcp_config.json` から読む）もそこに記録しています。
+
 ### `acm doctor`
 
 診断とヘルスチェックを実行します。

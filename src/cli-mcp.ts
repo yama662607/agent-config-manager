@@ -1,5 +1,13 @@
-import type { McpRecipe, McpWorkspaceStatus, TargetName, McpServerStatus, McpDeploymentState } from './types.js';
+import type {
+  McpRecipe,
+  McpWorkspaceStatus,
+  TargetName,
+  McpServerStatus,
+  McpDeploymentState,
+  McpCatalogEntry,
+} from './types.js';
 import { discoverProject } from './project-discovery.js';
+import { inferPackageIdFromRecipe, sanitizeServerName } from './mcp-names.js';
 import { getMcpServers } from './config-adapters.js';
 import { padRightWide, truncateWide, truncateMiddle, getStringWidth } from './table-utils.js';
 
@@ -26,11 +34,49 @@ export async function mcpStatus(
   printMcpStatus(status, verbose);
 }
 
+/**
+ * Find the catalog entry a configured server corresponds to.
+ *
+ * Matching by name alone missed the case `acm` itself creates. A catalog entry
+ * is keyed by package id (`@scope/name`), but Codex and Claude reject that as a
+ * server name, so the name written into a provider's configuration is
+ * sanitized — and the same package can end up configured under its full id in
+ * one place and a sanitized form in another. `@yama662607/obsidian-companion-mcp`
+ * was reported as unmanaged while its catalog entry sat right there.
+ *
+ * So the fallbacks are what the server *launches*, then the sanitized name.
+ * When several entries install the same package, the one whose recipe matches
+ * wins, so an ambiguity cannot invent a spurious `differs`.
+ */
+function matchCatalogEntry(
+  entries: McpCatalogEntry[],
+  configuredName: string,
+  configuredRecipe?: McpRecipe
+): McpCatalogEntry | undefined {
+  const byName = entries.find((entry) => entry.id === configuredName);
+  if (byName) return byName;
+
+  const configuredPackage =
+    inferPackageIdFromRecipe(configuredRecipe?.command, configuredRecipe?.args) ?? configuredName;
+
+  const samePackage = entries.filter(
+    (entry) => inferPackageIdFromRecipe(entry.recipe.command, entry.recipe.args) === configuredPackage
+  );
+  if (samePackage.length > 0) {
+    return (
+      samePackage.find((entry) => recipesMatch(entry.recipe, configuredRecipe)) ?? samePackage[0]
+    );
+  }
+
+  const sanitized = sanitizeServerName(configuredName);
+  return entries.find((entry) => sanitizeServerName(entry.id) === sanitized);
+}
+
 async function buildMcpStatus(projectRoot: string, allowHome: boolean = false): Promise<McpWorkspaceStatus> {
   const { targets } = await discoverProject(process.cwd(), { allowHome });
   const { listMcps } = await import('./catalog.js');
 
-  const catalog = new Map((await listMcps()).map((entry) => [entry.id, entry]));
+  const entries = await listMcps();
   // A server a plugin brings is the plugin's to manage: installing the plugin
   // writes it and uninstalling removes it. Reporting it as an untracked inline
   // server invited a pointless `acm mcp adopt`, and the next plugin install
@@ -44,7 +90,7 @@ async function buildMcpStatus(projectRoot: string, allowHome: boolean = false): 
     const servers = await getMcpServers(target, configPath.path);
 
     for (const [name, info] of Object.entries(servers)) {
-      const catalogEntry = catalog.get(name);
+      const catalogEntry = matchCatalogEntry(entries, name, info.recipe);
       const owningPlugin = fromPlugins.get(name);
       const state: McpDeploymentState = !info.enabled
         ? 'disabled'
@@ -450,14 +496,17 @@ export async function mcpUpdate(options: McpUpdateOptions): Promise<void> {
 
   const discovery = await discoverProject(process.cwd(), { allowHome: options.allowHome });
   const status = await buildMcpStatus(discovery.root, options.allowHome);
-  const catalog = new Map((await listMcps()).map((entry) => [entry.id, entry]));
+  const entries = await listMcps();
 
   let updated = 0;
 
   for (const server of status.servers) {
     if (options.serverName && server.name !== options.serverName) continue;
 
-    const entry = catalog.get(server.name);
+    // Resolved the same way status is, so a server reported as `differs` is
+    // never then refused here for not being in the catalog.
+    const anyRecipe = Object.values(server.deployed ?? {})[0];
+    const entry = matchCatalogEntry(entries, server.name, anyRecipe);
     if (!entry) {
       if (options.serverName) {
         console.error(`Not in the catalog: ${server.name} (configured inline)`);

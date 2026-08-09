@@ -233,6 +233,13 @@ acm plugin discover            # search applications for bundled plugins
 acm plugin discover --import   # and take the new ones into the catalog
 ```
 
+An application you have installed but do not use still ships plugins, and taking
+them in puts skills in front of every agent on every provider. List those
+applications in `IGNORED-APPS.txt` in the catalog, one name per line as
+`acm plugin discover` prints it, and they are skipped. It lives in the catalog
+rather than in `~/.acm/config.toml` because "I do not use this application" is a
+decision about the collection, and should hold on every machine that shares it.
+
 Nothing is located by a fixed path. A plugin is anything carrying a manifest
 (`.claude-plugin/`, `.codex-plugin/`, or a root `plugin.json`) or a `skills/`
 directory, and it is attributed to the application that contains it, with that

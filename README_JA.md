@@ -195,7 +195,11 @@ acm doctor --fix # 自動修正を試みる
 ```bash
 git clone <カタログのリポジトリ> ~/Code/Tools/agent-catalog
 npm install -g @yama662607/agent-config-manager
-acm init --catalog ~/Code/Tools/agent-catalog
+
+mkdir -p ~/.acm
+printf 'catalog_dir = "~/Code/Tools/agent-catalog"\n' >> ~/.acm/config.toml
+
+acm doctor -H          # カタログを認識したか確認
 ```
 
 以後は `git pull` / `git push` で揃います。同期デーモンもロックファイルもありません。

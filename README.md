@@ -527,7 +527,11 @@ the second machine:
 ```bash
 git clone <your catalog repo> ~/Code/Tools/agent-catalog
 npm install -g @yama662607/agent-config-manager
-acm init --catalog ~/Code/Tools/agent-catalog
+
+mkdir -p ~/.acm
+printf 'catalog_dir = "~/Code/Tools/agent-catalog"\n' >> ~/.acm/config.toml
+
+acm doctor -H          # confirm the catalog was found
 ```
 
 `git pull` and `git push` keep them in step. Nothing else is required, and there is no

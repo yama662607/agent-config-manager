@@ -197,6 +197,12 @@ export async function doctor(options: DoctorOptions): Promise<{ hasErrors: boole
   console.log('\n[Catalog Drift]');
   await reportDrift(options.offline === true);
 
+  // 6. What in the catalog is tied to this machine
+  console.log('\n[Portability]');
+  if (await reportPortability()) {
+    hasWarnings = true;
+  }
+
   // 6. Environment checks
   console.log('\n[Environment]');
   const hasNode = await checkCommand('node', 'Node.js');
@@ -300,6 +306,47 @@ function formatHome(absolutePath: string): string {
  * simply has no tools from that server. One such entry existed here for months,
  * pointing at an application that had been renamed.
  */
+/**
+ * Report what the catalog expects to find on this machine.
+ *
+ * A catalog is meant to be carried, and most of it travels. What does not is a
+ * skill linked to a development repository, or a recipe naming a binary or a
+ * vault by absolute path. Those are deliberate, so this lists them rather than
+ * objecting: on the machine that wrote them it says they are all here, which is
+ * what you want to know before cloning the catalog somewhere else; on that
+ * other machine the same list is the work to do.
+ *
+ * Returns whether anything is missing.
+ */
+async function reportPortability(): Promise<boolean> {
+  const { machineReferences } = await import('./catalog-portability.js');
+
+  const references = await machineReferences(getCatalogDir());
+
+  if (references.length === 0) {
+    console.log('  ✓ Nothing in the catalog depends on this machine');
+    return false;
+  }
+
+  const missing = references.filter((reference) => !reference.present);
+
+  for (const reference of missing) {
+    const where = reference.variable ? `${reference.kind} ${reference.variable}` : reference.kind;
+    console.log(`  ✗ ${reference.id}: ${where} -> ${formatHome(reference.target)}`);
+  }
+
+  const here = references.length - missing.length;
+  if (missing.length === 0) {
+    console.log(`  ✓ ${here} references to this machine, all present`);
+    console.log('    They will need attention if you clone this catalog elsewhere.');
+  } else {
+    console.log(`  ${missing.length} of ${references.length} not found on this machine.`);
+    console.log('    Re-link the skill, or point the recipe at where it lives here.');
+  }
+
+  return missing.length > 0;
+}
+
 async function checkMcpCommands(allowHome: boolean): Promise<string[]> {
   const { discoverProject } = await import('./project-discovery.js');
   const { getMcpServers } = await import('./config-adapters.js');

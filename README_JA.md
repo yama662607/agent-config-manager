@@ -188,6 +188,46 @@ acm doctor      # チェックのみ
 acm doctor --fix # 自動修正を試みる
 ```
 
+## 複数のマシンで同じカタログを使う
+
+カタログはディレクトリなので、同期は git リポジトリで足ります。2 台目では次の 3 つだけです。
+
+```bash
+git clone <カタログのリポジトリ> ~/Code/Tools/agent-catalog
+npm install -g @yama662607/agent-config-manager
+acm init --catalog ~/Code/Tools/agent-catalog
+```
+
+以後は `git pull` / `git push` で揃います。同期デーモンもロックファイルもありません。
+
+これは**公開とは別の話**です。自分の端末間で共有するカタログは private のままで全てを含み、
+公開するのは許可リストで選んだ部分集合です。
+
+### 移動できないもの
+
+大半は移動できます。スキルのファイルも、`npx -y <package>` を実行するレシピもそのまま動きます。
+移動できないのは、開発リポジトリへ symlink されたスキルと、バイナリ・チェックアウト・vault を
+絶対パスで指すレシピです。これらは意図的なものなので、acm は否定せず**列挙**します。
+
+```
+[Portability]
+  ✓ 14 references to this machine, all present
+    They will need attention if you clone this catalog elsewhere.
+```
+
+書いた側のマシンでは、clone する**前に**何が引っかかるか分かります。2 台目では同じ一覧が
+そのまま作業リストになります。
+
+```
+[Portability]
+  ✗ zotero: command -> ~/.local/bin/zotero-mcp
+  ✗ obsidian-companion-mcp: environment OBSIDIAN_VAULT_PATH -> ~/Library/…/Main
+  4 of 14 not found on this machine.
+```
+
+スキルはそのマシンの作業コピーへ張り直し、レシピは `acm mcp add --command …` か
+カタログ項目の編集で指し直します。判定はローカルの stat のみなので実行コストはありません。
+
 ## サポート対象ターゲット
 
 4 つのエージェントに対応しています。スコープごとに保存先が異なります。

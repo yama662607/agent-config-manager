@@ -519,6 +519,51 @@ acm skill meta my-skill --pin --tags a,b,c
 
 `acm skill list -g --deprecated` filters by that flag.
 
+## Using one catalog on more than one machine
+
+The catalog is a directory, so a git repository is all the synchronisation it needs. On
+the second machine:
+
+```bash
+git clone <your catalog repo> ~/Code/Tools/agent-catalog
+npm install -g @yama662607/agent-config-manager
+acm init --catalog ~/Code/Tools/agent-catalog
+```
+
+`git pull` and `git push` keep them in step. Nothing else is required, and there is no
+sync daemon or lock file to go wrong.
+
+This is a different thing from publishing. A shared personal catalog stays private and
+holds everything; a published bundle is an opt-in subset — see the next section.
+
+### What does not travel
+
+Most of a catalog does. A skill's files travel; a recipe that runs `npx -y <package>`
+travels. What does not is a skill symlinked into a development repository, or a recipe
+naming a binary, a checkout or a vault by absolute path. Those are deliberate, so `acm`
+lists them rather than objecting:
+
+```
+[Portability]
+  ✓ 14 references to this machine, all present
+    They will need attention if you clone this catalog elsewhere.
+```
+
+On the machine that wrote them, that count is what you want to know *before* cloning.
+On the second machine the same list becomes the work to do:
+
+```
+[Portability]
+  ✗ zotero: command -> ~/.local/bin/zotero-mcp
+  ✗ obsidian-companion-mcp: environment OBSIDIAN_VAULT_PATH -> ~/Library/…/Main
+  4 of 14 not found on this machine.
+    Re-link the skill, or point the recipe at where it lives here.
+```
+
+Re-link a skill by pointing it at the working copy on that machine, and repoint a recipe
+with `acm mcp add --command …` or by editing the catalog entry. The check is local — a
+stat per path — so it costs nothing to run.
+
 ## Publishing a Public Subset
 
 A personal catalog holds far more than should ever be public, so publishing is opt-in.

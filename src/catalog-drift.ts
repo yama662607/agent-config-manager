@@ -30,6 +30,29 @@ export interface SourceDrift {
 }
 
 /**
+ * Pair a catalog plugin with the copy found on this machine.
+ *
+ * Name alone is not enough. A catalog name is not always the plugin's own: two
+ * applications both ship one called `prompts`, so importing them qualified the
+ * second as `visual-studio-code-prompts`, and `acm plugin import --as` can
+ * rename anything. Matching on name meant those entries were reported as having
+ * no source at all, so `acm plugin update` refused to touch them.
+ *
+ * A bundled plugin does move when its application updates, so the recorded path
+ * is the fallback rather than the first try.
+ */
+export function matchDiscovered<T extends { name: string; sourcePath: string }>(
+  plugin: { name: string; sourcePath: string },
+  discovered: T[]
+): T | undefined {
+  const byName = discovered.find((candidate) => candidate.name === plugin.name);
+  if (byName) return byName;
+
+  const recorded = path.resolve(fromPortablePath(plugin.sourcePath));
+  return discovered.find((candidate) => path.resolve(candidate.sourcePath) === recorded);
+}
+
+/**
  * Plugins whose bundled source no longer matches what was imported.
  *
  * A desktop application replaces its bundle wholesale on update, and the path
@@ -40,7 +63,7 @@ export interface SourceDrift {
  * A source that is simply *not on this machine* is not drift and is not
  * reported here. Once a catalog is shared between machines that is the normal
  * state for every application the second machine does not have — permanent, not
- * actionable, and reported under portability instead. See `absentPluginSources`.
+ * actionable, and reported under portability instead.
  */
 export async function pluginSourceDrift(): Promise<SourceDrift[]> {
   const { listPlugins } = await import('./plugins-metadata.js');
@@ -50,14 +73,12 @@ export async function pluginSourceDrift(): Promise<SourceDrift[]> {
   const tracked = plugins.filter((p) => p.sourceDigest);
   if (tracked.length === 0) return [];
 
-  // A bundled plugin moves when its application updates, so it is located by
-  // name rather than by the path recorded at import.
-  const discovered = new Map((await scanDesktopPlugins()).map((p) => [p.name, p]));
+  const discovered = await scanDesktopPlugins();
 
   const drift: SourceDrift[] = [];
 
   for (const plugin of tracked) {
-    const current = discovered.get(plugin.name);
+    const current = matchDiscovered(plugin, discovered);
     const sourcePath = current?.sourcePath ?? fromPortablePath(plugin.sourcePath);
 
     const digest = await digestPluginSource(sourcePath);

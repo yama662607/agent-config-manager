@@ -343,6 +343,34 @@ async function walk(dir: string, depth: number, found: DesktopPlugin[]): Promise
   }
 }
 
+/**
+ * Applications whose bundled plugins should be left alone.
+ *
+ * An application installed but not used still ships plugins, and importing
+ * them puts skills in front of every agent on every provider. The list lives in
+ * the catalog rather than in `~/.acm/config.toml` because "I do not use this
+ * application" is a decision about the collection, and should hold on every
+ * machine that shares it.
+ *
+ * One application name per line, `#` for comments. Matched against the name
+ * `acm` attributes a plugin to — what `acm plugin discover` prints.
+ */
+async function ignoredApps(): Promise<Set<string>> {
+  const { getCatalogDir } = await import('./acm-config.js');
+
+  try {
+    const raw = await fs.readFile(path.join(getCatalogDir(), 'IGNORED-APPS.txt'), 'utf8');
+    return new Set(
+      raw
+        .split('\n')
+        .map((line) => line.replace(/#.*$/, '').trim())
+        .filter(Boolean)
+    );
+  } catch {
+    return new Set();
+  }
+}
+
 /** Find plugins bundled inside desktop applications. */
 export async function scanDesktopPlugins(): Promise<DesktopPlugin[]> {
   const found: DesktopPlugin[] = [];
@@ -351,7 +379,10 @@ export async function scanDesktopPlugins(): Promise<DesktopPlugin[]> {
     await walk(root.dir, root.depth, found);
   }
 
-  return found.sort((a, b) => a.name.localeCompare(b.name));
+  const ignored = await ignoredApps();
+  const kept = ignored.size === 0 ? found : found.filter((p) => !p.app || !ignored.has(p.app));
+
+  return kept.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** Attribute a directory to an application, for recording where a plugin came from. */

@@ -941,6 +941,37 @@ export async function pluginConvert(argv: string[]): Promise<void> {
 // ============================================================================
 
 /**
+ * Compare two application versions written as dotted numbers.
+ *
+ * Returns true only when `candidate` is definitely behind `recorded`; unknown
+ * or unparseable versions are treated as "cannot tell", so an update proceeds
+ * rather than being blocked by a version scheme this does not understand.
+ */
+export function isOlder(candidate?: string, recorded?: string): boolean {
+  if (!candidate || !recorded || candidate === recorded) return false;
+
+  // Strict: `parseInt` would read "07-beta" as 7 and silently compare a
+  // pre-release against a release. A segment is a number or the version is not
+  // one this understands.
+  const parse = (value: string): number[] | null => {
+    const parts = value.split('.');
+    if (!parts.every((part) => /^\d+$/.test(part))) return null;
+    return parts.map(Number);
+  };
+
+  const left = parse(candidate);
+  const right = parse(recorded);
+  if (!left || !right) return false;
+
+  for (let i = 0; i < Math.max(left.length, right.length); i++) {
+    const a = left[i] ?? 0;
+    const b = right[i] ?? 0;
+    if (a !== b) return a < b;
+  }
+  return false;
+}
+
+/**
  * Take a newer copy of a plugin from wherever it now lives.
  *
  * A bundled plugin is replaced wholesale when its application updates, and the
@@ -957,6 +988,7 @@ export async function pluginUpdate(argv: string[]): Promise<void> {
 
   const names = positionalArgs(argv, []);
   const dryRun = parseFlag(argv, '--dry-run', '-n');
+  const force = parseFlag(argv, '--force', '-f');
 
   console.log('Looking for plugins whose source has moved on...\n');
 
@@ -973,9 +1005,9 @@ export async function pluginUpdate(argv: string[]): Promise<void> {
     return;
   }
 
-  // Located by name: an application update moves the directory as well as its
-  // contents, so the recorded path is the less reliable of the two.
-  const discovered = new Map((await scanDesktopPlugins()).map((p) => [p.name, p]));
+  const { matchDiscovered } = await import('./catalog-drift.js');
+  const discovered = await scanDesktopPlugins();
+  const entries = new Map((await listPlugins()).map((p) => [p.name, p]));
 
   if (dryRun) {
     for (const entry of wanted) console.log(`  ${entry.id}: ${entry.detail}`);
@@ -987,11 +1019,27 @@ export async function pluginUpdate(argv: string[]): Promise<void> {
   const stuck: string[] = [];
 
   for (const entry of wanted) {
-    const current = discovered.get(entry.id);
+    const recorded = entries.get(entry.id);
+    const current = recorded ? matchDiscovered(recorded, discovered) : undefined;
     if (!current) {
       stuck.push(`${entry.id}: the source is no longer on this machine`);
       continue;
     }
+
+    // Two machines sharing a catalog can be on different versions of the same
+    // application, and the one that imports last wins. Taking an older copy
+    // would quietly undo what the other machine contributed, so it has to be
+    // asked for.
+    const older = isOlder(current.appVersion, recorded?.sourceAppVersion);
+    if (older && !force) {
+      stuck.push(
+        `${entry.id}: ${current.app ?? 'the application'} here is ${current.appVersion}, ` +
+          `older than the ${recorded?.sourceAppVersion} this came from — ` +
+          `pass --force to take it anyway`
+      );
+      continue;
+    }
+
     console.log(`  ${entry.id}: ${entry.detail}`);
     await pluginImport(current.sourcePath, { as: entry.id, quiet: true });
     updated++;
@@ -1111,8 +1159,25 @@ export async function pluginDiscover(options: { import?: boolean } = {}): Promis
   for (const plugin of found) {
     nameCounts.set(plugin.name, (nameCounts.get(plugin.name) ?? 0) + 1);
   }
+  // An entry already in the catalog keeps the name it was imported under, even
+  // when that no longer matches what discovery would call it today: ignoring an
+  // application removes a collision, and the survivor would otherwise look like
+  // a newcomer and be imported a second time. Matched by recorded source path.
+  const { fromPortablePath } = await import('./acm-config.js');
+  const existing = await listPlugins();
+  const byPath = new Map(
+    existing
+      .filter((entry) => entry.sourcePath)
+      .map((entry) => [path.resolve(fromPortablePath(entry.sourcePath)), entry.name])
+  );
+
   const catalogNames = new Map<DesktopPlugin, string>();
   for (const plugin of found) {
+    const already = byPath.get(path.resolve(plugin.sourcePath));
+    if (already) {
+      catalogNames.set(plugin, already);
+      continue;
+    }
     const ambiguous = (nameCounts.get(plugin.name) ?? 0) > 1;
     const prefix = plugin.app ? plugin.app.toLowerCase().replace(/[^a-z0-9]+/g, '-') : 'unknown';
     catalogNames.set(plugin, ambiguous ? `${prefix}-${plugin.name}` : plugin.name);

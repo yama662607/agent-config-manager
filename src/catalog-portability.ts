@@ -126,12 +126,13 @@ async function pluginSources(): Promise<MachineReference[]> {
   const tracked = (await listPlugins()).filter((plugin) => plugin.sourceDigest);
   if (tracked.length === 0) return [];
 
-  const discovered = new Map((await scanDesktopPlugins()).map((p) => [p.name, p]));
+  const { matchDiscovered } = await import('./catalog-drift.js');
+  const discovered = await scanDesktopPlugins();
 
   const found: MachineReference[] = [];
 
   for (const plugin of tracked) {
-    const here = discovered.get(plugin.name);
+    const here = matchDiscovered(plugin, discovered);
     const target = here?.sourcePath ?? fromPortablePath(plugin.sourcePath);
 
     found.push({

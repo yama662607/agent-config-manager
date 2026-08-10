@@ -36,10 +36,10 @@ describe('Validating an MCP command', () => {
   });
 
   it('accepts an absolute path, which is how a local server is launched', async () => {
-    await addServer('/Users/someone/.cargo/bin/kanade-mcp');
+    await addServer('/opt/local/bin/kanade-mcp');
 
     const config = JSON.parse(await fs.readFile(CONFIG, 'utf8'));
-    assert.strictEqual(config.mcpServers.probe.command, '/Users/someone/.cargo/bin/kanade-mcp');
+    assert.strictEqual(config.mcpServers.probe.command, '/opt/local/bin/kanade-mcp');
   });
 
   it('accepts a path with spaces in it', async () => {

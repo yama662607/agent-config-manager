@@ -91,7 +91,12 @@ async function buildMcpStatus(projectRoot: string, allowHome: boolean = false): 
 
     for (const [name, info] of Object.entries(servers)) {
       const catalogEntry = matchCatalogEntry(entries, name, info.recipe);
-      const owningPlugin = fromPlugins.get(name);
+      // Providers reject `@scope/name`, so a catalog entry keyed by a package
+      // id is stored under a sanitized key. Report the catalog's name when the
+      // two are the same server, and the configured key otherwise — inventing a
+      // package id for every entry split `openalex-mcp` into two rows.
+      const displayName = catalogEntry?.id ?? name;
+      const owningPlugin = fromPlugins.get(name) ?? fromPlugins.get(displayName);
       const state: McpDeploymentState = !info.enabled
         ? 'disabled'
         : catalogEntry
@@ -102,15 +107,15 @@ async function buildMcpStatus(projectRoot: string, allowHome: boolean = false): 
             ? 'plugin'
             : 'inline';
 
-      const existing = serverMap.get(name);
+      const existing = serverMap.get(displayName);
       if (existing) {
         existing.targets.push(target);
         existing.enabled ||= info.enabled;
         existing.state![target] = state;
         if (info.recipe) existing.deployed![target] = info.recipe;
       } else {
-        serverMap.set(name, {
-          name,
+        serverMap.set(displayName, {
+          name: displayName,
           enabled: info.enabled,
           targets: [target],
           source: catalogEntry ? 'catalog' : owningPlugin ? 'plugin' : 'inline',

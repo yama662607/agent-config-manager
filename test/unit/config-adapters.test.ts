@@ -53,8 +53,13 @@ describe('Config Adapters', () => {
     assert.match(raw, /\[mcp_servers\.github\]/);
     assert.ok(!raw.includes('[mcp_servers."@modelcontextprotocol/server-github"]'));
 
+    // Read back under the key the file actually uses. The package id is how
+    // you address it (see the next test); it is not what Codex is configured
+    // with, and reporting it as the name split one server into two rows in
+    // status once a catalog id stopped matching its package.
     const servers = await getMcpServers('codex', CODEX_CONFIG_PATH);
-    assert.ok(servers['@modelcontextprotocol/server-github']);
+    assert.ok(servers['github']);
+    assert.strictEqual(servers['@modelcontextprotocol/server-github'], undefined);
   });
 
   it('can disable and remove a Codex MCP entry by package id', async () => {
@@ -64,7 +69,10 @@ describe('Config Adapters', () => {
     await disableMcpInConfig('codex', CODEX_CONFIG_PATH, '@modelcontextprotocol/server-github');
 
     let servers = await getMcpServers('codex', CODEX_CONFIG_PATH);
-    assert.strictEqual(servers['@modelcontextprotocol/server-github']?.enabled, false);
+    assert.strictEqual(servers['github']?.enabled, false);
+    // A disabled entry keeps its recipe: it is what pairs the entry with its
+    // catalog record, and without it a disabled server read as unmanaged.
+    assert.strictEqual(servers['github']?.recipe?.command, GITHUB_RECIPE.command);
 
     await removeMcpFromConfig('codex', CODEX_CONFIG_PATH, '@modelcontextprotocol/server-github');
 
@@ -92,7 +100,7 @@ describe('Config Adapters', () => {
     assert.match(raw, /enabled = true/);
 
     const servers = await getMcpServers('grok', GROK_CONFIG_PATH);
-    assert.strictEqual(servers['@modelcontextprotocol/server-github']?.enabled, true);
+    assert.strictEqual(servers['github']?.enabled, true);
   });
 
   it('can disable and remove a Grok MCP entry by package id', async () => {
@@ -102,7 +110,7 @@ describe('Config Adapters', () => {
     await disableMcpInConfig('grok', GROK_CONFIG_PATH, '@modelcontextprotocol/server-github');
 
     let servers = await getMcpServers('grok', GROK_CONFIG_PATH);
-    assert.strictEqual(servers['@modelcontextprotocol/server-github']?.enabled, false);
+    assert.strictEqual(servers['github']?.enabled, false);
 
     await removeMcpFromConfig('grok', GROK_CONFIG_PATH, '@modelcontextprotocol/server-github');
 

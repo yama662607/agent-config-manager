@@ -590,7 +590,7 @@ export async function getMcpServers(
       const servers: Record<string, { enabled: boolean; recipe?: McpRecipe }> = {};
       if (config.mcp_servers) {
         for (const [name, server] of Object.entries(config.mcp_servers)) {
-          const resolvedName = inferCanonicalServerName(name, server);
+          const resolvedName = name;
           const recipe: McpRecipe = {};
           const remoteUrl = server.url ?? server.httpUrl;
           if (remoteUrl) {
@@ -603,10 +603,11 @@ export async function getMcpServers(
           }
           if (server.cwd) recipe.cwd = server.cwd;
           if (server.env) recipe.env = server.env;
-          servers[resolvedName] = {
-            enabled: server.enabled !== false,
-            recipe: server.enabled !== false ? recipe : undefined,
-          };
+          // A disabled server still has a recipe, and dropping it lost two
+          // things: what the entry would launch, and the package that pairs it
+          // with its catalog entry — so a disabled server whose config key
+          // differs from the catalog id was reported as unmanaged.
+          servers[resolvedName] = { enabled: server.enabled !== false, recipe };
         }
       }
       return servers;
@@ -617,7 +618,7 @@ export async function getMcpServers(
       const servers: Record<string, { enabled: boolean; recipe?: McpRecipe }> = {};
       if (config.mcp_servers) {
         for (const [name, server] of Object.entries(config.mcp_servers)) {
-          const resolvedName = inferCanonicalServerName(name, server);
+          const resolvedName = name;
           const recipe: McpRecipe = {};
           if (server.url) {
             recipe.url = server.url;
@@ -667,6 +668,16 @@ export async function getMcpServers(
 /** Codex and Grok both key MCP servers by a TOML table name under mcp_servers. */
 type TomlMcpConfig = { mcp_servers?: Record<string, { command?: string; args?: string[] }> };
 
+/**
+ * The package a TOML entry installs, for finding an entry whose key was
+ * sanitized on the way in.
+ *
+ * This is a lookup aid, not a name. Reporting it *as* the name renamed servers
+ * that were never called that: `openalex-mcp`, running
+ * `npx -y @cyanheads/openalex-mcp-server`, was reported as the package id, and
+ * since Antigravity's reader does no such thing, one server appeared as two
+ * rows split by provider. What a provider is configured with is the name.
+ */
 function inferCanonicalServerName(name: string, server: CodexMcpServer | GrokMcpServer): string {
   return inferPackageIdFromRecipe(server.command, server.args) ?? name;
 }

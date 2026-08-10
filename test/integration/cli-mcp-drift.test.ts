@@ -112,8 +112,10 @@ describe('MCP drift detection', () => {
       })
     );
 
+    // Reported under the catalog's name, not the key the config happens to
+    // use: the two are the same server, and showing both split one row in two.
     const parsed = JSON.parse(await acm(['mcp', '--json']));
-    const server = parsed.servers.find((s: any) => s.name === '@demo/server');
+    const server = parsed.servers.find((s: any) => s.name === 'demo-server');
     assert.strictEqual(server.source, 'catalog');
     assert.strictEqual(server.state.claude, 'synced');
   });
@@ -163,7 +165,7 @@ describe('MCP drift detection', () => {
     );
 
     const parsed = JSON.parse(await acm(['mcp', '--json']));
-    const server = parsed.servers.find((s: any) => s.name === '@demo/server');
+    const server = parsed.servers.find((s: any) => s.name === 'demo-server');
     assert.strictEqual(server.state.claude, 'synced');
   });
 

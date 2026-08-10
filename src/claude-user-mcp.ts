@@ -172,9 +172,13 @@ export async function listUserScopeServers(): Promise<Record<string, McpRecipe>>
     }
     if (config.env) recipe.env = config.env;
 
-    // Recover the package id the entry was stored under a simple name for.
-    const canonical = inferPackageIdFromRecipe(recipe.command, recipe.args) ?? storedName;
-    servers[canonical] = recipe;
+    // The name Claude is configured with is the name. Substituting the package
+    // id here renamed servers that were never called that — `openalex-mcp`
+    // became `@cyanheads/openalex-mcp-server` — and split one server into two
+    // rows in status, since the other providers' readers do no such thing.
+    // Pairing with the catalog no longer needs this: `matchCatalogEntry` finds
+    // the entry by the package the recipe launches.
+    servers[storedName] = recipe;
   }
 
   return servers;

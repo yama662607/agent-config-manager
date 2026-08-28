@@ -16,7 +16,6 @@ import type { EnhancedSkillMetadata, SkillsMetadataFile } from './types.js';
 // Constants
 // ============================================================================
 
-const METADATA_DIR = '.acm';
 const METADATA_FILE = 'skills-metadata.toml';
 const METADATA_VERSION = '1.0';
 

@@ -16,7 +16,6 @@ import type { EnhancedMcpMetadata, McpsMetadataFile } from './types.js';
 // Constants
 // ============================================================================
 
-const METADATA_DIR = '.acm';
 const METADATA_FILE = 'mcps-metadata.toml';
 const METADATA_VERSION = '1.0';
 

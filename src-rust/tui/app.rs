@@ -145,6 +145,52 @@ impl App {
         }
     }
 
+    pub fn nav_down(&mut self) {
+        self.preview_scroll = 0;
+        match self.active_tab {
+            ActiveTab::Skills => {
+                let count = self.filtered_skills().len();
+                if count > 0 {
+                    self.selected_skill_index = (self.selected_skill_index + 1) % count;
+                }
+            }
+            ActiveTab::Mcp => {
+                let count = self.filtered_mcps().len();
+                if count > 0 {
+                    self.selected_mcp_index = (self.selected_mcp_index + 1) % count;
+                }
+            }
+            ActiveTab::Doctor => {}
+        }
+    }
+
+    pub fn nav_up(&mut self) {
+        self.preview_scroll = 0;
+        match self.active_tab {
+            ActiveTab::Skills => {
+                let count = self.filtered_skills().len();
+                if count > 0 {
+                    self.selected_skill_index = if self.selected_skill_index == 0 {
+                        count - 1
+                    } else {
+                        self.selected_skill_index - 1
+                    };
+                }
+            }
+            ActiveTab::Mcp => {
+                let count = self.filtered_mcps().len();
+                if count > 0 {
+                    self.selected_mcp_index = if self.selected_mcp_index == 0 {
+                        count - 1
+                    } else {
+                        self.selected_mcp_index - 1
+                    };
+                }
+            }
+            ActiveTab::Doctor => {}
+        }
+    }
+
     pub fn toggle_single_target(&mut self, target: TargetName) {
         match self.active_tab {
             ActiveTab::Skills => {
@@ -188,16 +234,37 @@ impl App {
             return;
         }
 
-        // Ctrl+C immediate graceful termination (prevents accidental 'c' toggle)
+        // Ctrl+C immediate graceful termination
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             self.running = false;
             return;
+        }
+
+        // Ctrl+N / Ctrl+P navigation (works both in search mode and normal mode)
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            match key.code {
+                KeyCode::Char('n') => {
+                    self.nav_down();
+                    return;
+                }
+                KeyCode::Char('p') => {
+                    self.nav_up();
+                    return;
+                }
+                _ => {}
+            }
         }
 
         if self.search_mode {
             match key.code {
                 KeyCode::Esc | KeyCode::Enter => {
                     self.search_mode = false;
+                }
+                KeyCode::Down => {
+                    self.nav_down();
+                }
+                KeyCode::Up => {
+                    self.nav_up();
                 }
                 KeyCode::Backspace => {
                     self.search_query.pop();
@@ -248,50 +315,12 @@ impl App {
             KeyCode::Char('/') => {
                 self.search_mode = true;
             }
-            // List navigation
+            // List navigation (j, k, Down, Up)
             KeyCode::Char('j') | KeyCode::Down => {
-                self.preview_scroll = 0;
-                match self.active_tab {
-                    ActiveTab::Skills => {
-                        let count = self.filtered_skills().len();
-                        if count > 0 {
-                            self.selected_skill_index = (self.selected_skill_index + 1) % count;
-                        }
-                    }
-                    ActiveTab::Mcp => {
-                        let count = self.filtered_mcps().len();
-                        if count > 0 {
-                            self.selected_mcp_index = (self.selected_mcp_index + 1) % count;
-                        }
-                    }
-                    ActiveTab::Doctor => {}
-                }
+                self.nav_down();
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.preview_scroll = 0;
-                match self.active_tab {
-                    ActiveTab::Skills => {
-                        let count = self.filtered_skills().len();
-                        if count > 0 {
-                            self.selected_skill_index = if self.selected_skill_index == 0 {
-                                count - 1
-                            } else {
-                                self.selected_skill_index - 1
-                            };
-                        }
-                    }
-                    ActiveTab::Mcp => {
-                        let count = self.filtered_mcps().len();
-                        if count > 0 {
-                            self.selected_mcp_index = if self.selected_mcp_index == 0 {
-                                count - 1
-                            } else {
-                                self.selected_mcp_index - 1
-                            };
-                        }
-                    }
-                    ActiveTab::Doctor => {}
-                }
+                self.nav_up();
             }
             // Preview scrolling
             KeyCode::PageDown | KeyCode::Char('J') => {

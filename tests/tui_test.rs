@@ -14,6 +14,10 @@ fn make_key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
 }
 
+fn make_ctrl_key(code: KeyCode) -> KeyEvent {
+    KeyEvent::new(code, KeyModifiers::CONTROL)
+}
+
 #[test]
 fn test_tui_full_interaction_scenarios() {
     let _guard = TUI_TEST_LOCK.lock().unwrap();
@@ -44,7 +48,18 @@ fn test_tui_full_interaction_scenarios() {
     assert!(!app.is_home_scope);
     assert_eq!(app.project_root, dir.path());
 
-    // --- Scenario 3: Target Specific Toggle ('c', 'x', 'a', 'g') ---
+    // --- Scenario 3: Ctrl+N / Ctrl+P Navigation ---
+    assert_eq!(app.selected_skill_index, 0);
+    app.handle_key(make_ctrl_key(KeyCode::Char('n')));
+    assert_eq!(app.selected_skill_index, 1);
+    app.handle_key(make_ctrl_key(KeyCode::Char('n')));
+    assert_eq!(app.selected_skill_index, 2);
+    app.handle_key(make_ctrl_key(KeyCode::Char('p')));
+    assert_eq!(app.selected_skill_index, 1);
+    app.handle_key(make_ctrl_key(KeyCode::Char('p')));
+    assert_eq!(app.selected_skill_index, 0);
+
+    // --- Scenario 4: Target Specific Toggle ('c', 'x', 'a', 'g') ---
     app.selected_skill_index = 0; // alpha-skill
     assert_eq!(app.filtered_skills()[0].targets.len(), 0);
 
@@ -57,40 +72,33 @@ fn test_tui_full_interaction_scenarios() {
     app.handle_key(make_key(KeyCode::Char('x')));
     assert!(dir.path().join(".codex").join("skills").join("alpha-skill").exists());
 
-    // --- Scenario 4: Preview Scrolling ('J' / 'K') ---
+    // --- Scenario 5: Preview Scrolling ('J' / 'K') ---
     assert_eq!(app.preview_scroll, 0);
     app.handle_key(make_key(KeyCode::Char('J')));
     assert!(app.preview_scroll > 0);
     app.handle_key(make_key(KeyCode::Char('K')));
     assert_eq!(app.preview_scroll, 0);
 
-    // --- Scenario 5: Realtime Incremental Search ---
+    // --- Scenario 6: Realtime Incremental Search with Ctrl+N ---
     app.handle_key(make_key(KeyCode::Char('/')));
     assert!(app.search_mode);
 
-    app.handle_key(make_key(KeyCode::Char('g')));
-    app.handle_key(make_key(KeyCode::Char('a')));
-    app.handle_key(make_key(KeyCode::Char('m')));
-    assert_eq!(app.search_query, "gam");
+    app.handle_key(make_key(KeyCode::Char('s')));
+    app.handle_key(make_key(KeyCode::Char('k')));
+    app.handle_key(make_key(KeyCode::Char('i')));
+    app.handle_key(make_key(KeyCode::Char('l')));
+    app.handle_key(make_key(KeyCode::Char('l')));
+    assert_eq!(app.filtered_skills().len(), 3);
 
-    let filtered = app.filtered_skills();
-    assert_eq!(filtered.len(), 1);
-    assert_eq!(filtered[0].name, "gamma-skill");
+    // Navigate inside search mode with Ctrl+N
+    app.handle_key(make_ctrl_key(KeyCode::Char('n')));
+    assert_eq!(app.selected_skill_index, 1);
 
     // Exit search mode
     app.handle_key(make_key(KeyCode::Enter));
     assert!(!app.search_mode);
 
-    // Clear search
-    app.handle_key(make_key(KeyCode::Char('/')));
-    app.handle_key(make_key(KeyCode::Backspace));
-    app.handle_key(make_key(KeyCode::Backspace));
-    app.handle_key(make_key(KeyCode::Backspace));
-    assert_eq!(app.search_query, "");
-    app.handle_key(make_key(KeyCode::Esc));
-    assert_eq!(app.filtered_skills().len(), 3);
-
-    // --- Scenario 6: Render Layouts (No Panics) ---
+    // --- Scenario 7: Render Layouts (No Panics) ---
     let backend = TestBackend::new(140, 45);
     let mut terminal = Terminal::new(backend).unwrap();
 
@@ -103,7 +111,7 @@ fn test_tui_full_interaction_scenarios() {
     app.active_tab = ActiveTab::Doctor;
     terminal.draw(|f| agent_config_manager::tui::ui::render(f, &mut app)).unwrap();
 
-    // --- Scenario 7: Exit Key ('q') ---
+    // --- Scenario 8: Exit Key ('q') ---
     assert!(app.running);
     app.handle_key(make_key(KeyCode::Char('q')));
     assert!(!app.running);

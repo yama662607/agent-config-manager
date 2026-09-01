@@ -1,6 +1,7 @@
 use crate::core::doctor::CheckStatus;
-use crate::paths::get_catalog_skill_dir;
+use crate::paths::{get_catalog_skill_dir, get_skill_path};
 use crate::tui::app::{ActiveTab, App};
+use crate::types::{SkillPlacementState, TargetName};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -24,8 +25,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
 }
 
 fn render_header(f: &mut Frame, app: &App, area: Rect) {
+    let header_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(40), Constraint::Length(35)])
+        .split(area);
+
     let titles = vec![
-        Span::raw("[1] Skills (Catalog & Installed)"),
+        Span::raw("[1] Skills"),
         Span::raw("[2] MCP Servers"),
         Span::raw("[3] Doctor & Health"),
     ];
@@ -51,7 +57,21 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         );
 
-    f.render_widget(tabs, area);
+    f.render_widget(tabs, header_layout[0]);
+
+    // Scope Badge
+    let (scope_text, scope_color) = if app.is_home_scope {
+        (" 🌐 Scope: Global (~) [H] ", Color::Magenta)
+    } else {
+        (" 📁 Scope: Project (./) [H] ", Color::Green)
+    };
+
+    let scope_widget = Paragraph::new(scope_text)
+        .style(Style::default().fg(scope_color).add_modifier(Modifier::BOLD))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL).title(" Context "));
+
+    f.render_widget(scope_widget, header_layout[1]);
 }
 
 fn render_body(f: &mut Frame, app: &App, area: Rect) {
@@ -65,7 +85,7 @@ fn render_body(f: &mut Frame, app: &App, area: Rect) {
 fn render_skills_tab(f: &mut Frame, app: &App, area: Rect) {
     let panes = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
         .split(area);
 
     // Left pane: List + Search
@@ -84,7 +104,7 @@ fn render_skills_tab(f: &mut Frame, app: &App, area: Rect) {
         Style::default().fg(Color::White)
     };
     let search_title = if app.search_mode {
-        " 🔍 Search (Press Enter/Esc to finish) "
+        " 🔍 Search (Enter/Esc to exit) "
     } else {
         " 🔍 Filter (Press / to search) "
     };
@@ -110,15 +130,26 @@ fn render_skills_tab(f: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(Color::White)
             };
 
-            let targets_str = s.targets.iter().map(|t| t.short_code()).collect::<Vec<_>>().join(" ");
-            let content = Line::from(vec![
-                Span::styled(format!(" {} ", status_icon), Style::default().fg(Color::Green)),
-                Span::raw(format!("{:<25} ", s.name)),
-                Span::styled(format!("[{}] ", s.source), Style::default().fg(Color::DarkGray)),
-                Span::styled(targets_str, Style::default().fg(Color::Yellow)),
-            ]);
+            // Badges for each target: cl, cx, ag, gk
+            let mut badges = Vec::new();
+            badges.push(Span::styled(format!(" {} ", status_icon), Style::default().fg(if s.enabled { Color::Green } else { Color::DarkGray })));
+            badges.push(Span::raw(format!("{:<20} ", s.name)));
 
-            ListItem::new(content).style(style)
+            for &t in &[TargetName::Claude, TargetName::Codex, TargetName::Antigravity, TargetName::Grok] {
+                let code = t.short_code();
+                let placement = s.placement.get(&t).copied().unwrap_or(SkillPlacementState::Missing);
+                let (symbol, color) = match placement {
+                    SkillPlacementState::Linked => ("L", Color::Green),
+                    SkillPlacementState::Registered => ("R", Color::Green),
+                    SkillPlacementState::CopyCurrent => ("C", Color::Cyan),
+                    SkillPlacementState::CopyStale => ("!", Color::Yellow),
+                    SkillPlacementState::BrokenLink => ("X", Color::Red),
+                    SkillPlacementState::Missing | SkillPlacementState::Unlinked => ("-", Color::DarkGray),
+                };
+                badges.push(Span::styled(format!("{}:{} ", code, symbol), Style::default().fg(color)));
+            }
+
+            ListItem::new(Line::from(badges)).style(style)
         })
         .collect();
 
@@ -133,35 +164,67 @@ fn render_skills_tab(f: &mut Frame, app: &App, area: Rect) {
         let content = if skill_md_path.exists() {
             fs::read_to_string(&skill_md_path).unwrap_or_else(|_| "(Unable to read SKILL.md)".to_string())
         } else {
-            "(No SKILL.md found in catalog)".to_string()
+            let target_md = get_skill_path(&app.project_root, TargetName::Claude, &selected_skill.name).join("SKILL.md");
+            if target_md.exists() {
+                fs::read_to_string(&target_md).unwrap_or_else(|_| "(Unable to read SKILL.md)".to_string())
+            } else {
+                "(No SKILL.md found)".to_string()
+            }
         };
 
         let mut lines = Vec::new();
         lines.push(Line::from(vec![
             Span::styled("Skill: ", Style::default().add_modifier(Modifier::BOLD)),
             Span::styled(&selected_skill.name, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::raw("  "),
+            Span::styled("[Press 'e' to open in editor]", Style::default().fg(Color::Yellow)),
         ]));
+
+        lines.push(Line::from("─".repeat(60)));
+        lines.push(Line::from(Span::styled("Target Placements:", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD))));
+
+        for &t in &[TargetName::Claude, TargetName::Codex, TargetName::Antigravity, TargetName::Grok] {
+            let placement = selected_skill.placement.get(&t).copied().unwrap_or(SkillPlacementState::Missing);
+            let state_str = match placement {
+                SkillPlacementState::Linked => "Linked (Symlink to Catalog)",
+                SkillPlacementState::Registered => "Registered in Config",
+                SkillPlacementState::CopyCurrent => "Copy (Current)",
+                SkillPlacementState::CopyStale => "Copy (Stale - Press 'u' to update)",
+                SkillPlacementState::BrokenLink => "Broken Link (Press 'f' in Doctor)",
+                SkillPlacementState::Missing => "Not Installed",
+                SkillPlacementState::Unlinked => "Unlinked",
+            };
+            let color = match placement {
+                SkillPlacementState::Linked | SkillPlacementState::Registered | SkillPlacementState::CopyCurrent => Color::Green,
+                SkillPlacementState::CopyStale => Color::Yellow,
+                SkillPlacementState::BrokenLink => Color::Red,
+                SkillPlacementState::Missing | SkillPlacementState::Unlinked => Color::DarkGray,
+            };
+
+            let path = get_skill_path(&app.project_root, t, &selected_skill.name);
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {:<12} ", format!("{}:", t)), Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled(format!("{:<30} ", state_str), Style::default().fg(color)),
+                Span::styled(format!("({})", path.display()), Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+
+        lines.push(Line::from("─".repeat(60)));
         lines.push(Line::from(vec![
-            Span::styled("Source: ", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(&selected_skill.source),
+            Span::styled("SKILL.md Preview ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+            Span::styled("(Scroll: J/K or PgDn/PgUp)", Style::default().fg(Color::DarkGray)),
         ]));
-        lines.push(Line::from(vec![
-            Span::styled("Configured Targets: ", Style::default().add_modifier(Modifier::BOLD)),
-            Span::styled(
-                selected_skill.targets.iter().map(|t| t.as_str()).collect::<Vec<_>>().join(", "),
-                Style::default().fg(Color::Yellow),
-            ),
-        ]));
-        lines.push(Line::from("─".repeat(50)));
-        lines.push(Line::from(Span::styled("SKILL.md Content Preview:", Style::default().fg(Color::Magenta))));
         lines.push(Line::from(""));
 
-        for line in content.lines().take(40) {
-            lines.push(Line::from(line));
+        let content_lines: Vec<&str> = content.lines().collect();
+        let scroll_offset = (app.preview_scroll as usize).min(content_lines.len().saturating_sub(1));
+
+        for line in content_lines.iter().skip(scroll_offset).take(35) {
+            lines.push(Line::from(*line));
         }
 
         let preview = Paragraph::new(lines)
-            .block(Block::default().borders(Borders::ALL).title(" Skill Details & Preview "))
+            .block(Block::default().borders(Borders::ALL).title(" Skill Details & Inspection "))
             .wrap(Wrap { trim: false });
         f.render_widget(preview, right_pane);
     } else {
@@ -174,7 +237,7 @@ fn render_skills_tab(f: &mut Frame, app: &App, area: Rect) {
 fn render_mcp_tab(f: &mut Frame, app: &App, area: Rect) {
     let panes = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
         .split(area);
 
     let filtered_mcps = app.filtered_mcps();
@@ -193,14 +256,19 @@ fn render_mcp_tab(f: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(Color::White)
             };
 
-            let targets_str = m.targets.iter().map(|t| t.short_code()).collect::<Vec<_>>().join(" ");
-            let content = Line::from(vec![
-                Span::styled(format!(" {} ", status_icon), Style::default().fg(Color::Green)),
-                Span::raw(format!("{:<25} ", m.name)),
-                Span::styled(targets_str, Style::default().fg(Color::Yellow)),
-            ]);
+            let mut spans = vec![
+                Span::styled(format!(" {} ", status_icon), Style::default().fg(if m.enabled { Color::Green } else { Color::DarkGray })),
+                Span::raw(format!("{:<20} ", m.name)),
+            ];
 
-            ListItem::new(content).style(style)
+            for &t in &[TargetName::Claude, TargetName::Codex, TargetName::Antigravity, TargetName::Grok] {
+                let code = t.short_code();
+                let is_in_target = m.targets.contains(&t);
+                let (sym, color) = if is_in_target { ("✓", Color::Green) } else { ("-", Color::DarkGray) };
+                spans.push(Span::styled(format!("{}:{} ", code, sym), Style::default().fg(color)));
+            }
+
+            ListItem::new(Line::from(spans)).style(style)
         })
         .collect();
 
@@ -217,20 +285,25 @@ fn render_mcp_tab(f: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(vec![
             Span::styled("MCP Server: ", Style::default().add_modifier(Modifier::BOLD)),
             Span::styled(&selected_mcp.name, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::raw("  "),
+            Span::styled("[Press 'e' to edit config]", Style::default().fg(Color::Yellow)),
         ]));
         lines.push(Line::from(vec![
             Span::styled("Status: ", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(if selected_mcp.enabled { "Enabled" } else { "Disabled" }),
+            Span::styled(
+                if selected_mcp.enabled { "Enabled" } else { "Disabled" },
+                Style::default().fg(if selected_mcp.enabled { Color::Green } else { Color::Red }),
+            ),
         ]));
         lines.push(Line::from(vec![
-            Span::styled("Targets: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled("Active Targets: ", Style::default().add_modifier(Modifier::BOLD)),
             Span::styled(
                 selected_mcp.targets.iter().map(|t| t.as_str()).collect::<Vec<_>>().join(", "),
                 Style::default().fg(Color::Yellow),
             ),
         ]));
-        lines.push(Line::from("─".repeat(50)));
-        lines.push(Line::from(Span::styled("Recipe Configuration:", Style::default().fg(Color::Magenta))));
+        lines.push(Line::from("─".repeat(60)));
+        lines.push(Line::from(Span::styled("Recipe Configuration:", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD))));
 
         if let Some(cmd) = &selected_mcp.recipe.command {
             lines.push(Line::from(format!("  Command: {}", cmd)));
@@ -249,7 +322,7 @@ fn render_mcp_tab(f: &mut Frame, app: &App, area: Rect) {
         }
 
         let detail_widget = Paragraph::new(lines)
-            .block(Block::default().borders(Borders::ALL).title(" Server Recipe Details "))
+            .block(Block::default().borders(Borders::ALL).title(" Server Recipe & Target Status "))
             .wrap(Wrap { trim: false });
         f.render_widget(detail_widget, panes[1]);
     }
@@ -296,7 +369,8 @@ fn render_doctor_tab(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_footer(f: &mut Frame, app: &App, area: Rect) {
-    let msg = app.status_message.as_deref().unwrap_or("[Space] Toggle  [u] Update  [d] Delete  [/] Search  [Tab] Switch Tab  [q] Quit");
+    let default_msg = "[Space] Toggle All  [c/x/a/g] Target Toggle  [H] Switch Scope  [e] Edit  [u] Update  [d] Delete  [/] Search  [q] Quit";
+    let msg = app.status_message.as_deref().unwrap_or(default_msg);
     let footer_text = Paragraph::new(msg)
         .style(Style::default().fg(Color::White).bg(Color::DarkGray))
         .alignment(Alignment::Center)

@@ -1,7 +1,8 @@
 use crate::core::doctor::{run_doctor, DiagnosticReport};
-use crate::core::mcp::{get_mcp_workspace_status, mcp_disable, mcp_enable};
+use crate::core::mcp::{get_mcp_workspace_status, mcp_disable, mcp_enable, mcp_remove};
 use crate::core::skill::{get_skill_workspace_status, skill_add, skill_remove, skill_update};
-use crate::types::{McpStatus, SkillStatus, TargetName};
+use crate::paths::{get_agent_mcp_config_path, get_catalog_skill_dir, get_skill_path, home_dir};
+use crate::types::{McpStatus, SkillPlacementState, SkillStatus, TargetName};
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use crossterm::execute;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
@@ -9,6 +10,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActiveTab {
@@ -18,7 +20,9 @@ pub enum ActiveTab {
 }
 
 pub struct App {
+    pub initial_project_root: PathBuf,
     pub project_root: PathBuf,
+    pub is_home_scope: bool,
     pub targets: Vec<TargetName>,
     pub active_tab: ActiveTab,
     pub running: bool,
@@ -38,14 +42,23 @@ pub struct App {
     pub search_mode: bool,
     pub search_query: String,
 
+    // Preview scroll
+    pub preview_scroll: u16,
+
     // Status / Message
     pub status_message: Option<String>,
+
+    // Flag to trigger external editor
+    pub pending_editor_file: Option<PathBuf>,
 }
 
 impl App {
     pub fn new(project_root: PathBuf, targets: Vec<TargetName>) -> Self {
+        let is_home = project_root == home_dir();
         let mut app = Self {
+            initial_project_root: project_root.clone(),
             project_root,
+            is_home_scope: is_home,
             targets,
             active_tab: ActiveTab::Skills,
             running: true,
@@ -56,7 +69,9 @@ impl App {
             doctor_report: None,
             search_mode: false,
             search_query: String::new(),
+            preview_scroll: 0,
             status_message: None,
+            pending_editor_file: None,
         };
         app.refresh();
         app
@@ -72,6 +87,21 @@ impl App {
         if let Ok(report) = run_doctor(&self.project_root, false, &self.targets) {
             self.doctor_report = Some(report);
         }
+    }
+
+    pub fn toggle_scope(&mut self) {
+        self.is_home_scope = !self.is_home_scope;
+        if self.is_home_scope {
+            self.project_root = home_dir();
+            self.status_message = Some("Switched scope to Global (~/)".to_string());
+        } else {
+            self.project_root = self.initial_project_root.clone();
+            self.status_message = Some(format!("Switched scope to Project ({})", self.project_root.display()));
+        }
+        self.selected_skill_index = 0;
+        self.selected_mcp_index = 0;
+        self.preview_scroll = 0;
+        self.refresh();
     }
 
     pub fn filtered_skills(&self) -> Vec<&SkillStatus> {
@@ -98,6 +128,43 @@ impl App {
         }
     }
 
+    pub fn toggle_single_target(&mut self, target: TargetName) {
+        match self.active_tab {
+            ActiveTab::Skills => {
+                let filtered = self.filtered_skills();
+                if let Some(skill) = filtered.get(self.selected_skill_index) {
+                    let name = skill.name.clone();
+                    let placement = skill.placement.get(&target).copied().unwrap_or(SkillPlacementState::Missing);
+                    let is_active = placement != SkillPlacementState::Missing && placement != SkillPlacementState::BrokenLink;
+
+                    if is_active {
+                        let _ = skill_remove(&self.project_root, &name, &[target]);
+                        self.status_message = Some(format!("Disabled {} on {}", name, target));
+                    } else {
+                        let _ = skill_add(&self.project_root, &name, &[target], None);
+                        self.status_message = Some(format!("Enabled {} on {}", name, target));
+                    }
+                    self.refresh();
+                }
+            }
+            ActiveTab::Mcp => {
+                let filtered = self.filtered_mcps();
+                if let Some(mcp) = filtered.get(self.selected_mcp_index) {
+                    let name = mcp.name.clone();
+                    if mcp.targets.contains(&target) {
+                        let _ = mcp_remove(&self.project_root, &name, &[target]);
+                        self.status_message = Some(format!("Removed {} from {}", name, target));
+                    } else {
+                        let _ = crate::core::mcp::mcp_add(&self.project_root, &name, &[target], Some(&mcp.recipe));
+                        self.status_message = Some(format!("Added {} to {}", name, target));
+                    }
+                    self.refresh();
+                }
+            }
+            ActiveTab::Doctor => {}
+        }
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) {
         if self.search_mode {
             match key.code {
@@ -108,11 +175,13 @@ impl App {
                     self.search_query.pop();
                     self.selected_skill_index = 0;
                     self.selected_mcp_index = 0;
+                    self.preview_scroll = 0;
                 }
                 KeyCode::Char(c) => {
                     self.search_query.push(c);
                     self.selected_skill_index = 0;
                     self.selected_mcp_index = 0;
+                    self.preview_scroll = 0;
                 }
                 _ => {}
             }
@@ -129,51 +198,81 @@ impl App {
                     ActiveTab::Mcp => ActiveTab::Doctor,
                     ActiveTab::Doctor => ActiveTab::Skills,
                 };
+                self.preview_scroll = 0;
             }
-            KeyCode::Char('1') => self.active_tab = ActiveTab::Skills,
-            KeyCode::Char('2') => self.active_tab = ActiveTab::Mcp,
-            KeyCode::Char('3') => self.active_tab = ActiveTab::Doctor,
+            KeyCode::Char('1') => {
+                self.active_tab = ActiveTab::Skills;
+                self.preview_scroll = 0;
+            }
+            KeyCode::Char('2') => {
+                self.active_tab = ActiveTab::Mcp;
+                self.preview_scroll = 0;
+            }
+            KeyCode::Char('3') => {
+                self.active_tab = ActiveTab::Doctor;
+                self.preview_scroll = 0;
+            }
+            // Scope toggle
+            KeyCode::Char('H') | KeyCode::Char('S') => {
+                self.toggle_scope();
+            }
+            // Realtime search
             KeyCode::Char('/') => {
                 self.search_mode = true;
             }
-            KeyCode::Char('j') | KeyCode::Down => match self.active_tab {
-                ActiveTab::Skills => {
-                    let count = self.filtered_skills().len();
-                    if count > 0 {
-                        self.selected_skill_index = (self.selected_skill_index + 1) % count;
+            // List navigation
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.preview_scroll = 0;
+                match self.active_tab {
+                    ActiveTab::Skills => {
+                        let count = self.filtered_skills().len();
+                        if count > 0 {
+                            self.selected_skill_index = (self.selected_skill_index + 1) % count;
+                        }
                     }
-                }
-                ActiveTab::Mcp => {
-                    let count = self.filtered_mcps().len();
-                    if count > 0 {
-                        self.selected_mcp_index = (self.selected_mcp_index + 1) % count;
+                    ActiveTab::Mcp => {
+                        let count = self.filtered_mcps().len();
+                        if count > 0 {
+                            self.selected_mcp_index = (self.selected_mcp_index + 1) % count;
+                        }
                     }
+                    ActiveTab::Doctor => {}
                 }
-                ActiveTab::Doctor => {}
-            },
-            KeyCode::Char('k') | KeyCode::Up => match self.active_tab {
-                ActiveTab::Skills => {
-                    let count = self.filtered_skills().len();
-                    if count > 0 {
-                        self.selected_skill_index = if self.selected_skill_index == 0 {
-                            count - 1
-                        } else {
-                            self.selected_skill_index - 1
-                        };
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.preview_scroll = 0;
+                match self.active_tab {
+                    ActiveTab::Skills => {
+                        let count = self.filtered_skills().len();
+                        if count > 0 {
+                            self.selected_skill_index = if self.selected_skill_index == 0 {
+                                count - 1
+                            } else {
+                                self.selected_skill_index - 1
+                            };
+                        }
                     }
-                }
-                ActiveTab::Mcp => {
-                    let count = self.filtered_mcps().len();
-                    if count > 0 {
-                        self.selected_mcp_index = if self.selected_mcp_index == 0 {
-                            count - 1
-                        } else {
-                            self.selected_mcp_index - 1
-                        };
+                    ActiveTab::Mcp => {
+                        let count = self.filtered_mcps().len();
+                        if count > 0 {
+                            self.selected_mcp_index = if self.selected_mcp_index == 0 {
+                                count - 1
+                            } else {
+                                self.selected_mcp_index - 1
+                            };
+                        }
                     }
+                    ActiveTab::Doctor => {}
                 }
-                ActiveTab::Doctor => {}
-            },
+            }
+            // Preview scrolling
+            KeyCode::PageDown | KeyCode::Char('J') => {
+                self.preview_scroll = self.preview_scroll.saturating_add(5);
+            }
+            KeyCode::PageUp | KeyCode::Char('K') => {
+                self.preview_scroll = self.preview_scroll.saturating_sub(5);
+            }
+            // Toggle all targets
             KeyCode::Char(' ') => match self.active_tab {
                 ActiveTab::Skills => {
                     let filtered = self.filtered_skills();
@@ -206,6 +305,37 @@ impl App {
                 }
                 ActiveTab::Doctor => {}
             },
+            // Target specific toggles
+            KeyCode::Char('c') => self.toggle_single_target(TargetName::Claude),
+            KeyCode::Char('x') => self.toggle_single_target(TargetName::Codex),
+            KeyCode::Char('a') => self.toggle_single_target(TargetName::Antigravity),
+            KeyCode::Char('g') => self.toggle_single_target(TargetName::Grok),
+            // Edit in external editor
+            KeyCode::Char('e') => match self.active_tab {
+                ActiveTab::Skills => {
+                    let filtered = self.filtered_skills();
+                    if let Some(skill) = filtered.get(self.selected_skill_index) {
+                        let skill_md = get_catalog_skill_dir(&skill.name).join("SKILL.md");
+                        if skill_md.exists() {
+                            self.pending_editor_file = Some(skill_md);
+                        } else {
+                            // Check target placement
+                            let target_md = get_skill_path(&self.project_root, TargetName::Claude, &skill.name).join("SKILL.md");
+                            if target_md.exists() {
+                                self.pending_editor_file = Some(target_md);
+                            }
+                        }
+                    }
+                }
+                ActiveTab::Mcp => {
+                    let config_path = get_agent_mcp_config_path(&self.project_root, TargetName::Claude);
+                    if config_path.exists() {
+                        self.pending_editor_file = Some(config_path);
+                    }
+                }
+                ActiveTab::Doctor => {}
+            },
+            // Update stale copies
             KeyCode::Char('u') => {
                 if self.active_tab == ActiveTab::Skills {
                     let filtered = self.filtered_skills();
@@ -216,6 +346,7 @@ impl App {
                     }
                 }
             }
+            // Auto fix doctor
             KeyCode::Char('f') => {
                 if self.active_tab == ActiveTab::Doctor {
                     if let Ok(report) = run_doctor(&self.project_root, true, &self.targets) {
@@ -225,6 +356,7 @@ impl App {
                     }
                 }
             }
+            // Delete
             KeyCode::Char('d') => {
                 if self.active_tab == ActiveTab::Skills {
                     let filtered = self.filtered_skills();
@@ -252,6 +384,24 @@ pub fn run_tui(project_root: &Path, targets: &[TargetName]) -> anyhow::Result<()
 
     while app.running {
         terminal.draw(|f| crate::tui::ui::render(f, &mut app))?;
+
+        if let Some(file_to_edit) = app.pending_editor_file.take() {
+            // Temporarily leave alternate screen and raw mode for editor
+            disable_raw_mode()?;
+            execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+            terminal.show_cursor()?;
+
+            let editor = std::env::var("EDITOR").unwrap_or_else(|_| "nano".to_string());
+            let _ = Command::new(&editor).arg(&file_to_edit).status();
+
+            enable_raw_mode()?;
+            execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+            terminal.hide_cursor()?;
+            terminal.clear()?;
+
+            app.status_message = Some(format!("Edited {}", file_to_edit.file_name().unwrap_or_default().to_string_lossy()));
+            app.refresh();
+        }
 
         if event::poll(std::time::Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {

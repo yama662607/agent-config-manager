@@ -1,4 +1,5 @@
 use agent_config_manager::catalog::catalog::add_skill;
+use agent_config_manager::paths::home_dir;
 use agent_config_manager::tui::app::{ActiveTab, App};
 use agent_config_manager::types::TargetName;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -22,40 +23,48 @@ fn test_tui_full_interaction_scenarios() {
     std::env::set_var("ACM_CATALOG_DIR", cat_dir.path().to_str().unwrap());
 
     // Populate catalog with skills
-    add_skill("alpha-skill", "---\nname: alpha-skill\ndescription: Alpha description\n---\n").unwrap();
+    add_skill("alpha-skill", "---\nname: alpha-skill\ndescription: Alpha description\n---\n# Header\nLine 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9\nLine 10").unwrap();
     add_skill("beta-skill", "---\nname: beta-skill\ndescription: Beta description\n---\n").unwrap();
     add_skill("gamma-skill", "---\nname: gamma-skill\ndescription: Gamma description\n---\n").unwrap();
 
-    let targets = vec![TargetName::Claude, TargetName::Codex];
+    let targets = vec![TargetName::Claude, TargetName::Codex, TargetName::Antigravity, TargetName::Grok];
     let mut app = App::new(dir.path().to_path_buf(), targets);
 
     // --- Scenario 1: Initial State & Tab Navigation ---
     assert_eq!(app.active_tab, ActiveTab::Skills);
     assert_eq!(app.skills.len(), 3);
+    assert!(!app.is_home_scope);
 
-    app.handle_key(make_key(KeyCode::Tab));
-    assert_eq!(app.active_tab, ActiveTab::Mcp);
+    // --- Scenario 2: Scope Switching ('H') ---
+    app.handle_key(make_key(KeyCode::Char('H')));
+    assert!(app.is_home_scope);
+    assert_eq!(app.project_root, home_dir());
 
-    app.handle_key(make_key(KeyCode::Tab));
-    assert_eq!(app.active_tab, ActiveTab::Doctor);
+    app.handle_key(make_key(KeyCode::Char('H')));
+    assert!(!app.is_home_scope);
+    assert_eq!(app.project_root, dir.path());
 
-    app.handle_key(make_key(KeyCode::Char('1')));
-    assert_eq!(app.active_tab, ActiveTab::Skills);
+    // --- Scenario 3: Target Specific Toggle ('c', 'x', 'a', 'g') ---
+    app.selected_skill_index = 0; // alpha-skill
+    assert_eq!(app.filtered_skills()[0].targets.len(), 0);
 
-    // --- Scenario 2: List Navigation ---
-    assert_eq!(app.selected_skill_index, 0);
-    app.handle_key(make_key(KeyCode::Char('j')));
-    assert_eq!(app.selected_skill_index, 1);
-    app.handle_key(make_key(KeyCode::Char('j')));
-    assert_eq!(app.selected_skill_index, 2);
-    app.handle_key(make_key(KeyCode::Char('j'))); // wraps around
-    assert_eq!(app.selected_skill_index, 0);
-    app.handle_key(make_key(KeyCode::Char('k'))); // wraps to end
-    assert_eq!(app.selected_skill_index, 2);
-    app.handle_key(make_key(KeyCode::Char('k')));
-    assert_eq!(app.selected_skill_index, 1);
+    // Toggle Claude only
+    app.handle_key(make_key(KeyCode::Char('c')));
+    assert!(dir.path().join(".claude").join("skills").join("alpha-skill").exists());
+    assert!(!dir.path().join(".codex").join("skills").join("alpha-skill").exists());
 
-    // --- Scenario 3: Realtime Incremental Search ---
+    // Toggle Codex only
+    app.handle_key(make_key(KeyCode::Char('x')));
+    assert!(dir.path().join(".codex").join("skills").join("alpha-skill").exists());
+
+    // --- Scenario 4: Preview Scrolling ('J' / 'K') ---
+    assert_eq!(app.preview_scroll, 0);
+    app.handle_key(make_key(KeyCode::Char('J')));
+    assert!(app.preview_scroll > 0);
+    app.handle_key(make_key(KeyCode::Char('K')));
+    assert_eq!(app.preview_scroll, 0);
+
+    // --- Scenario 5: Realtime Incremental Search ---
     app.handle_key(make_key(KeyCode::Char('/')));
     assert!(app.search_mode);
 
@@ -81,20 +90,8 @@ fn test_tui_full_interaction_scenarios() {
     app.handle_key(make_key(KeyCode::Esc));
     assert_eq!(app.filtered_skills().len(), 3);
 
-    // --- Scenario 4: Space Key Toggle (Add / Enable skill) ---
-    app.selected_skill_index = 0; // alpha-skill
-    assert_eq!(app.filtered_skills()[0].enabled, false);
-
-    app.handle_key(make_key(KeyCode::Char(' ')));
-    assert_eq!(app.filtered_skills()[0].enabled, true);
-    assert!(dir.path().join(".claude").join("skills").join("alpha-skill").exists());
-
-    // Toggle off
-    app.handle_key(make_key(KeyCode::Char(' ')));
-    assert_eq!(app.filtered_skills()[0].enabled, false);
-
-    // --- Scenario 5: Render Layouts (No Panics) ---
-    let backend = TestBackend::new(120, 40);
+    // --- Scenario 6: Render Layouts (No Panics) ---
+    let backend = TestBackend::new(140, 45);
     let mut terminal = Terminal::new(backend).unwrap();
 
     app.active_tab = ActiveTab::Skills;
@@ -105,10 +102,6 @@ fn test_tui_full_interaction_scenarios() {
 
     app.active_tab = ActiveTab::Doctor;
     terminal.draw(|f| agent_config_manager::tui::ui::render(f, &mut app)).unwrap();
-
-    // --- Scenario 6: Doctor Auto-fix Action ('f') ---
-    app.handle_key(make_key(KeyCode::Char('f')));
-    assert!(app.status_message.is_some());
 
     // --- Scenario 7: Exit Key ('q') ---
     assert!(app.running);

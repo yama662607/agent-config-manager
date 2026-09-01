@@ -45,3 +45,30 @@ fn test_cli_doctor_json_output() {
     let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
     assert!(output.contains("\"checks\":"));
 }
+
+#[test]
+fn test_cli_mcp_add_custom_options() {
+    let dir = tempdir().unwrap();
+    let mut cmd = Command::cargo_bin("acm").unwrap();
+    cmd.arg("mcp")
+        .arg("add")
+        .arg("custom-mcp")
+        .arg("--command")
+        .arg("python3")
+        .arg("--arg")
+        .arg("server.py")
+        .arg("--cwd")
+        .arg("/tmp")
+        .arg("--env")
+        .arg("PORT=8080");
+    cmd.current_dir(dir.path());
+    cmd.assert().success().stdout(predicate::str::contains("Added MCP server: custom-mcp"));
+
+    // Verify written to .mcp.json (Claude)
+    let mcp_json = dir.path().join(".mcp.json");
+    assert!(mcp_json.exists());
+    let content = fs::read_to_string(mcp_json).unwrap();
+    assert!(content.contains("python3"));
+    assert!(content.contains("PORT"));
+    assert!(content.contains("8080"));
+}

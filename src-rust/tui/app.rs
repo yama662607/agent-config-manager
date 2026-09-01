@@ -1,6 +1,6 @@
 use crate::core::doctor::{run_doctor, DiagnosticReport};
-use crate::core::mcp::get_mcp_workspace_status;
-use crate::core::skill::{get_skill_workspace_status, skill_remove};
+use crate::core::mcp::{get_mcp_workspace_status, mcp_disable, mcp_enable};
+use crate::core::skill::{get_skill_workspace_status, skill_add, skill_remove, skill_update};
 use crate::types::{McpStatus, SkillStatus, TargetName};
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use crossterm::execute;
@@ -106,9 +106,13 @@ impl App {
                 }
                 KeyCode::Backspace => {
                     self.search_query.pop();
+                    self.selected_skill_index = 0;
+                    self.selected_mcp_index = 0;
                 }
                 KeyCode::Char(c) => {
                     self.search_query.push(c);
+                    self.selected_skill_index = 0;
+                    self.selected_mcp_index = 0;
                 }
                 _ => {}
             }
@@ -170,6 +174,48 @@ impl App {
                 }
                 ActiveTab::Doctor => {}
             },
+            KeyCode::Char(' ') => match self.active_tab {
+                ActiveTab::Skills => {
+                    let filtered = self.filtered_skills();
+                    if let Some(skill) = filtered.get(self.selected_skill_index) {
+                        let name = skill.name.clone();
+                        let is_enabled = skill.enabled;
+                        if is_enabled {
+                            let _ = skill_remove(&self.project_root, &name, &self.targets);
+                            self.status_message = Some(format!("Disabled skill: {}", name));
+                        } else {
+                            let _ = skill_add(&self.project_root, &name, &self.targets, None);
+                            self.status_message = Some(format!("Enabled skill: {}", name));
+                        }
+                        self.refresh();
+                    }
+                }
+                ActiveTab::Mcp => {
+                    let filtered = self.filtered_mcps();
+                    if let Some(mcp) = filtered.get(self.selected_mcp_index) {
+                        let name = mcp.name.clone();
+                        if mcp.enabled {
+                            let _ = mcp_disable(&self.project_root, &name, &self.targets);
+                            self.status_message = Some(format!("Disabled MCP server: {}", name));
+                        } else {
+                            let _ = mcp_enable(&self.project_root, &name, &self.targets);
+                            self.status_message = Some(format!("Enabled MCP server: {}", name));
+                        }
+                        self.refresh();
+                    }
+                }
+                ActiveTab::Doctor => {}
+            },
+            KeyCode::Char('u') => {
+                if self.active_tab == ActiveTab::Skills {
+                    let filtered = self.filtered_skills();
+                    let skill_filter = filtered.get(self.selected_skill_index).map(|s| s.name.as_str());
+                    if let Ok(res) = skill_update(&self.project_root, skill_filter, &self.targets, false) {
+                        self.status_message = Some(format!("Updated {} skill copies (skipped {})", res.updated_count, res.skipped_count));
+                        self.refresh();
+                    }
+                }
+            }
             KeyCode::Char('f') => {
                 if self.active_tab == ActiveTab::Doctor {
                     if let Ok(report) = run_doctor(&self.project_root, true, &self.targets) {

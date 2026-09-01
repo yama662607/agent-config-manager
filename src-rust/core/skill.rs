@@ -4,60 +4,98 @@ use crate::catalog::metadata::{load_skills_metadata, save_skills_metadata};
 use crate::core::placement::{copy_skill_dir_to_config, default_placement_mode, inspect_skill_placement, SkillPlacementMode};
 use crate::core::validate::validate_skill_name;
 use crate::paths::{get_agent_mcp_config_path, get_agent_skills_dir, get_catalog_skill_dir, get_catalog_skills_dir, get_skill_path, home_dir};
-use crate::types::{SkillStatus, SkillWorkspaceStatus, TargetName};
+use crate::types::{SkillPlacementState, SkillStatus, SkillWorkspaceStatus, TargetName};
 use anyhow::Context;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
-/// Get status of all skills across targets for a workspace
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SkillUpdateResult {
+    pub updated_count: usize,
+    pub skipped_count: usize,
+    pub details: Vec<SkillUpdateDetail>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillUpdateDetail {
+    pub skill_name: String,
+    pub target: TargetName,
+    pub updated: bool,
+    pub reason: String,
+}
+
+/// Get status of all skills across targets for a workspace (including catalog-only skills)
 pub fn get_skill_workspace_status<P: AsRef<Path>>(
     project_root: P,
     targets: &[TargetName],
 ) -> anyhow::Result<SkillWorkspaceStatus> {
     let root = project_root.as_ref();
-    let catalog_skills: HashSet<String> = list_skills()?.into_iter().map(|s| s.id).collect();
+    let catalog_entries = list_skills()?;
+    let catalog_skills: HashSet<String> = catalog_entries.iter().map(|s| s.id.clone()).collect();
 
     let mut skill_map: HashMap<String, SkillStatus> = HashMap::new();
 
+    // 1. First add all catalog skills
+    for cat in catalog_entries {
+        skill_map.insert(
+            cat.id.clone(),
+            SkillStatus {
+                name: cat.id,
+                enabled: false,
+                targets: Vec::new(),
+                source: "catalog".to_string(),
+                placement: HashMap::new(),
+            },
+        );
+    }
+
+    // 2. Scan each target directory
     for &target in targets {
         let skills_dir = get_agent_skills_dir(root, target);
-        if !skills_dir.exists() {
-            continue;
+        if skills_dir.exists() {
+            if let Ok(entries) = fs::read_dir(&skills_dir) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if validate_skill_name(&name).is_err() {
+                        continue;
+                    }
+
+                    let cat_dir = if catalog_skills.contains(&name) {
+                        Some(get_catalog_skill_dir(&name))
+                    } else {
+                        None
+                    };
+
+                    let placement = inspect_skill_placement(root, target, &name, cat_dir.as_deref());
+
+                    let status = skill_map.entry(name.clone()).or_insert_with(|| SkillStatus {
+                        name: name.clone(),
+                        enabled: false,
+                        targets: Vec::new(),
+                        source: if catalog_skills.contains(&name) {
+                            "catalog".to_string()
+                        } else {
+                            "inline".to_string()
+                        },
+                        placement: HashMap::new(),
+                    });
+
+                    if placement.state != SkillPlacementState::Missing && placement.state != SkillPlacementState::BrokenLink {
+                        status.enabled = true;
+                        if !status.targets.contains(&target) {
+                            status.targets.push(target);
+                        }
+                    }
+                    status.placement.insert(target, placement.state);
+                }
+            }
         }
 
-        if let Ok(entries) = fs::read_dir(&skills_dir) {
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if validate_skill_name(&name).is_err() {
-                    continue;
-                }
-
-                let cat_dir = if catalog_skills.contains(&name) {
-                    Some(get_catalog_skill_dir(&name))
-                } else {
-                    None
-                };
-
-                let placement = inspect_skill_placement(root, target, &name, cat_dir.as_deref());
-
-                let status = skill_map.entry(name.clone()).or_insert_with(|| SkillStatus {
-                    name: name.clone(),
-                    enabled: true,
-                    targets: Vec::new(),
-                    source: if catalog_skills.contains(&name) {
-                        "catalog".to_string()
-                    } else {
-                        "inline".to_string()
-                    },
-                    placement: HashMap::new(),
-                });
-
-                if !status.targets.contains(&target) {
-                    status.targets.push(target);
-                }
-                status.placement.insert(target, placement.state);
-            }
+        // Fill missing placement for catalog skills not present in this target
+        for status in skill_map.values_mut() {
+            status.placement.entry(target).or_insert(SkillPlacementState::Missing);
         }
     }
 
@@ -131,6 +169,90 @@ pub fn skill_remove<P: AsRef<Path>>(
     }
 
     Ok(())
+}
+
+/// Update stale skill copies from catalog to latest content (Roadmap Priority 1)
+pub fn skill_update<P: AsRef<Path>>(
+    project_root: P,
+    skill_name_filter: Option<&str>,
+    targets: &[TargetName],
+    force: bool,
+) -> anyhow::Result<SkillUpdateResult> {
+    let root = project_root.as_ref();
+    let ws_status = get_skill_workspace_status(root, targets)?;
+    let mut result = SkillUpdateResult::default();
+
+    for skill in ws_status.skills {
+        if let Some(filter) = skill_name_filter {
+            if skill.name != filter {
+                continue;
+            }
+        }
+
+        let cat_dir = get_catalog_skill_dir(&skill.name);
+        if !cat_dir.exists() {
+            continue;
+        }
+
+        for &target in targets {
+            let placement = skill.placement.get(&target).copied().unwrap_or(SkillPlacementState::Missing);
+            match placement {
+                SkillPlacementState::CopyStale => {
+                    copy_skill_dir_to_config(root, target, &skill.name, &cat_dir, SkillPlacementMode::Copy)?;
+                    result.updated_count += 1;
+                    result.details.push(SkillUpdateDetail {
+                        skill_name: skill.name.clone(),
+                        target,
+                        updated: true,
+                        reason: "Updated stale copy to latest catalog version".to_string(),
+                    });
+                }
+                SkillPlacementState::CopyCurrent => {
+                    if force {
+                        copy_skill_dir_to_config(root, target, &skill.name, &cat_dir, SkillPlacementMode::Copy)?;
+                        result.updated_count += 1;
+                        result.details.push(SkillUpdateDetail {
+                            skill_name: skill.name.clone(),
+                            target,
+                            updated: true,
+                            reason: "Forced update of copy".to_string(),
+                        });
+                    } else {
+                        result.skipped_count += 1;
+                        result.details.push(SkillUpdateDetail {
+                            skill_name: skill.name.clone(),
+                            target,
+                            updated: false,
+                            reason: "Already up to date (CopyCurrent)".to_string(),
+                        });
+                    }
+                }
+                SkillPlacementState::Linked | SkillPlacementState::Registered => {
+                    result.skipped_count += 1;
+                    result.details.push(SkillUpdateDetail {
+                        skill_name: skill.name.clone(),
+                        target,
+                        updated: false,
+                        reason: "Symlinked or registered to catalog (always in sync)".to_string(),
+                    });
+                }
+                SkillPlacementState::Missing | SkillPlacementState::BrokenLink | SkillPlacementState::Unlinked => {
+                    if force {
+                        copy_skill_dir_to_config(root, target, &skill.name, &cat_dir, default_placement_mode(root))?;
+                        result.updated_count += 1;
+                        result.details.push(SkillUpdateDetail {
+                            skill_name: skill.name.clone(),
+                            target,
+                            updated: true,
+                            reason: "Forced install of missing skill".to_string(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(result)
 }
 
 /// Link a development directory into catalog with optional immediate distribution (Proposal 2)
@@ -230,7 +352,6 @@ pub fn skill_rename<P: AsRef<Path>>(
 
     // 1. Rename / Relink in catalog
     if let Some(new_src) = new_source_path {
-        // Relink to new source path
         let src_path = new_src.as_ref().canonicalize()?;
         if fs::symlink_metadata(&old_cat_dir).map_or(false, |m| m.file_type().is_symlink()) {
             fs::remove_file(&old_cat_dir)?;
@@ -240,7 +361,6 @@ pub fn skill_rename<P: AsRef<Path>>(
         #[cfg(windows)]
         std::os::windows::fs::symlink_dir(&src_path, &new_cat_dir)?;
     } else {
-        // Simple rename in catalog
         fs::rename(&old_cat_dir, &new_cat_dir)?;
     }
 
@@ -261,7 +381,6 @@ pub fn skill_rename<P: AsRef<Path>>(
             let old_target_dir = get_skill_path(root, target, old_name);
             let is_linked = fs::symlink_metadata(&old_target_dir).map_or(false, |m| m.file_type().is_symlink());
 
-            // Remove old target placement
             if old_target_dir.exists() || fs::symlink_metadata(&old_target_dir).is_ok() {
                 if is_linked {
                     let _ = fs::remove_file(&old_target_dir);
@@ -270,7 +389,6 @@ pub fn skill_rename<P: AsRef<Path>>(
                 }
             }
 
-            // Place new target placement
             let mode = if is_linked {
                 SkillPlacementMode::Link
             } else {

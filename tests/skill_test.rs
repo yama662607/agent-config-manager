@@ -1,7 +1,8 @@
 use agent_config_manager::catalog::catalog::{add_skill, get_skill, list_skills};
 use agent_config_manager::core::doctor::run_doctor;
-use agent_config_manager::core::skill::{skill_add, skill_link, skill_rename, skill_unlink};
-use agent_config_manager::paths::get_catalog_skills_dir;
+use agent_config_manager::core::placement::{copy_skill_dir_to_config, SkillPlacementMode};
+use agent_config_manager::core::skill::{skill_add, skill_link, skill_rename, skill_unlink, skill_update};
+use agent_config_manager::paths::{get_catalog_skill_dir, get_catalog_skills_dir};
 use agent_config_manager::types::TargetName;
 use std::fs;
 use std::sync::Mutex;
@@ -91,7 +92,20 @@ description: Session recall for coding agents.
     assert!(!claude_skill.exists());
     assert!(root.join(".claude").join("skills").join("ai-agent-archive-recall").exists());
 
-    // 4. Doctor fix dangling symlink (Proposal 3)
+    // 4. Update Stale Copies (Priority 1 Roadmap)
+    let cat_skill_dir = get_catalog_skill_dir("ai-agent-archive-recall");
+    // Manually place a stale copy in Codex
+    copy_skill_dir_to_config(root, TargetName::Codex, "ai-agent-archive-recall", &cat_skill_dir, SkillPlacementMode::Copy).unwrap();
+    let codex_skill_md = root.join(".codex").join("skills").join("ai-agent-archive-recall").join("SKILL.md");
+    // Modify target to make it stale
+    fs::write(&codex_skill_md, "old content").unwrap();
+
+    let update_res = skill_update(root, Some("ai-agent-archive-recall"), &[TargetName::Codex], false).unwrap();
+    assert_eq!(update_res.updated_count, 1);
+    let updated_content = fs::read_to_string(&codex_skill_md).unwrap();
+    assert!(updated_content.contains("Session recall"));
+
+    // 5. Doctor fix dangling symlink (Proposal 3)
     let temp_d = tempdir().unwrap();
     let broken_target = temp_d.path().join("deleted-folder");
     let broken_symlink = get_catalog_skills_dir().join("broken-skill");

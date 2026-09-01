@@ -1,11 +1,14 @@
 use crate::core::doctor::run_doctor;
 use crate::core::mcp::{get_mcp_workspace_status, mcp_add, mcp_disable, mcp_enable, mcp_remove};
 use crate::core::placement::SkillPlacementMode;
-use crate::core::skill::{get_skill_workspace_status, skill_add, skill_link, skill_remove, skill_rename, skill_unlink};
+use crate::core::skill::{
+    get_skill_workspace_status, skill_add, skill_link, skill_remove, skill_rename, skill_unlink, skill_update,
+};
 use crate::core::validate::validate_skill_directory;
 use crate::paths::home_dir;
-use crate::types::TargetName;
+use crate::types::{McpRecipe, TargetName, TransportType};
 use clap::{Args, Parser, Subcommand};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -56,10 +59,21 @@ pub enum McpSubcommands {
     /// Add an MCP server
     Add {
         package_id: String,
+        /// Command to execute (e.g. npx, node, python)
         #[arg(long)]
         command: Option<String>,
+        /// Arguments to pass to command
+        #[arg(long = "arg")]
+        args: Option<Vec<String>>,
+        /// URL for SSE/HTTP MCP server
         #[arg(long)]
         url: Option<String>,
+        /// Working directory for MCP server
+        #[arg(long)]
+        cwd: Option<String>,
+        /// Environment variables (KEY=VALUE format)
+        #[arg(long = "env", value_parser = parse_key_val)]
+        env: Option<Vec<(String, String)>>,
     },
     /// Remove an MCP server
     Remove { server_name: String },
@@ -67,6 +81,11 @@ pub enum McpSubcommands {
     Enable { server_name: String },
     /// Disable an MCP server
     Disable { server_name: String },
+}
+
+fn parse_key_val(s: &str) -> Result<(String, String), String> {
+    let pos = s.find('=').ok_or_else(|| format!("Invalid KEY=VALUE: no `=` found in `{}`", s))?;
+    Ok((s[..pos].to_string(), s[pos + 1..].to_string()))
 }
 
 #[derive(Args, Debug)]
@@ -86,6 +105,12 @@ pub enum SkillSubcommands {
         link: bool,
         #[arg(long)]
         copy: bool,
+    },
+    /// Update stale copied skills to latest catalog version (Roadmap Priority 1)
+    Update {
+        skill_name: Option<String>,
+        #[arg(long)]
+        force: bool,
     },
     /// Register a directory in catalog as a symlink (Proposal 2: --distribute)
     Link {
@@ -200,8 +225,27 @@ fn handle_mcp(
                 }
             }
         }
-        McpSubcommands::Add { package_id, command: _, url: _ } => {
-            mcp_add(root, &package_id, targets, None)?;
+        McpSubcommands::Add { package_id, command, args, url, cwd, env } => {
+            let custom_recipe = if command.is_some() || url.is_some() || args.is_some() || cwd.is_some() || env.is_some() {
+                let env_map: Option<HashMap<String, String>> = env.map(|pairs| pairs.into_iter().collect());
+                let transport = if url.is_some() {
+                    Some(TransportType::Http)
+                } else {
+                    Some(TransportType::Stdio)
+                };
+                Some(McpRecipe {
+                    command,
+                    args,
+                    url,
+                    cwd,
+                    env: env_map,
+                    transport,
+                })
+            } else {
+                None
+            };
+
+            mcp_add(root, &package_id, targets, custom_recipe.as_ref())?;
             println!("✓ Added MCP server: {}", package_id);
         }
         McpSubcommands::Remove { server_name } => {
@@ -252,6 +296,20 @@ fn handle_skill(
             };
             skill_add(root, &skill_id, targets, mode)?;
             println!("✓ Added skill: {}", skill_id);
+        }
+        SkillSubcommands::Update { skill_name, force } => {
+            let result = skill_update(root, skill_name.as_deref(), targets, force)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Skill Update Summary\n==================================================");
+                println!("  Updated: {}, Skipped: {}\n", result.updated_count, result.skipped_count);
+                for d in &result.details {
+                    let icon = if d.updated { "✓" } else { "•" };
+                    println!("  {} [{}] {}: {}", icon, d.target, d.skill_name, d.reason);
+                }
+                println!("==================================================");
+            }
         }
         SkillSubcommands::Link { source_path, skill_id, distribute } => {
             let dist_targets = if distribute { Some(targets) } else { None };

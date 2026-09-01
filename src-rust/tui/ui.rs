@@ -241,6 +241,9 @@ fn render_mcp_tab(f: &mut Frame, app: &App, area: Rect) {
         if let Some(url) = &selected_mcp.recipe.url {
             lines.push(Line::from(format!("  URL: {}", url)));
         }
+        if let Some(cwd) = &selected_mcp.recipe.cwd {
+            lines.push(Line::from(format!("  Cwd: {}", cwd)));
+        }
         if let Some(env) = &selected_mcp.recipe.env {
             lines.push(Line::from(format!("  Env: {:?}", env)));
         }
@@ -293,7 +296,7 @@ fn render_doctor_tab(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_footer(f: &mut Frame, app: &App, area: Rect) {
-    let msg = app.status_message.as_deref().unwrap_or("[Space] Toggle  [d] Delete  [/] Search  [Tab] Switch Tab  [q] Quit");
+    let msg = app.status_message.as_deref().unwrap_or("[Space] Toggle  [u] Update  [d] Delete  [/] Search  [Tab] Switch Tab  [q] Quit");
     let footer_text = Paragraph::new(msg)
         .style(Style::default().fg(Color::White).bg(Color::DarkGray))
         .alignment(Alignment::Center)

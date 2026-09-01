@@ -5,9 +5,6 @@
 set dotenv-load := true
 set shell := ["bash", "-c"]
 
-# Package manager
-pm := "npm"
-
 # =============================================================================
 # Standard Interface (AI Agent Protocol)
 # =============================================================================
@@ -15,102 +12,54 @@ pm := "npm"
 # Default: Run read-only quality check
 default: check
 
-# Setup: Install dependencies
+# Setup: Build dependencies
 setup:
-    @echo "Setting up environment..."
-    {{pm}} install
+    @echo "Setting up Rust environment..."
+    cargo check
     @echo "Setup complete! Run 'just check' to verify."
 
 # Quality gate: Read-only verification (CI compatible)
 check: build test
     @echo "All quality checks passed!"
 
-# Auto-fix: Not applicable (no formatter configured)
+# Auto-fix: Run cargo clippy / fmt if configured
 fix:
-    @echo "No auto-fix configured (no formatter/linter installed)."
-    @echo "Consider adding Biome or ESLint/Prettier for auto-fix support."
+    @echo "Formatting and fixing Rust code..."
+    cargo fmt --all || true
 
 # =============================================================================
 # Testing & Verification
 # =============================================================================
 
-# Unit/integration tests with argument pass-through
+# Run all Rust tests
 test *args="":
-    @echo "Running tests..."
-    {{pm}} run test {{args}}
+    @echo "Running Rust tests..."
+    cargo test {{args}}
 
-# Unit tests only
-test-unit *args="":
+# Run unit and integration tests
+test-unit:
     @echo "Running unit tests..."
-    {{pm}} run test:unit {{args}}
+    cargo test --test types_test --test adapters_test --test validate_test
 
-# Integration tests only
-test-integration *args="":
+test-integration:
     @echo "Running integration tests..."
-    {{pm}} run test:integration {{args}}
-
-# Smoke tests (requires build)
-test-smoke: build
-    @echo "Running smoke tests..."
-    {{pm}} run test:smoke
-
-# =============================================================================
-# Granular Tasks (Components of 'check')
-# =============================================================================
-
-# Type checking (implicit in build)
-typecheck:
-    @echo "Checking types..."
-    {{pm}} run build
+    cargo test --test skill_test --test cli_test
 
 # =============================================================================
 # Operations & Utilities
 # =============================================================================
 
-# Start development CLI
+# Start development interactive TUI
 dev:
-    @echo "Starting dev mode..."
-    {{pm}} run dev
+    @echo "Launching Rust ACM TUI..."
+    cargo run --bin acm
 
-# Production build
+# Production release build
 build:
-    @echo "Building..."
-    {{pm}} run build
+    @echo "Building optimized Rust binary..."
+    cargo build --release
 
-# Remove build artifacts
+# Clean build artifacts
 clean:
-    @echo "Cleaning artifacts..."
-    {{pm}} run clean
-
-# =============================================================================
-# Dependency Management
-# =============================================================================
-
-# Safety check: Ensure git working tree is clean
-ensure-clean:
-    @if [ -n "$(git status --porcelain)" ]; then \
-        echo "Error: Working directory is dirty."; \
-        echo "Please commit or stash changes before upgrading."; \
-        exit 1; \
-    fi
-
-# Upgrade all packages (flow: git check -> baseline check -> update -> verify)
-upgrade: ensure-clean check
-    @echo "Baseline passed. Current code is stable."
-    @echo "Starting full upgrade process..."
-    {{pm}} update
-    @echo "Verifying upgrade stability..."
-    just check
-    @echo "Upgrade complete!"
-
-# =============================================================================
-# Project-Specific Tasks
-# =============================================================================
-
-# Show CLI version
-version: build
-    @{{pm}} run dist/cli.js --version
-
-# List MCP servers (requires build)
-mcp-list: build
-    @{{pm}} run dist/cli.js catalog mcp list
+    @echo "Cleaning target directory..."
+    cargo clean

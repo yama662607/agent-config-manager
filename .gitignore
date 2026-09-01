@@ -1,5 +1,6 @@
 node_modules
 dist
+target/
 .DS_Store
 
 # Agent config files (managed by acsync, project-specific)

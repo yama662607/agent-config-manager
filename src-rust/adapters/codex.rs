@@ -16,12 +16,12 @@ pub struct CodexMcpServer {
     pub args: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
-    #[serde(rename = "httpUrl", skip_serializing_if = "Option::is_none")]
-    pub http_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub env: Option<HashMap<String, String>>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, toml::Value>,
 }
 
 fn default_true() -> bool {
@@ -57,18 +57,18 @@ pub fn get_mcp_servers<P: AsRef<Path>>(config_path: P) -> anyhow::Result<HashMap
     }
 
     let content = fs::read_to_string(path).context("Failed to read Codex config")?;
-    let config: CodexConfig = toml::from_str(&content).unwrap_or_default();
+    let config: CodexConfig = toml::from_str(&content)
+        .with_context(|| format!("Failed to parse Codex TOML at {}", path.display()))?;
 
     let mut result = HashMap::new();
     for (name, server) in config.mcp_servers {
-        let url = server.url.or(server.http_url);
         let recipe = McpRecipe {
             command: server.command,
             args: server.args,
-            url: url.clone(),
+            url: server.url.clone(),
             cwd: server.cwd,
             env: server.env,
-            transport: if url.is_some() {
+            transport: if server.url.is_some() {
                 Some(TransportType::Http)
             } else {
                 Some(TransportType::Stdio)
@@ -88,7 +88,8 @@ pub fn add_mcp_to_config<P: AsRef<Path>>(
     let path = config_path.as_ref();
     let mut config: CodexConfig = if path.exists() {
         let content = fs::read_to_string(path)?;
-        toml::from_str(&content).unwrap_or_default()
+        toml::from_str(&content)
+            .with_context(|| format!("Failed to parse Codex TOML at {}. Aborting to prevent data loss.", path.display()))?
     } else {
         CodexConfig::default()
     };
@@ -104,9 +105,9 @@ pub fn add_mcp_to_config<P: AsRef<Path>>(
         command: recipe.command.clone(),
         args: recipe.args.clone(),
         url: recipe.url.clone(),
-        http_url: None,
         cwd: recipe.cwd.clone(),
         env: recipe.env.clone(),
+        extra: HashMap::new(),
     };
 
     config.mcp_servers.insert(key.clone(), server);
@@ -115,9 +116,9 @@ pub fn add_mcp_to_config<P: AsRef<Path>>(
         fs::create_dir_all(parent)?;
     }
     let toml_str = toml::to_string_pretty(&config)?;
-    let temp = format!("{}.tmp", path.display());
+    let temp = format!("{}.{}.tmp", path.display(), std::process::id());
     fs::write(&temp, toml_str)?;
-    fs::rename(temp, path)?;
+    fs::rename(&temp, path)?;
 
     Ok(key)
 }
@@ -129,7 +130,8 @@ pub fn remove_mcp_from_config<P: AsRef<Path>>(config_path: P, server_name: &str)
     }
 
     let content = fs::read_to_string(path)?;
-    let mut config: CodexConfig = toml::from_str(&content).unwrap_or_default();
+    let mut config: CodexConfig = toml::from_str(&content)
+        .with_context(|| format!("Failed to parse Codex TOML at {}. Aborting to prevent data loss.", path.display()))?;
     
     let key = if config.mcp_servers.contains_key(server_name) {
         server_name.to_string()
@@ -139,9 +141,9 @@ pub fn remove_mcp_from_config<P: AsRef<Path>>(config_path: P, server_name: &str)
     config.mcp_servers.remove(&key);
 
     let toml_str = toml::to_string_pretty(&config)?;
-    let temp = format!("{}.tmp", path.display());
+    let temp = format!("{}.{}.tmp", path.display(), std::process::id());
     fs::write(&temp, toml_str)?;
-    fs::rename(temp, path)?;
+    fs::rename(&temp, path)?;
 
     Ok(())
 }
@@ -153,7 +155,8 @@ pub fn set_mcp_enabled<P: AsRef<Path>>(config_path: P, server_name: &str, enable
     }
 
     let content = fs::read_to_string(path)?;
-    let mut config: CodexConfig = toml::from_str(&content).unwrap_or_default();
+    let mut config: CodexConfig = toml::from_str(&content)
+        .with_context(|| format!("Failed to parse Codex TOML at {}. Aborting to prevent data loss.", path.display()))?;
     
     let key = if config.mcp_servers.contains_key(server_name) {
         server_name.to_string()
@@ -164,9 +167,9 @@ pub fn set_mcp_enabled<P: AsRef<Path>>(config_path: P, server_name: &str, enable
     if let Some(server) = config.mcp_servers.get_mut(&key) {
         server.enabled = enabled;
         let toml_str = toml::to_string_pretty(&config)?;
-        let temp = format!("{}.tmp", path.display());
+        let temp = format!("{}.{}.tmp", path.display(), std::process::id());
         fs::write(&temp, toml_str)?;
-        fs::rename(temp, path)?;
+        fs::rename(&temp, path)?;
     }
 
     Ok(())

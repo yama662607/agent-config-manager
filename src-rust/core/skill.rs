@@ -371,7 +371,7 @@ pub fn skill_rename<P: AsRef<Path>>(
         let _ = save_skills_metadata(&meta);
     }
 
-    // 3. Rename/Redistribute across targets
+    // 3. Rename/Redistribute across targets where skill was actually present
     for &target in targets {
         if target == TargetName::Grok {
             let grok_config = get_agent_mcp_config_path(root, TargetName::Grok);
@@ -379,14 +379,17 @@ pub fn skill_rename<P: AsRef<Path>>(
             set_skill_disabled(&grok_config, new_name, false)?;
         } else {
             let old_target_dir = get_skill_path(root, target, old_name);
+            let existed = old_target_dir.exists() || fs::symlink_metadata(&old_target_dir).is_ok();
+            if !existed {
+                continue;
+            }
+
             let is_linked = fs::symlink_metadata(&old_target_dir).map_or(false, |m| m.file_type().is_symlink());
 
-            if old_target_dir.exists() || fs::symlink_metadata(&old_target_dir).is_ok() {
-                if is_linked {
-                    let _ = fs::remove_file(&old_target_dir);
-                } else {
-                    let _ = fs::remove_dir_all(&old_target_dir);
-                }
+            if is_linked {
+                let _ = fs::remove_file(&old_target_dir);
+            } else {
+                let _ = fs::remove_dir_all(&old_target_dir);
             }
 
             let mode = if is_linked {

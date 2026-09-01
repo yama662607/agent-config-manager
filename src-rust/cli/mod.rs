@@ -6,7 +6,7 @@ use crate::core::skill::{
 };
 use crate::core::validate::validate_skill_directory;
 use crate::paths::home_dir;
-use crate::types::{McpRecipe, TargetName, TransportType};
+use crate::types::{IssueSeverity, McpRecipe, TargetName, TransportType};
 use clap::{Args, Parser, Subcommand};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -101,9 +101,9 @@ pub enum SkillSubcommands {
     /// Add a skill from catalog to project
     Add {
         skill_id: String,
-        #[arg(long)]
+        #[arg(long, conflicts_with = "copy")]
         link: bool,
-        #[arg(long)]
+        #[arg(long, conflicts_with = "link")]
         copy: bool,
     },
     /// Update stale copied skills to latest catalog version (Roadmap Priority 1)
@@ -333,6 +333,7 @@ fn handle_skill(
         }
         SkillSubcommands::Validate { path } => {
             let issues = validate_skill_directory(&path)?;
+            let has_errors = issues.iter().any(|i| i.severity == IssueSeverity::Error);
             if json {
                 println!("{}", serde_json::to_string_pretty(&issues)?);
             } else {
@@ -342,11 +343,15 @@ fn handle_skill(
                 } else {
                     for issue in &issues {
                         match issue.severity {
-                            crate::types::IssueSeverity::Error => println!("  ✗ [Error] {}", issue.message),
-                            crate::types::IssueSeverity::Warning => println!("  ⚠ [Warning] {}", issue.message),
+                            IssueSeverity::Error => println!("  ✗ [Error] {}", issue.message),
+                            IssueSeverity::Warning => println!("  ⚠ [Warning] {}", issue.message),
                         }
                     }
                 }
+            }
+
+            if has_errors {
+                std::process::exit(1);
             }
         }
     }

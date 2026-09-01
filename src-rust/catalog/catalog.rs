@@ -5,6 +5,7 @@ use anyhow::Context;
 use regex::Regex;
 use std::collections::HashMap;
 use std::fs;
+use std::sync::OnceLock;
 
 /// Frontmatter parsed from a SKILL.md file
 #[derive(Debug, Clone, Default)]
@@ -14,9 +15,14 @@ pub struct SkillFrontmatter {
     pub license: Option<String>,
 }
 
+static FRONTMATTER_RE: OnceLock<Regex> = OnceLock::new();
+
 /// Parse YAML frontmatter from a SKILL.md string
 pub fn parse_skill_frontmatter(content: &str) -> SkillFrontmatter {
-    let re = Regex::new(r"(?s)^---\r?\n(.*?)\r?\n---\r?\n(.*)$").unwrap();
+    let re = FRONTMATTER_RE.get_or_init(|| {
+        Regex::new(r"(?s)^---\r?\n(.*?)\r?\n---(?:\r?\n(.*))?$").unwrap()
+    });
+
     if let Some(caps) = re.captures(content) {
         let yaml_text = caps.get(1).map_or("", |m| m.as_str());
         if let Ok(val) = serde_yaml::from_str::<serde_yaml::Value>(yaml_text) {
@@ -46,7 +52,9 @@ pub fn init_catalog() -> anyhow::Result<()> {
     if !catalog_path.exists() {
         let empty_catalog = CatalogFile::default();
         let toml_str = toml::to_string_pretty(&empty_catalog)?;
-        fs::write(&catalog_path, toml_str)?;
+        let temp = format!("{}.{}.tmp", catalog_path.display(), std::process::id());
+        fs::write(&temp, toml_str)?;
+        fs::rename(&temp, &catalog_path)?;
     }
 
     let skills_dir = get_catalog_skills_dir();
@@ -65,7 +73,8 @@ pub fn load_catalog() -> anyhow::Result<CatalogFile> {
     }
 
     let content = fs::read_to_string(&catalog_path).context("Failed to read catalog.toml")?;
-    let mut catalog: CatalogFile = toml::from_str(&content).unwrap_or_default();
+    let mut catalog: CatalogFile = toml::from_str(&content)
+        .with_context(|| format!("Failed to parse catalog.toml at {}", catalog_path.display()))?;
 
     // Rebuild skills map dynamically from ~/.acm/skills/
     let skills_dir = get_catalog_skills_dir();
@@ -126,9 +135,9 @@ pub fn write_catalog_atomic(catalog: &CatalogFile) -> anyhow::Result<()> {
     }
 
     let toml_str = toml::to_string_pretty(catalog)?;
-    let temp = format!("{}.tmp", catalog_path.display());
+    let temp = format!("{}.{}.tmp", catalog_path.display(), std::process::id());
     fs::write(&temp, toml_str)?;
-    fs::rename(temp, &catalog_path)?;
+    fs::rename(&temp, &catalog_path)?;
     Ok(())
 }
 
@@ -195,9 +204,9 @@ pub fn add_skill(id: &str, content: &str) -> anyhow::Result<SkillCatalogEntry> {
     fs::create_dir_all(&skill_dir)?;
 
     let skill_md = skill_dir.join("SKILL.md");
-    let temp = format!("{}.tmp", skill_md.display());
+    let temp = format!("{}.{}.tmp", skill_md.display(), std::process::id());
     fs::write(&temp, content)?;
-    fs::rename(temp, &skill_md)?;
+    fs::rename(&temp, &skill_md)?;
 
     let fm = parse_skill_frontmatter(content);
     let entry = SkillCatalogEntry {

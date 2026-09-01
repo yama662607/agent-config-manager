@@ -18,6 +18,8 @@ pub struct AntigravityMcpServer {
     pub cwd: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub env: Option<HashMap<String, String>>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -35,7 +37,8 @@ pub fn get_mcp_servers<P: AsRef<Path>>(config_path: P) -> anyhow::Result<HashMap
     }
 
     let content = fs::read_to_string(path).context("Failed to read Antigravity config")?;
-    let config: AntigravityConfig = serde_json::from_str(&content).unwrap_or_default();
+    let config: AntigravityConfig = serde_json::from_str(&content)
+        .with_context(|| format!("Failed to parse Antigravity JSON at {}", path.display()))?;
 
     let mut result = HashMap::new();
     for (name, server) in config.mcp_servers {
@@ -65,7 +68,8 @@ pub fn add_mcp_to_config<P: AsRef<Path>>(
     let path = config_path.as_ref();
     let mut config: AntigravityConfig = if path.exists() {
         let content = fs::read_to_string(path)?;
-        serde_json::from_str(&content).unwrap_or_default()
+        serde_json::from_str(&content)
+            .with_context(|| format!("Failed to parse Antigravity JSON at {}. Aborting to prevent data loss.", path.display()))?
     } else {
         AntigravityConfig::default()
     };
@@ -76,6 +80,7 @@ pub fn add_mcp_to_config<P: AsRef<Path>>(
         server_url: recipe.url.clone(),
         cwd: recipe.cwd.clone(),
         env: recipe.env.clone(),
+        extra: HashMap::new(),
     };
 
     config.mcp_servers.insert(server_name.to_string(), server);
@@ -84,9 +89,9 @@ pub fn add_mcp_to_config<P: AsRef<Path>>(
         fs::create_dir_all(parent)?;
     }
     let json = serde_json::to_string_pretty(&config)?;
-    let temp = format!("{}.tmp", path.display());
+    let temp = format!("{}.{}.tmp", path.display(), std::process::id());
     fs::write(&temp, json)?;
-    fs::rename(temp, path)?;
+    fs::rename(&temp, path)?;
 
     Ok(server_name.to_string())
 }
@@ -98,13 +103,14 @@ pub fn remove_mcp_from_config<P: AsRef<Path>>(config_path: P, server_name: &str)
     }
 
     let content = fs::read_to_string(path)?;
-    let mut config: AntigravityConfig = serde_json::from_str(&content).unwrap_or_default();
+    let mut config: AntigravityConfig = serde_json::from_str(&content)
+        .with_context(|| format!("Failed to parse Antigravity JSON at {}. Aborting to prevent data loss.", path.display()))?;
     config.mcp_servers.remove(server_name);
 
     let json = serde_json::to_string_pretty(&config)?;
-    let temp = format!("{}.tmp", path.display());
+    let temp = format!("{}.{}.tmp", path.display(), std::process::id());
     fs::write(&temp, json)?;
-    fs::rename(temp, path)?;
+    fs::rename(&temp, path)?;
 
     Ok(())
 }

@@ -1,6 +1,10 @@
 use crate::types::{IssueSeverity, ValidationIssue};
 use regex::Regex;
 use std::path::Path;
+use std::sync::OnceLock;
+
+static SKILL_NAME_RE: OnceLock<Regex> = OnceLock::new();
+static FRONTMATTER_RE: OnceLock<Regex> = OnceLock::new();
 
 /// Validate a skill name to prevent path traversal and shell issues
 pub fn validate_skill_name(name: &str) -> anyhow::Result<()> {
@@ -11,7 +15,7 @@ pub fn validate_skill_name(name: &str) -> anyhow::Result<()> {
         anyhow::bail!("Skill name too long (max 100 characters)");
     }
 
-    let re = Regex::new(r"^[a-zA-Z0-9._-]+$").unwrap();
+    let re = SKILL_NAME_RE.get_or_init(|| Regex::new(r"^[a-zA-Z0-9._-]+$").unwrap());
     if !re.is_match(name) {
         anyhow::bail!("Skill name must contain only alphanumeric characters, hyphens, underscores, and dots");
     }
@@ -71,7 +75,10 @@ pub fn validate_skill_directory<P: AsRef<Path>>(skill_dir: P) -> anyhow::Result<
 pub fn validate_skill_content(content: &str, expected_dir_name: &str) -> Vec<ValidationIssue> {
     let mut issues = Vec::new();
 
-    let re = Regex::new(r"(?s)^---\r?\n(.*?)\r?\n---\r?\n(.*)$").unwrap();
+    let re = FRONTMATTER_RE.get_or_init(|| {
+        Regex::new(r"(?s)^---\r?\n(.*?)\r?\n---(?:\r?\n(.*))?$").unwrap()
+    });
+
     let caps = match re.captures(content) {
         Some(c) => c,
         None => {

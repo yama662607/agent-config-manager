@@ -18,6 +18,8 @@ pub struct GrokMcpServer {
     pub url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub env: Option<HashMap<String, String>>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, toml::Value>,
 }
 
 fn default_true() -> bool {
@@ -30,6 +32,8 @@ pub struct GrokSkillsConfig {
     pub paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub disabled: Vec<String>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, toml::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -63,7 +67,8 @@ pub fn get_mcp_servers<P: AsRef<Path>>(config_path: P) -> anyhow::Result<HashMap
     }
 
     let content = fs::read_to_string(path).context("Failed to read Grok config")?;
-    let config: GrokConfig = toml::from_str(&content).unwrap_or_default();
+    let config: GrokConfig = toml::from_str(&content)
+        .with_context(|| format!("Failed to parse Grok TOML at {}", path.display()))?;
 
     let mut result = HashMap::new();
     for (name, server) in config.mcp_servers {
@@ -93,7 +98,8 @@ pub fn add_mcp_to_config<P: AsRef<Path>>(
     let path = config_path.as_ref();
     let mut config: GrokConfig = if path.exists() {
         let content = fs::read_to_string(path)?;
-        toml::from_str(&content).unwrap_or_default()
+        toml::from_str(&content)
+            .with_context(|| format!("Failed to parse Grok TOML at {}. Aborting to prevent data loss.", path.display()))?
     } else {
         GrokConfig::default()
     };
@@ -110,6 +116,7 @@ pub fn add_mcp_to_config<P: AsRef<Path>>(
         args: recipe.args.clone(),
         url: recipe.url.clone(),
         env: recipe.env.clone(),
+        extra: HashMap::new(),
     };
 
     config.mcp_servers.insert(key.clone(), server);
@@ -118,9 +125,9 @@ pub fn add_mcp_to_config<P: AsRef<Path>>(
         fs::create_dir_all(parent)?;
     }
     let toml_str = toml::to_string_pretty(&config)?;
-    let temp = format!("{}.tmp", path.display());
+    let temp = format!("{}.{}.tmp", path.display(), std::process::id());
     fs::write(&temp, toml_str)?;
-    fs::rename(temp, path)?;
+    fs::rename(&temp, path)?;
 
     Ok(key)
 }
@@ -132,7 +139,8 @@ pub fn remove_mcp_from_config<P: AsRef<Path>>(config_path: P, server_name: &str)
     }
 
     let content = fs::read_to_string(path)?;
-    let mut config: GrokConfig = toml::from_str(&content).unwrap_or_default();
+    let mut config: GrokConfig = toml::from_str(&content)
+        .with_context(|| format!("Failed to parse Grok TOML at {}. Aborting to prevent data loss.", path.display()))?;
     
     let key = if config.mcp_servers.contains_key(server_name) {
         server_name.to_string()
@@ -142,9 +150,9 @@ pub fn remove_mcp_from_config<P: AsRef<Path>>(config_path: P, server_name: &str)
     config.mcp_servers.remove(&key);
 
     let toml_str = toml::to_string_pretty(&config)?;
-    let temp = format!("{}.tmp", path.display());
+    let temp = format!("{}.{}.tmp", path.display(), std::process::id());
     fs::write(&temp, toml_str)?;
-    fs::rename(temp, path)?;
+    fs::rename(&temp, path)?;
 
     Ok(())
 }
@@ -156,7 +164,8 @@ pub fn set_mcp_enabled<P: AsRef<Path>>(config_path: P, server_name: &str, enable
     }
 
     let content = fs::read_to_string(path)?;
-    let mut config: GrokConfig = toml::from_str(&content).unwrap_or_default();
+    let mut config: GrokConfig = toml::from_str(&content)
+        .with_context(|| format!("Failed to parse Grok TOML at {}. Aborting to prevent data loss.", path.display()))?;
     
     let key = if config.mcp_servers.contains_key(server_name) {
         server_name.to_string()
@@ -167,9 +176,9 @@ pub fn set_mcp_enabled<P: AsRef<Path>>(config_path: P, server_name: &str, enable
     if let Some(server) = config.mcp_servers.get_mut(&key) {
         server.enabled = enabled;
         let toml_str = toml::to_string_pretty(&config)?;
-        let temp = format!("{}.tmp", path.display());
+        let temp = format!("{}.{}.tmp", path.display(), std::process::id());
         fs::write(&temp, toml_str)?;
-        fs::rename(temp, path)?;
+        fs::rename(&temp, path)?;
     }
 
     Ok(())
@@ -180,7 +189,8 @@ pub fn register_skill_path<P: AsRef<Path>>(config_path: P, skill_dir: &str) -> a
     let path = config_path.as_ref();
     let mut config: GrokConfig = if path.exists() {
         let content = fs::read_to_string(path)?;
-        toml::from_str(&content).unwrap_or_default()
+        toml::from_str(&content)
+            .with_context(|| format!("Failed to parse Grok TOML at {}. Aborting to prevent data loss.", path.display()))?
     } else {
         GrokConfig::default()
     };
@@ -192,9 +202,9 @@ pub fn register_skill_path<P: AsRef<Path>>(config_path: P, skill_dir: &str) -> a
             fs::create_dir_all(parent)?;
         }
         let toml_str = toml::to_string_pretty(&config)?;
-        let temp = format!("{}.tmp", path.display());
+        let temp = format!("{}.{}.tmp", path.display(), std::process::id());
         fs::write(&temp, toml_str)?;
-        fs::rename(temp, path)?;
+        fs::rename(&temp, path)?;
         Ok(true)
     } else {
         Ok(false)
@@ -210,7 +220,8 @@ pub fn set_skill_disabled<P: AsRef<Path>>(config_path: P, skill_name: &str, disa
 
     let mut config: GrokConfig = if path.exists() {
         let content = fs::read_to_string(path)?;
-        toml::from_str(&content).unwrap_or_default()
+        toml::from_str(&content)
+            .with_context(|| format!("Failed to parse Grok TOML at {}. Aborting to prevent data loss.", path.display()))?
     } else {
         GrokConfig::default()
     };
@@ -228,9 +239,9 @@ pub fn set_skill_disabled<P: AsRef<Path>>(config_path: P, skill_name: &str, disa
         fs::create_dir_all(parent)?;
     }
     let toml_str = toml::to_string_pretty(&config)?;
-    let temp = format!("{}.tmp", path.display());
+    let temp = format!("{}.{}.tmp", path.display(), std::process::id());
     fs::write(&temp, toml_str)?;
-    fs::rename(temp, path)?;
+    fs::rename(&temp, path)?;
 
     Ok(())
 }

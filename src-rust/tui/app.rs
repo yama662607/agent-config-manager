@@ -3,7 +3,7 @@ use crate::core::mcp::{get_mcp_workspace_status, mcp_disable, mcp_enable, mcp_re
 use crate::core::skill::{get_skill_workspace_status, skill_add, skill_remove, skill_update};
 use crate::paths::{get_agent_mcp_config_path, get_catalog_skill_dir, get_skill_path, home_dir};
 use crate::types::{McpStatus, SkillPlacementState, SkillStatus, TargetName};
-use crossterm::event::{self, Event, KeyCode, KeyEvent};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::backend::CrosstermBackend;
@@ -87,6 +87,23 @@ impl App {
         if let Ok(report) = run_doctor(&self.project_root, false, &self.targets) {
             self.doctor_report = Some(report);
         }
+        self.clamp_indices();
+    }
+
+    fn clamp_indices(&mut self) {
+        let skill_count = self.filtered_skills().len();
+        if skill_count == 0 {
+            self.selected_skill_index = 0;
+        } else if self.selected_skill_index >= skill_count {
+            self.selected_skill_index = skill_count - 1;
+        }
+
+        let mcp_count = self.filtered_mcps().len();
+        if mcp_count == 0 {
+            self.selected_mcp_index = 0;
+        } else if self.selected_mcp_index >= mcp_count {
+            self.selected_mcp_index = mcp_count - 1;
+        }
     }
 
     pub fn toggle_scope(&mut self) {
@@ -166,6 +183,17 @@ impl App {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
+        // Only handle Press event (guards against KeyRelease on Windows / modern terminals)
+        if key.kind != KeyEventKind::Press {
+            return;
+        }
+
+        // Ctrl+C immediate graceful termination (prevents accidental 'c' toggle)
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+            self.running = false;
+            return;
+        }
+
         if self.search_mode {
             match key.code {
                 KeyCode::Esc | KeyCode::Enter => {
@@ -319,7 +347,6 @@ impl App {
                         if skill_md.exists() {
                             self.pending_editor_file = Some(skill_md);
                         } else {
-                            // Check target placement
                             let target_md = get_skill_path(&self.project_root, TargetName::Claude, &skill.name).join("SKILL.md");
                             if target_md.exists() {
                                 self.pending_editor_file = Some(target_md);
@@ -374,6 +401,14 @@ impl App {
 }
 
 pub fn run_tui(project_root: &Path, targets: &[TargetName]) -> anyhow::Result<()> {
+    // Install panic hook to restore terminal if panic occurs
+    let default_panic = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        default_panic(info);
+    }));
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -386,13 +421,23 @@ pub fn run_tui(project_root: &Path, targets: &[TargetName]) -> anyhow::Result<()
         terminal.draw(|f| crate::tui::ui::render(f, &mut app))?;
 
         if let Some(file_to_edit) = app.pending_editor_file.take() {
-            // Temporarily leave alternate screen and raw mode for editor
             disable_raw_mode()?;
             execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
             terminal.show_cursor()?;
 
-            let editor = std::env::var("EDITOR").unwrap_or_else(|_| "nano".to_string());
-            let _ = Command::new(&editor).arg(&file_to_edit).status();
+            let editor_env = std::env::var("VISUAL")
+                .or_else(|_| std::env::var("EDITOR"))
+                .unwrap_or_else(|_| "nano".to_string());
+
+            let mut parts = editor_env.split_whitespace();
+            if let Some(cmd) = parts.next() {
+                let mut cmd_builder = Command::new(cmd);
+                for arg in parts {
+                    cmd_builder.arg(arg);
+                }
+                cmd_builder.arg(&file_to_edit);
+                let _ = cmd_builder.status();
+            }
 
             enable_raw_mode()?;
             execute!(terminal.backend_mut(), EnterAlternateScreen)?;

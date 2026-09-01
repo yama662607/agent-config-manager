@@ -36,6 +36,8 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
+    /// Overview of installed skills and MCP servers for project/home
+    Status,
     /// Manage MCP servers
     Mcp(McpArgs),
     /// Manage skills
@@ -96,8 +98,12 @@ pub struct SkillArgs {
 
 #[derive(Subcommand, Debug)]
 pub enum SkillSubcommands {
-    /// Show skill status (default)
-    List,
+    /// Show skill status (default: installed skills)
+    List {
+        /// Show all catalog skills including uninstalled ones
+        #[arg(short = 'a', long)]
+        all: bool,
+    },
     /// Add a skill from catalog to project
     Add {
         skill_id: String,
@@ -159,7 +165,7 @@ pub struct ValidateArgs {
 }
 
 pub fn resolve_targets(cli_targets: Option<Vec<TargetName>>) -> Vec<TargetName> {
-    cli_targets.unwrap_or_else(|| vec![TargetName::Claude, TargetName::Codex, TargetName::Antigravity])
+    cli_targets.unwrap_or_else(|| vec![TargetName::Claude, TargetName::Codex, TargetName::Antigravity, TargetName::Grok])
 }
 
 pub fn get_project_root(home_flag: bool) -> PathBuf {
@@ -175,6 +181,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
     let root = get_project_root(cli.home);
 
     match cli.command {
+        Some(Commands::Status) => handle_status(&root, &targets, cli.home, cli.json)?,
         Some(Commands::Mcp(args)) => handle_mcp(args, &root, &targets, cli.json, cli.verbose)?,
         Some(Commands::Skill(args)) => handle_skill(args, &root, &targets, cli.home, cli.json, cli.verbose)?,
         Some(Commands::Doctor(args)) => handle_doctor(args, &root, &targets, cli.json)?,
@@ -183,22 +190,74 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
             handle_doctor(doc_args, &root, &targets, cli.json)?;
         }
         None => {
-            // No subcommand: if TTY, launch TUI, otherwise show status
+            // No subcommand: if TTY, launch TUI, otherwise show status overview
             if crossterm::tty::IsTty::is_tty(&std::io::stdout()) && !cli.json {
                 crate::tui::run_tui(&root, &targets)?;
             } else {
-                let status = get_skill_workspace_status(&root, &targets)?;
-                if cli.json {
-                    println!("{}", serde_json::to_string_pretty(&status)?);
-                } else {
-                    println!("Project: {}", status.project_root);
-                    println!("Skills ({} total, {} enabled):", status.total_count, status.enabled_count);
-                    for s in status.skills {
-                        println!("  - {} ({:?})", s.name, s.targets);
-                    }
-                }
+                handle_status(&root, &targets, cli.home, cli.json)?;
             }
         }
+    }
+
+    Ok(())
+}
+
+fn handle_status(
+    root: &PathBuf,
+    targets: &[TargetName],
+    home_flag: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    let skill_status = get_skill_workspace_status(root, targets)?;
+    let mcp_status = get_mcp_workspace_status(root, targets)?;
+
+    if json {
+        let combined = serde_json::json!({
+            "scope": if home_flag { "global" } else { "project" },
+            "project_root": root.display().to_string(),
+            "skills": skill_status,
+            "mcps": mcp_status,
+        });
+        println!("{}", serde_json::to_string_pretty(&combined)?);
+    } else {
+        let scope_label = if home_flag { "Global (~/)" } else { "Project" };
+        let targets_str = targets.iter().map(|t| t.as_str()).collect::<Vec<_>>().join(", ");
+
+        println!("==================================================");
+        println!("  acm Status Overview — {}", scope_label);
+        println!("  Path:    {}", root.display());
+        println!("  Targets: {}", targets_str);
+        println!("==================================================");
+
+        println!("\n📦 Installed Skills ({}/{} enabled):", skill_status.enabled_count, skill_status.total_count);
+        let enabled_skills: Vec<_> = skill_status.skills.iter().filter(|s| s.enabled).collect();
+        if enabled_skills.is_empty() {
+            println!("  (No skills currently installed in this scope)");
+        } else {
+            for s in &enabled_skills {
+                let mut target_details = Vec::new();
+                for &t in targets {
+                    if let Some(st) = s.placement.get(&t) {
+                        if *st != crate::types::SkillPlacementState::Missing && *st != crate::types::SkillPlacementState::Unlinked {
+                            target_details.push(format!("{}:{:?}", t.short_code(), st));
+                        }
+                    }
+                }
+                println!("  ✓ {:<30} [{}]", s.name, target_details.join(" "));
+            }
+        }
+
+        println!("\n🔌 Configured MCP Servers ({}/{} enabled):", mcp_status.enabled_count, mcp_status.total_count);
+        if mcp_status.servers.is_empty() {
+            println!("  (No MCP servers configured in this scope)");
+        } else {
+            for m in &mcp_status.servers {
+                let targets_str = m.targets.iter().map(|t| t.as_str()).collect::<Vec<_>>().join(", ");
+                let icon = if m.enabled { "✓" } else { "✗" };
+                println!("  {} {:<30} (targets: {})", icon, m.name, targets_str);
+            }
+        }
+        println!("\nTip: Run `acm` (interactive TUI) or `acm -H status` for global home scope.");
     }
 
     Ok(())
@@ -272,17 +331,29 @@ fn handle_skill(
     json: bool,
     _verbose: bool,
 ) -> anyhow::Result<()> {
-    match args.command.unwrap_or(SkillSubcommands::List) {
-        SkillSubcommands::List => {
+    match args.command.unwrap_or(SkillSubcommands::List { all: false }) {
+        SkillSubcommands::List { all } => {
             let status = get_skill_workspace_status(root, targets)?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&status)?);
             } else {
-                println!("Project: {}", status.project_root);
-                println!("Skills ({} total, {} enabled):\n", status.total_count, status.enabled_count);
-                for s in status.skills {
+                println!("Context: {}", root.display());
+                println!("Skills ({} installed / {} catalog total):\n", status.enabled_count, status.total_count);
+
+                let (enabled_skills, uninstalled_skills): (Vec<_>, Vec<_>) = status.skills.into_iter().partition(|s| s.enabled);
+
+                for s in &enabled_skills {
                     let targets_str = s.targets.iter().map(|t| t.as_str()).collect::<Vec<_>>().join(", ");
-                    println!("  {} {} (targets: {}, source: {})", if s.enabled { "✓" } else { "✗" }, s.name, targets_str, s.source);
+                    println!("  ✓ {:<30} (targets: {}, source: {})", s.name, targets_str, s.source);
+                }
+
+                if all {
+                    println!("\nUninstalled Catalog Skills:");
+                    for s in &uninstalled_skills {
+                        println!("  ✗ {:<30} (source: {})", s.name, s.source);
+                    }
+                } else if !uninstalled_skills.is_empty() {
+                    println!("\n  ... and {} uninstalled skills in catalog (use `acm skill list --all` to view all)", uninstalled_skills.len());
                 }
             }
         }

@@ -222,39 +222,89 @@ describe('Linked catalog entries (development repositories)', () => {
   });
 });
 
+/**
+ * `~/.acm/skills/<id>` is a fixed address in front of a movable catalog, so a
+ * distribution should hold that address rather than the catalog's current path.
+ *
+ * The entrance behind the address was created by hand on the first machine and
+ * so never existed on the second, where distributions silently linked straight
+ * at the catalog instead. It is opened on demand now.
+ *
+ * These tests run against a fake home: the earlier version of them read the
+ * real `~/.acm` and wrote a probe skill into the real catalog.
+ */
 describe('Stable link targets', () => {
-  it('points a link at the state directory when it leads to the same content', async () => {
-    // ~/.acm/skills/<id> is a fixed address in front of a movable catalog.
-    // Distributions should hold that address, not the catalog's current path.
-    const home = os.homedir();
-    const stateSkills = path.join(home, '.acm', 'skills');
+  const FAKE_HOME = path.join(TEST_DIR, 'home');
+  const STATE_SKILLS = path.join(FAKE_HOME, '.acm', 'skills');
+  const savedHome = process.env.HOME;
+  const savedCatalog = process.env.ACM_CATALOG_DIR;
 
-    let entrance: string;
-    try {
-      entrance = await fs.realpath(stateSkills);
-    } catch {
-      return; // No state directory on this machine; nothing to assert.
-    }
-
-    const catalogSkill = path.join(entrance, 'link-target-probe');
-    await fs.mkdir(catalogSkill, { recursive: true });
-    await fs.writeFile(path.join(catalogSkill, 'SKILL.md'), '---\nname: probe\n---\n\nx\n');
-
-    try {
-      await copySkillDirToConfig(PROJECT_DIR, 'claude', 'link-target-probe', catalogSkill, 'link');
-
-      const link = await fs.readlink(getSkillDir(PROJECT_DIR, 'claude', 'link-target-probe'));
-      assert.strictEqual(link, path.join(stateSkills, 'link-target-probe'));
-    } finally {
-      await fs.rm(catalogSkill, { recursive: true, force: true });
-    }
+  beforeEach(async () => {
+    await fs.rm(TEST_DIR, { recursive: true, force: true });
+    await fs.mkdir(PROJECT_DIR, { recursive: true });
+    await fs.mkdir(FAKE_HOME, { recursive: true });
+    process.env.HOME = FAKE_HOME;
+    process.env.ACM_CATALOG_DIR = path.dirname(CATALOG_DIR);
   });
 
-  it('falls back to the source path when the state directory differs', async () => {
+  after(() => {
+    if (savedHome !== undefined) process.env.HOME = savedHome;
+    else delete process.env.HOME;
+    if (savedCatalog !== undefined) process.env.ACM_CATALOG_DIR = savedCatalog;
+    else delete process.env.ACM_CATALOG_DIR;
+  });
+
+  it('opens the entrance and links through it', async () => {
+    const sourceDir = await writeCatalogSkill();
+
+    await copySkillDirToConfig(PROJECT_DIR, 'claude', SKILL_ID, sourceDir, 'link');
+
+    assert.strictEqual(await fs.readlink(STATE_SKILLS), CATALOG_DIR);
+    assert.strictEqual(
+      await fs.readlink(getSkillDir(PROJECT_DIR, 'claude', SKILL_ID)),
+      path.join(STATE_SKILLS, SKILL_ID)
+    );
+  });
+
+  it('reaches the skill through the address it wrote', async () => {
+    const sourceDir = await writeCatalogSkill();
+
+    await copySkillDirToConfig(PROJECT_DIR, 'claude', SKILL_ID, sourceDir, 'link');
+
+    const reached = path.join(getSkillDir(PROJECT_DIR, 'claude', SKILL_ID), 'SKILL.md');
+    assert.match(await fs.readFile(reached, 'utf8'), /name: demo-skill/);
+  });
+
+  it('leaves an entrance that is already there alone', async () => {
+    const elsewhere = path.join(TEST_DIR, 'other-skills');
+    await fs.mkdir(elsewhere, { recursive: true });
+    await fs.mkdir(path.dirname(STATE_SKILLS), { recursive: true });
+    await fs.symlink(elsewhere, STATE_SKILLS);
+
     const sourceDir = await writeCatalogSkill();
     await copySkillDirToConfig(PROJECT_DIR, 'claude', SKILL_ID, sourceDir, 'link');
 
-    const link = await fs.readlink(getSkillDir(PROJECT_DIR, 'claude', SKILL_ID));
-    assert.strictEqual(link, path.resolve(sourceDir));
+    // The entrance leads somewhere else, so the address is not usable and the
+    // catalog's own path is written instead.
+    assert.strictEqual(await fs.readlink(STATE_SKILLS), elsewhere);
+    assert.strictEqual(
+      await fs.readlink(getSkillDir(PROJECT_DIR, 'claude', SKILL_ID)),
+      path.resolve(sourceDir)
+    );
+  });
+
+  it('writes no entrance when the catalog is the state directory', async () => {
+    // The default layout: ~/.acm *is* the catalog, so the address is already
+    // the catalog and a link would point a directory at itself.
+    const stateCatalog = path.join(FAKE_HOME, '.acm');
+    process.env.ACM_CATALOG_DIR = stateCatalog;
+
+    const sourceDir = path.join(stateCatalog, 'skills', SKILL_ID);
+    await fs.mkdir(sourceDir, { recursive: true });
+    await fs.writeFile(path.join(sourceDir, 'SKILL.md'), '---\nname: demo-skill\n---\n\nbody\n');
+
+    await copySkillDirToConfig(PROJECT_DIR, 'claude', SKILL_ID, sourceDir, 'link');
+
+    assert.ok((await fs.lstat(STATE_SKILLS)).isDirectory());
   });
 });

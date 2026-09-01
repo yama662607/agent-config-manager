@@ -380,6 +380,35 @@ async function getGrokRegisteredSkills(
 }
 
 /**
+ * Open the state directory's entrance to the catalog, if it is not open yet.
+ *
+ * The entrance is what makes `~/.acm/skills/<id>` a usable address, so a
+ * machine that never had one distributed links straight at the catalog and
+ * quietly loses the indirection below. It was created by hand on the first
+ * machine and therefore never reached the second one.
+ *
+ * Does nothing when the catalog *is* the state directory, which is the default
+ * layout: there the address is the catalog and no link is wanted.
+ */
+async function ensureStateEntrance(): Promise<void> {
+  const { getCatalogDir } = await import('./acm-config.js');
+  const catalogSkills = path.join(getCatalogDir(), 'skills');
+  const stateSkills = path.join(os.homedir(), '.acm', 'skills');
+
+  if (path.resolve(catalogSkills) === path.resolve(stateSkills)) return;
+
+  try {
+    await fs.lstat(stateSkills);
+    return; // Already there — a link, or a directory we must not replace.
+  } catch {
+    // Absent: this machine has no entrance yet.
+  }
+
+  await fs.mkdir(path.dirname(stateSkills), { recursive: true });
+  await fs.symlink(catalogSkills, stateSkills);
+}
+
+/**
  * Prefer the state directory as the link target when it leads to the same
  * content.
  *
@@ -394,6 +423,11 @@ async function getGrokRegisteredSkills(
 async function stableLinkTarget(sourceDir: string, skillId: string): Promise<string> {
   const resolved = path.resolve(sourceDir);
   const viaState = path.join(os.homedir(), '.acm', 'skills', skillId);
+
+  await ensureStateEntrance().catch(() => {
+    // An entrance we cannot open is not a reason to refuse the distribution;
+    // the catalog's own path below works, it just moves less well.
+  });
 
   try {
     const [a, b] = await Promise.all([fs.realpath(viaState), fs.realpath(resolved)]);

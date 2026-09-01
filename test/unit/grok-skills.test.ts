@@ -136,3 +136,49 @@ describe('Grok skill registration', () => {
     assert.deepStrictEqual(await getSkills(PROJECT_DIR, 'claude'), {});
   });
 });
+
+/**
+ * `~/.acm/skills` is a symlink to the catalog, so the state directory's
+ * entrance and the catalog's own path name one directory in two ways. Comparing
+ * the written strings let both be registered, and Grok scanned every catalog
+ * skill twice.
+ */
+describe('Registering the same directory by two names', () => {
+  const ENTRANCE = path.join(TEST_DIR, 'state', 'skills');
+
+  beforeEach(async () => {
+    await fs.rm(TEST_DIR, { recursive: true, force: true });
+    await fs.mkdir(path.dirname(CONFIG_PATH), { recursive: true });
+    await fs.mkdir(CATALOG_SKILLS, { recursive: true });
+    await fs.mkdir(path.dirname(ENTRANCE), { recursive: true });
+    await fs.symlink(CATALOG_SKILLS, ENTRANCE);
+  });
+
+  it('registers a directory reached through a symlink only once', async () => {
+    assert.strictEqual(await registerSkillPath(CONFIG_PATH, CATALOG_SKILLS), true);
+    assert.strictEqual(await registerSkillPath(CONFIG_PATH, ENTRANCE), false);
+
+    assert.deepStrictEqual(await getRegisteredSkillPaths(CONFIG_PATH), [CATALOG_SKILLS]);
+  });
+
+  it('reports the catalog as registered when the entrance was registered', async () => {
+    await registerSkillPath(CONFIG_PATH, ENTRANCE);
+
+    assert.strictEqual(await isSkillPathRegistered(CONFIG_PATH, CATALOG_SKILLS), true);
+  });
+
+  it('unregisters through either name', async () => {
+    await registerSkillPath(CONFIG_PATH, ENTRANCE);
+
+    assert.strictEqual(await unregisterSkillPath(CONFIG_PATH, CATALOG_SKILLS), true);
+    assert.deepStrictEqual(await getRegisteredSkillPaths(CONFIG_PATH), []);
+  });
+
+  it('still compares a path that does not exist yet', async () => {
+    // A machine can be configured before its catalog is cloned.
+    const absent = path.join(TEST_DIR, 'not-cloned', 'skills');
+
+    assert.strictEqual(await registerSkillPath(CONFIG_PATH, absent), true);
+    assert.strictEqual(await registerSkillPath(CONFIG_PATH, absent), false);
+  });
+});

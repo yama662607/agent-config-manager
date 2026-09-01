@@ -508,7 +508,11 @@ shows which one is in effect.
 skill points straight at it. Only when the catalog is moved elsewhere does `~/.acm`
 become an indirection: distribution links keep pointing at `~/.acm/skills/<id>` as
 long as it resolves to the same directory, so relocating the catalog does not break
-anything already distributed.
+anything already distributed. That entrance is created the first time a skill is
+linked, so a second machine needs no manual setup.
+
+See [docs/state-directory-and-catalog.md](docs/state-directory-and-catalog.md) for why
+the two directories are separate and what lives in each.
 
 `config.toml` also sets the targets used when a command names none:
 

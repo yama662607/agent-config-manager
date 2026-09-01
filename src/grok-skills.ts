@@ -43,15 +43,36 @@ async function writeConfig(configPath: string, config: GrokConfig): Promise<void
 }
 
 /**
+ * The identity of a directory, for comparing two registrations.
+ *
+ * Comparing the written strings is not enough: `~/.acm/skills` is a symlink to
+ * the catalog, so the state directory's entrance and the catalog's own path
+ * name one directory in two ways and both got registered — Grok then scanned
+ * every catalog skill twice. Resolving links makes the two agree.
+ *
+ * A path that does not exist yet keeps its lexical form, because a machine can
+ * be configured before its catalog is cloned.
+ */
+async function directoryIdentity(p: string): Promise<string> {
+  const resolved = path.resolve(expandHome(p));
+  try {
+    return await fs.realpath(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
+/**
  * Register a skills directory with Grok.
  * Returns true when the config changed, false when it was already registered.
  */
 export async function registerSkillPath(configPath: string, skillsDir: string): Promise<boolean> {
   const config = await readConfig(configPath);
-  const resolved = path.resolve(skillsDir);
+  const target = await directoryIdentity(skillsDir);
 
   const paths = config.skills?.paths ?? [];
-  if (paths.some((p) => path.resolve(expandHome(p)) === resolved)) {
+  const identities = await Promise.all(paths.map(directoryIdentity));
+  if (identities.includes(target)) {
     return false;
   }
 
@@ -63,10 +84,11 @@ export async function registerSkillPath(configPath: string, skillsDir: string): 
 /** Remove a skills directory registration. Returns true when the config changed. */
 export async function unregisterSkillPath(configPath: string, skillsDir: string): Promise<boolean> {
   const config = await readConfig(configPath);
-  const resolved = path.resolve(skillsDir);
+  const target = await directoryIdentity(skillsDir);
 
   const paths = config.skills?.paths ?? [];
-  const remaining = paths.filter((p) => path.resolve(expandHome(p)) !== resolved);
+  const identities = await Promise.all(paths.map(directoryIdentity));
+  const remaining = paths.filter((_, i) => identities[i] !== target);
   if (remaining.length === paths.length) return false;
 
   config.skills = { ...config.skills, paths: remaining };
@@ -77,8 +99,9 @@ export async function unregisterSkillPath(configPath: string, skillsDir: string)
 /** Whether a skills directory is registered with Grok. */
 export async function isSkillPathRegistered(configPath: string, skillsDir: string): Promise<boolean> {
   const config = await readConfig(configPath);
-  const resolved = path.resolve(skillsDir);
-  return (config.skills?.paths ?? []).some((p) => path.resolve(expandHome(p)) === resolved);
+  const target = await directoryIdentity(skillsDir);
+  const identities = await Promise.all((config.skills?.paths ?? []).map(directoryIdentity));
+  return identities.includes(target);
 }
 
 /**

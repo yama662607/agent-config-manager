@@ -15,7 +15,6 @@ import type { PluginEntry, PluginsMetadataFile } from './types.js';
 // Constants
 // ============================================================================
 
-const METADATA_DIR = '.acm';
 const METADATA_FILE = 'plugins-metadata.toml';
 const METADATA_VERSION = '1.0';
 

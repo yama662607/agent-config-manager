@@ -1,8 +1,13 @@
 use crate::core::doctor::{run_doctor, DiagnosticReport};
 use crate::core::mcp::{get_mcp_workspace_status, mcp_disable, mcp_enable, mcp_remove};
+use crate::core::plugin::{
+    get_plugin_workspace_status, plugin_install, plugin_remove,
+};
 use crate::core::skill::{get_skill_workspace_status, skill_add, skill_remove, skill_update};
-use crate::paths::{get_agent_mcp_config_path, get_catalog_skill_dir, get_skill_path, home_dir};
-use crate::types::{McpStatus, SkillPlacementState, SkillStatus, TargetName};
+use crate::paths::{
+    get_agent_mcp_config_path, get_catalog_plugin_dir, get_catalog_skill_dir, get_skill_path, home_dir,
+};
+use crate::types::{McpStatus, PluginPlacementState, PluginStatus, SkillPlacementState, SkillStatus, TargetName};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
@@ -16,6 +21,7 @@ use std::process::Command;
 pub enum ActiveTab {
     Skills,
     Mcp,
+    Plugins,
     Doctor,
 }
 
@@ -34,6 +40,10 @@ pub struct App {
     // MCP state
     pub mcps: Vec<McpStatus>,
     pub selected_mcp_index: usize,
+
+    // Plugin state
+    pub plugins: Vec<PluginStatus>,
+    pub selected_plugin_index: usize,
 
     // Doctor state
     pub doctor_report: Option<DiagnosticReport>,
@@ -66,6 +76,8 @@ impl App {
             selected_skill_index: 0,
             mcps: Vec::new(),
             selected_mcp_index: 0,
+            plugins: Vec::new(),
+            selected_plugin_index: 0,
             doctor_report: None,
             search_mode: false,
             search_query: String::new(),
@@ -83,6 +95,9 @@ impl App {
         }
         if let Ok(mcp_ws) = get_mcp_workspace_status(&self.project_root, &self.targets) {
             self.mcps = mcp_ws.servers;
+        }
+        if let Ok(plugin_ws) = get_plugin_workspace_status(&self.project_root, &self.targets) {
+            self.plugins = plugin_ws.plugins;
         }
         if let Ok(report) = run_doctor(&self.project_root, false, &self.targets) {
             self.doctor_report = Some(report);
@@ -104,6 +119,13 @@ impl App {
         } else if self.selected_mcp_index >= mcp_count {
             self.selected_mcp_index = mcp_count - 1;
         }
+
+        let plugin_count = self.filtered_plugins().len();
+        if plugin_count == 0 {
+            self.selected_plugin_index = 0;
+        } else if self.selected_plugin_index >= plugin_count {
+            self.selected_plugin_index = plugin_count - 1;
+        }
     }
 
     pub fn toggle_scope(&mut self) {
@@ -117,6 +139,7 @@ impl App {
         }
         self.selected_skill_index = 0;
         self.selected_mcp_index = 0;
+        self.selected_plugin_index = 0;
         self.preview_scroll = 0;
         self.refresh();
     }
@@ -145,6 +168,22 @@ impl App {
         }
     }
 
+    pub fn filtered_plugins(&self) -> Vec<&PluginStatus> {
+        if self.search_query.is_empty() {
+            self.plugins.iter().collect()
+        } else {
+            let q = self.search_query.to_lowercase();
+            self.plugins
+                .iter()
+                .filter(|p| {
+                    p.name.to_lowercase().contains(&q)
+                        || p.description.to_lowercase().contains(&q)
+                        || p.skills.iter().any(|s| s.to_lowercase().contains(&q))
+                })
+                .collect()
+        }
+    }
+
     pub fn nav_down(&mut self) {
         self.preview_scroll = 0;
         match self.active_tab {
@@ -158,6 +197,12 @@ impl App {
                 let count = self.filtered_mcps().len();
                 if count > 0 {
                     self.selected_mcp_index = (self.selected_mcp_index + 1) % count;
+                }
+            }
+            ActiveTab::Plugins => {
+                let count = self.filtered_plugins().len();
+                if count > 0 {
+                    self.selected_plugin_index = (self.selected_plugin_index + 1) % count;
                 }
             }
             ActiveTab::Doctor => {}
@@ -184,6 +229,16 @@ impl App {
                         count - 1
                     } else {
                         self.selected_mcp_index - 1
+                    };
+                }
+            }
+            ActiveTab::Plugins => {
+                let count = self.filtered_plugins().len();
+                if count > 0 {
+                    self.selected_plugin_index = if self.selected_plugin_index == 0 {
+                        count - 1
+                    } else {
+                        self.selected_plugin_index - 1
                     };
                 }
             }
@@ -224,12 +279,29 @@ impl App {
                     self.refresh();
                 }
             }
+            ActiveTab::Plugins => {
+                let filtered = self.filtered_plugins();
+                if let Some(plugin) = filtered.get(self.selected_plugin_index) {
+                    let id = plugin.id.clone();
+                    let placement = plugin.placement.get(&target).copied().unwrap_or(PluginPlacementState::Missing);
+                    let is_active = placement != PluginPlacementState::Missing && placement != PluginPlacementState::Broken;
+
+                    if is_active {
+                        let _ = plugin_remove(&self.project_root, &id, &[target]);
+                        self.status_message = Some(format!("Removed plugin {} from {}", id, target));
+                    } else {
+                        let _ = plugin_install(&self.project_root, &id, &[target]);
+                        self.status_message = Some(format!("Installed plugin {} on {}", id, target));
+                    }
+                    self.refresh();
+                }
+            }
             ActiveTab::Doctor => {}
         }
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
-        // Only handle Press event (guards against KeyRelease on Windows / modern terminals)
+        // Only handle Press event
         if key.kind != KeyEventKind::Press {
             return;
         }
@@ -240,7 +312,7 @@ impl App {
             return;
         }
 
-        // Ctrl+N / Ctrl+P navigation (works both in search mode and normal mode)
+        // Ctrl+N / Ctrl+P navigation
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
                 KeyCode::Char('n') => {
@@ -270,12 +342,14 @@ impl App {
                     self.search_query.pop();
                     self.selected_skill_index = 0;
                     self.selected_mcp_index = 0;
+                    self.selected_plugin_index = 0;
                     self.preview_scroll = 0;
                 }
                 KeyCode::Char(c) => {
                     self.search_query.push(c);
                     self.selected_skill_index = 0;
                     self.selected_mcp_index = 0;
+                    self.selected_plugin_index = 0;
                     self.preview_scroll = 0;
                 }
                 _ => {}
@@ -290,7 +364,8 @@ impl App {
             KeyCode::Tab => {
                 self.active_tab = match self.active_tab {
                     ActiveTab::Skills => ActiveTab::Mcp,
-                    ActiveTab::Mcp => ActiveTab::Doctor,
+                    ActiveTab::Mcp => ActiveTab::Plugins,
+                    ActiveTab::Plugins => ActiveTab::Doctor,
                     ActiveTab::Doctor => ActiveTab::Skills,
                 };
                 self.preview_scroll = 0;
@@ -304,6 +379,10 @@ impl App {
                 self.preview_scroll = 0;
             }
             KeyCode::Char('3') => {
+                self.active_tab = ActiveTab::Plugins;
+                self.preview_scroll = 0;
+            }
+            KeyCode::Char('4') => {
                 self.active_tab = ActiveTab::Doctor;
                 self.preview_scroll = 0;
             }
@@ -360,6 +439,20 @@ impl App {
                         self.refresh();
                     }
                 }
+                ActiveTab::Plugins => {
+                    let filtered = self.filtered_plugins();
+                    if let Some(plugin) = filtered.get(self.selected_plugin_index) {
+                        let id = plugin.id.clone();
+                        if plugin.enabled {
+                            let _ = plugin_remove(&self.project_root, &id, &self.targets);
+                            self.status_message = Some(format!("Disabled plugin: {}", id));
+                        } else {
+                            let _ = plugin_install(&self.project_root, &id, &self.targets);
+                            self.status_message = Some(format!("Enabled plugin: {}", id));
+                        }
+                        self.refresh();
+                    }
+                }
                 ActiveTab::Doctor => {}
             },
             // Target specific toggles
@@ -389,6 +482,23 @@ impl App {
                         self.pending_editor_file = Some(config_path);
                     }
                 }
+                ActiveTab::Plugins => {
+                    let filtered = self.filtered_plugins();
+                    if let Some(plugin) = filtered.get(self.selected_plugin_index) {
+                        let pdir = get_catalog_plugin_dir(&plugin.id);
+                        let manifest = pdir.join(".claude-plugin").join("plugin.json");
+                        if manifest.exists() {
+                            self.pending_editor_file = Some(manifest);
+                        } else {
+                            let root_m = pdir.join("plugin.json");
+                            if root_m.exists() {
+                                self.pending_editor_file = Some(root_m);
+                            } else {
+                                self.pending_editor_file = Some(pdir);
+                            }
+                        }
+                    }
+                }
                 ActiveTab::Doctor => {}
             },
             // Update stale copies
@@ -413,8 +523,8 @@ impl App {
                 }
             }
             // Delete
-            KeyCode::Char('d') => {
-                if self.active_tab == ActiveTab::Skills {
+            KeyCode::Char('d') => match self.active_tab {
+                ActiveTab::Skills => {
                     let filtered = self.filtered_skills();
                     if let Some(skill) = filtered.get(self.selected_skill_index) {
                         let name = skill.name.clone();
@@ -423,7 +533,17 @@ impl App {
                         self.refresh();
                     }
                 }
-            }
+                ActiveTab::Plugins => {
+                    let filtered = self.filtered_plugins();
+                    if let Some(plugin) = filtered.get(self.selected_plugin_index) {
+                        let id = plugin.id.clone();
+                        let _ = plugin_remove(&self.project_root, &id, &self.targets);
+                        self.status_message = Some(format!("Removed plugin: {}", id));
+                        self.refresh();
+                    }
+                }
+                _ => {}
+            },
             _ => {}
         }
     }

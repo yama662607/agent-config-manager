@@ -1,6 +1,9 @@
 use crate::core::doctor::run_doctor;
 use crate::core::mcp::{get_mcp_workspace_status, mcp_add, mcp_disable, mcp_enable, mcp_remove};
 use crate::core::placement::SkillPlacementMode;
+use crate::core::plugin::{
+    get_plugin_status, get_plugin_workspace_status, plugin_add_to_catalog, plugin_install, plugin_remove,
+};
 use crate::core::skill::{
     get_skill_workspace_status, skill_add, skill_link, skill_remove, skill_rename, skill_unlink, skill_update,
 };
@@ -36,12 +39,14 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Overview of installed skills and MCP servers for project/home
+    /// Overview of installed skills, MCP servers, and plugins
     Status,
     /// Manage MCP servers
     Mcp(McpArgs),
     /// Manage skills
     Skill(SkillArgs),
+    /// Manage standalone plugins (cross-provider auto-conversion)
+    Plugin(PluginArgs),
     /// Run diagnostics and health checks
     Doctor(DoctorArgs),
     /// Validate current project configuration
@@ -145,6 +150,30 @@ pub enum SkillSubcommands {
 }
 
 #[derive(Args, Debug)]
+pub struct PluginArgs {
+    #[command(subcommand)]
+    pub command: Option<PluginSubcommands>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum PluginSubcommands {
+    /// List plugins in catalog and their installation status
+    List,
+    /// Register an external plugin directory into the catalog
+    Add {
+        source_path: PathBuf,
+        #[arg(long = "as")]
+        as_id: Option<String>,
+    },
+    /// Install a plugin across agent targets (with cross-provider auto-conversion)
+    Install { plugin_id: String },
+    /// Remove a plugin from agent targets
+    Remove { plugin_id: String },
+    /// Show detailed info and components of a plugin
+    Show { plugin_id: String },
+}
+
+#[derive(Args, Debug)]
 pub struct DoctorArgs {
     /// Attempt to auto-fix found issues (e.g. broken symlinks)
     #[arg(long)]
@@ -184,6 +213,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Some(Commands::Status) => handle_status(&root, &targets, cli.home, cli.json)?,
         Some(Commands::Mcp(args)) => handle_mcp(args, &root, &targets, cli.json, cli.verbose)?,
         Some(Commands::Skill(args)) => handle_skill(args, &root, &targets, cli.home, cli.json, cli.verbose)?,
+        Some(Commands::Plugin(args)) => handle_plugin(args, &root, &targets, cli.json, cli.verbose)?,
         Some(Commands::Doctor(args)) => handle_doctor(args, &root, &targets, cli.json)?,
         Some(Commands::Validate(args)) => {
             let doc_args = DoctorArgs { fix: false, strict: args.strict, offline: true };
@@ -210,6 +240,7 @@ fn handle_status(
 ) -> anyhow::Result<()> {
     let skill_status = get_skill_workspace_status(root, targets)?;
     let mcp_status = get_mcp_workspace_status(root, targets)?;
+    let plugin_status = get_plugin_workspace_status(root, targets)?;
 
     if json {
         let combined = serde_json::json!({
@@ -217,6 +248,7 @@ fn handle_status(
             "project_root": root.display().to_string(),
             "skills": skill_status,
             "mcps": mcp_status,
+            "plugins": plugin_status,
         });
         println!("{}", serde_json::to_string_pretty(&combined)?);
     } else {
@@ -228,6 +260,17 @@ fn handle_status(
         println!("  Path:    {}", root.display());
         println!("  Targets: {}", targets_str);
         println!("==================================================");
+
+        println!("\n🧩 Installed Plugins ({}/{} enabled):", plugin_status.enabled_count, plugin_status.total_count);
+        let enabled_plugins: Vec<_> = plugin_status.plugins.iter().filter(|p| p.enabled).collect();
+        if enabled_plugins.is_empty() {
+            println!("  (No plugins currently installed in this scope)");
+        } else {
+            for p in &enabled_plugins {
+                let targets_str = p.targets.iter().map(|t| t.as_str()).collect::<Vec<_>>().join(", ");
+                println!("  ✓ {:<30} (targets: {}, skills: {}, mcps: {})", p.name, targets_str, p.skills.len(), p.mcp_servers.len());
+            }
+        }
 
         println!("\n📦 Installed Skills ({}/{} enabled):", skill_status.enabled_count, skill_status.total_count);
         let enabled_skills: Vec<_> = skill_status.skills.iter().filter(|s| s.enabled).collect();
@@ -260,6 +303,78 @@ fn handle_status(
         println!("\nTip: Run `acm` (interactive TUI) or `acm -H status` for global home scope.");
     }
 
+    Ok(())
+}
+
+fn handle_plugin(
+    args: PluginArgs,
+    root: &PathBuf,
+    targets: &[TargetName],
+    json: bool,
+    _verbose: bool,
+) -> anyhow::Result<()> {
+    match args.command.unwrap_or(PluginSubcommands::List) {
+        PluginSubcommands::List => {
+            let status = get_plugin_workspace_status(root, targets)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                println!("Context: {}", root.display());
+                println!("Plugins ({} installed / {} catalog total):\n", status.enabled_count, status.total_count);
+                for p in &status.plugins {
+                    let targets_str = if p.targets.is_empty() {
+                        "none".to_string()
+                    } else {
+                        p.targets.iter().map(|t| t.as_str()).collect::<Vec<_>>().join(", ")
+                    };
+                    let icon = if p.enabled { "✓" } else { "•" };
+                    println!(
+                        "  {} {:<28} v{:<6} (targets: {}, skills: {}, mcps: {})",
+                        icon, p.name, p.version, targets_str, p.skills.len(), p.mcp_servers.len()
+                    );
+                }
+            }
+        }
+        PluginSubcommands::Add { source_path, as_id } => {
+            let registered_id = plugin_add_to_catalog(&source_path, as_id.as_deref())?;
+            println!("✓ Added plugin '{}' to catalog from {}", registered_id, source_path.display());
+        }
+        PluginSubcommands::Install { plugin_id } => {
+            let status = plugin_install(root, &plugin_id, targets)?;
+            let targets_str = status.targets.iter().map(|t| t.as_str()).collect::<Vec<_>>().join(", ");
+            println!("✓ Installed & auto-converted plugin '{}' for targets: {}", plugin_id, targets_str);
+        }
+        PluginSubcommands::Remove { plugin_id } => {
+            plugin_remove(root, &plugin_id, targets)?;
+            println!("✓ Removed plugin '{}' from targets", plugin_id);
+        }
+        PluginSubcommands::Show { plugin_id } => {
+            let status = get_plugin_status(root, &plugin_id, targets)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                println!("Plugin: {}", status.name);
+                println!("ID:     {}", status.id);
+                println!("Version: {}", status.version);
+                if !status.description.is_empty() {
+                    println!("Description: {}", status.description);
+                }
+                println!("\nSkills contained ({}):", status.skills.len());
+                for s in &status.skills {
+                    println!("  - {}", s);
+                }
+                println!("\nMCP Servers contained ({}):", status.mcp_servers.len());
+                for m in &status.mcp_servers {
+                    println!("  - {}", m);
+                }
+                println!("\nTarget Placements:");
+                for &t in targets {
+                    let st = status.placement.get(&t).copied().unwrap_or(crate::types::PluginPlacementState::Missing);
+                    println!("  {:<12} {:?}", format!("{}:", t.as_str()), st);
+                }
+            }
+        }
+    }
     Ok(())
 }
 

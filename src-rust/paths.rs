@@ -53,6 +53,35 @@ pub fn get_mcps_metadata_path() -> PathBuf {
     get_catalog_dir().join("mcps-metadata.toml")
 }
 
+/// Get the catalog plugins directory path (~/.acm/plugins)
+pub fn get_catalog_plugins_dir() -> PathBuf {
+    get_catalog_dir().join("plugins")
+}
+
+/// Get a specific plugin directory in catalog (~/.acm/plugins/<id>)
+pub fn get_catalog_plugin_dir(id: &str) -> PathBuf {
+    get_catalog_plugins_dir().join(id)
+}
+
+/// Get the agent plugins directory for Claude or Antigravity
+pub fn get_agent_plugins_dir<P: AsRef<Path>>(project_root: P, target: TargetName) -> Option<PathBuf> {
+    let root = project_root.as_ref();
+    if is_home_scope(root) {
+        let home = home_dir();
+        match target {
+            TargetName::Claude => Some(home.join(".claude").join("plugins")),
+            TargetName::Antigravity => Some(home.join(".gemini").join("config").join("plugins")),
+            _ => None,
+        }
+    } else {
+        match target {
+            TargetName::Claude => Some(root.join(".claude").join("plugins")),
+            TargetName::Antigravity => Some(root.join(".agents").join("plugins")),
+            _ => None,
+        }
+    }
+}
+
 /// Whether the given path is the user's home directory
 pub fn is_home_scope<P: AsRef<Path>>(path: P) -> bool {
     let p = path.as_ref();

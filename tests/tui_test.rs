@@ -108,6 +108,9 @@ fn test_tui_full_interaction_scenarios() {
     app.active_tab = ActiveTab::Mcp;
     terminal.draw(|f| agent_config_manager::tui::ui::render(f, &mut app)).unwrap();
 
+    app.active_tab = ActiveTab::Plugins;
+    terminal.draw(|f| agent_config_manager::tui::ui::render(f, &mut app)).unwrap();
+
     app.active_tab = ActiveTab::Doctor;
     terminal.draw(|f| agent_config_manager::tui::ui::render(f, &mut app)).unwrap();
 

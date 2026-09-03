@@ -227,3 +227,37 @@ pub enum IssueSeverity {
     Error,
     Warning,
 }
+
+/// Plugin placement state for each agent target
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginPlacementState {
+    Missing,
+    NativeLinked,
+    ConvertedLinked,
+    Injected,
+    Broken,
+}
+
+/// Information about a plugin in the catalog or installed in a workspace
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginStatus {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub version: String,
+    pub enabled: bool,
+    pub targets: Vec<TargetName>,
+    pub placement: HashMap<TargetName, PluginPlacementState>,
+    pub skills: Vec<String>,
+    pub mcp_servers: Vec<String>,
+    pub source_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginWorkspaceStatus {
+    pub project_root: String,
+    pub plugins: Vec<PluginStatus>,
+    pub total_count: usize,
+    pub enabled_count: usize,
+}

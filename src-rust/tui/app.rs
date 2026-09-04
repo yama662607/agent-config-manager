@@ -552,8 +552,8 @@ impl App {
                 }
                 ActiveTab::Doctor => {}
             },
-            KeyCode::Char('u') => {
-                if self.active_tab == ActiveTab::Skills {
+            KeyCode::Char('u') => match self.active_tab {
+                ActiveTab::Skills => {
                     let filtered = self.filtered_skills();
                     let skill_filter = filtered.get(self.selected_skill_index).map(|s| s.name.as_str());
                     if let Ok(res) = skill_update(&self.project_root, skill_filter, &self.targets, false) {
@@ -561,7 +561,19 @@ impl App {
                         self.refresh();
                     }
                 }
-            }
+                ActiveTab::Plugins => {
+                    let filtered = self.filtered_plugins();
+                    if let Some(plugin) = filtered.get(self.selected_plugin_index) {
+                        let id = plugin.id.clone();
+                        match crate::core::plugin::plugin_update(&self.project_root, &id, &self.targets) {
+                            Ok(res) => self.status_message = Some(format!("Plugin {}: {}", id, res.message)),
+                            Err(e) => self.status_message = Some(format!("Error updating plugin {}: {}", id, e)),
+                        }
+                        self.refresh();
+                    }
+                }
+                _ => {}
+            },
             KeyCode::Char('f') => {
                 if self.active_tab == ActiveTab::Doctor {
                     if let Ok(report) = run_doctor(&self.project_root, true, &self.targets) {

@@ -321,7 +321,7 @@ fn render_plugins_tab(f: &mut Frame, app: &mut App, area: Rect) {
             Span::styled("Plugin: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
             Span::styled(&selected_plugin.name, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
             Span::raw(format!("  (v{})", selected_plugin.version)),
-            Span::raw("  [Press 'e' to view/edit manifest]"),
+            Span::raw("  [Press 'e' to edit, 'u' to update]"),
         ]));
         if !selected_plugin.description.is_empty() {
             lines.push(Line::from(format!("Description: {}", selected_plugin.description)));

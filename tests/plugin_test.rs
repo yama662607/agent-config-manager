@@ -1,6 +1,6 @@
 use agent_config_manager::core::plugin::{
     get_plugin_status, get_plugin_workspace_status, parse_plugin_dir, plugin_add_to_catalog,
-    plugin_install, plugin_remove, plugin_unlink_from_catalog,
+    plugin_install, plugin_remove, plugin_unlink_from_catalog, plugin_update,
 };
 use agent_config_manager::types::{PluginPlacementState, TargetName};
 use std::fs;
@@ -142,3 +142,56 @@ fn test_plugin_full_lifecycle_and_conversion() {
     plugin_unlink_from_catalog("my-plugin").unwrap();
     assert!(!cat_dir.path().join("plugins").join("my-plugin").exists());
 }
+
+#[test]
+fn test_plugin_update_lifecycle() {
+    let _guard = PLUGIN_TEST_LOCK.lock().unwrap();
+
+    let work_dir = tempdir().unwrap();
+    let cat_dir = tempdir().unwrap();
+    std::env::set_var("ACM_CATALOG_DIR", cat_dir.path().to_str().unwrap());
+
+    let plugin_src = tempdir().unwrap();
+    let claude_plugin_dir = plugin_src.path().join(".claude-plugin");
+    fs::create_dir_all(&claude_plugin_dir).unwrap();
+    fs::write(
+        claude_plugin_dir.join("plugin.json"),
+        r#"{"name": "updatable-plugin", "version": "1.0.0"}"#,
+    )
+    .unwrap();
+
+    let skill_a = plugin_src.path().join("skills").join("skill-one");
+    fs::create_dir_all(&skill_a).unwrap();
+    fs::write(skill_a.join("SKILL.md"), "---\nname: skill-one\n---\n").unwrap();
+
+    plugin_add_to_catalog(plugin_src.path(), Some("updatable-plugin")).unwrap();
+
+    let targets = vec![TargetName::Codex, TargetName::Antigravity];
+    plugin_install(work_dir.path(), "updatable-plugin", &targets).unwrap();
+
+    // Verify initial install
+    let codex_skills = work_dir.path().join(".codex").join("skills");
+    assert!(codex_skills.join("skill-one").exists());
+    assert!(!codex_skills.join("skill-two").exists());
+
+    // Modify plugin source (e.g. simulated git pull / update)
+    let skill_b = plugin_src.path().join("skills").join("skill-two");
+    fs::create_dir_all(&skill_b).unwrap();
+    fs::write(skill_b.join("SKILL.md"), "---\nname: skill-two\n---\n").unwrap();
+
+    fs::write(
+        plugin_src.path().join(".mcp.json"),
+        r#"{"mcpServers": {"new-server": {"command": "echo", "args": ["hello"]}}}"#,
+    )
+    .unwrap();
+
+    // Trigger acm plugin update
+    let res = plugin_update(work_dir.path(), "updatable-plugin", &targets).unwrap();
+    assert_eq!(res.id, "updatable-plugin");
+
+    // Verify that new skill and MCP server were automatically re-projected!
+    assert!(codex_skills.join("skill-two").exists());
+    let codex_toml = fs::read_to_string(work_dir.path().join(".codex").join("config.toml")).unwrap();
+    assert!(codex_toml.contains("new-server"));
+}
+

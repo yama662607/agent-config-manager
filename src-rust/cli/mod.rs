@@ -169,6 +169,12 @@ pub enum PluginSubcommands {
     Install { plugin_id: String },
     /// Remove a plugin from agent targets
     Remove { plugin_id: String },
+    /// Update plugin(s) from upstream and re-project active targets
+    Update {
+        plugin_id: Option<String>,
+        #[arg(long)]
+        all: bool,
+    },
     /// Unlink / remove a plugin from the catalog
     Unlink { plugin_id: String },
     /// Show detailed info and components of a plugin
@@ -349,6 +355,35 @@ fn handle_plugin(
         PluginSubcommands::Remove { plugin_id } => {
             plugin_remove(root, &plugin_id, targets)?;
             println!("✓ Removed plugin '{}' from targets", plugin_id);
+        }
+        PluginSubcommands::Update { plugin_id, all } => {
+            let results = if let Some(id) = plugin_id {
+                vec![crate::core::plugin::plugin_update(root, &id, targets)?]
+            } else if all || plugin_id.is_none() {
+                crate::core::plugin::plugin_update_all(root, targets)?
+            } else {
+                Vec::new()
+            };
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&results)?);
+            } else {
+                let mut updated_count = 0;
+                for res in &results {
+                    if res.updated {
+                        updated_count += 1;
+                        let targets_str = if res.reprojected_targets.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" (re-projected: {})", res.reprojected_targets.iter().map(|t| t.as_str()).collect::<Vec<_>>().join(", "))
+                        };
+                        println!("  ✓ {:<25} {}{}", res.id, res.message, targets_str);
+                    } else {
+                        println!("  • {:<25} {}", res.id, res.message);
+                    }
+                }
+                println!("\nSummary: {} updated, {} up-to-date", updated_count, results.len() - updated_count);
+            }
         }
         PluginSubcommands::Unlink { plugin_id } => {
             crate::core::plugin::plugin_unlink_from_catalog(&plugin_id)?;

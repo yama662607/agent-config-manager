@@ -1,5 +1,8 @@
 use crate::catalog::catalog::load_catalog;
-use crate::paths::{get_agent_skills_dir, get_catalog_path, get_catalog_skills_dir};
+use crate::paths::{
+    get_agent_plugins_dir, get_agent_skills_dir, get_catalog_path, get_catalog_plugins_dir,
+    get_catalog_skills_dir,
+};
 use crate::types::TargetName;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -140,7 +143,78 @@ pub fn run_doctor<P: AsRef<Path>>(
         }
     }
 
-    // 4. Environment Check (node, npm, npx)
+    // 4. Catalog Plugins Dangling Symlinks Check
+    let catalog_plugins = get_catalog_plugins_dir();
+    if catalog_plugins.exists() {
+        if let Ok(entries) = fs::read_dir(&catalog_plugins) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if let Ok(meta) = fs::symlink_metadata(&p) {
+                    if meta.file_type().is_symlink() {
+                        let is_broken = fs::metadata(&p).is_err();
+                        if is_broken {
+                            let mut fix_applied = None;
+                            if fix {
+                                if let Ok(_) = fs::remove_file(&p) {
+                                    fix_applied = Some("Removed dangling plugin symlink in catalog".to_string());
+                                    report.fixed_count += 1;
+                                }
+                            } else {
+                                report.has_warnings = true;
+                            }
+
+                            report.checks.push(DiagnosticCheck {
+                                category: "Catalog Plugins".to_string(),
+                                title: format!("Dangling plugin symlink in catalog: {}", entry.file_name().to_string_lossy()),
+                                status: CheckStatus::Warning,
+                                detail: fs::read_link(&p).ok().map(|t| format!("Points to missing path: {}", t.display())),
+                                fix_applied,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 5. Target Provider Plugins Dangling Symlinks Check
+    for &target in targets {
+        if let Some(plugins_dir) = get_agent_plugins_dir(root, target) {
+            if plugins_dir.exists() {
+                if let Ok(entries) = fs::read_dir(&plugins_dir) {
+                    for entry in entries.flatten() {
+                        let p = entry.path();
+                        if let Ok(meta) = fs::symlink_metadata(&p) {
+                            if meta.file_type().is_symlink() {
+                                let is_broken = fs::metadata(&p).is_err();
+                                if is_broken {
+                                    let mut fix_applied = None;
+                                    if fix {
+                                        if let Ok(_) = fs::remove_file(&p) {
+                                            fix_applied = Some(format!("Removed broken plugin symlink for {}", target));
+                                            report.fixed_count += 1;
+                                        }
+                                    } else {
+                                        report.has_warnings = true;
+                                    }
+
+                                    report.checks.push(DiagnosticCheck {
+                                        category: format!("Target Plugins ({})", target),
+                                        title: format!("Broken plugin symlink: {}", entry.file_name().to_string_lossy()),
+                                        status: CheckStatus::Warning,
+                                        detail: fs::read_link(&p).ok().map(|t| format!("Points to: {}", t.display())),
+                                        fix_applied,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 6. Environment Check (node, npm, npx)
     for tool in &["node", "npm", "npx"] {
         if which_exists(tool) {
             report.checks.push(DiagnosticCheck {

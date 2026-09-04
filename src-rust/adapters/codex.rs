@@ -36,7 +36,7 @@ pub struct CodexConfig {
     pub extra: HashMap<String, toml::Value>,
 }
 
-fn sanitize_server_key(name: &str) -> String {
+pub fn sanitize_server_key(name: &str) -> String {
     let base = name.split('/').last().unwrap_or(name);
     let cleaned = base
         .trim_start_matches("server-")

@@ -1,6 +1,6 @@
 use agent_config_manager::core::plugin::{
     get_plugin_status, get_plugin_workspace_status, parse_plugin_dir, plugin_add_to_catalog,
-    plugin_install, plugin_remove,
+    plugin_install, plugin_remove, plugin_unlink_from_catalog,
 };
 use agent_config_manager::types::{PluginPlacementState, TargetName};
 use std::fs;
@@ -103,6 +103,10 @@ fn test_plugin_full_lifecycle_and_conversion() {
     assert!(agy_plugin_path.join("plugin.json").exists());
     assert!(agy_plugin_path.join("mcp_config.json").exists());
 
+    // ★ CRITICAL: Source repository MUST NOT be polluted!
+    assert!(!plugin_src.path().join("plugin.json").exists(), "Original plugin source repository must not be polluted with root plugin.json");
+    assert!(!plugin_src.path().join("mcp_config.json").exists(), "Original plugin source repository must not be polluted with mcp_config.json");
+
     // Verify Codex target: skills linked into .codex/skills, MCP injected into config.toml
     let codex_skills = work_dir.path().join(".codex").join("skills");
     assert!(codex_skills.join("skill-alpha").exists());
@@ -110,9 +114,10 @@ fn test_plugin_full_lifecycle_and_conversion() {
     let codex_toml = fs::read_to_string(work_dir.path().join(".codex").join("config.toml")).unwrap();
     assert!(codex_toml.contains("test-mcp"));
 
-    // Verify Grok target: MCP injected into config.toml
+    // Verify Grok target: MCP injected into config.toml and skills registered
     let grok_toml = fs::read_to_string(work_dir.path().join(".grok").join("config.toml")).unwrap();
     assert!(grok_toml.contains("test-mcp"));
+    assert!(grok_toml.contains("paths"));
 
     // Verify workspace status
     let ws = get_plugin_workspace_status(work_dir.path(), &targets).unwrap();
@@ -128,4 +133,12 @@ fn test_plugin_full_lifecycle_and_conversion() {
     assert!(!agy_plugin_path.exists());
     assert!(!codex_skills.join("skill-alpha").exists());
     assert!(!codex_skills.join("skill-beta").exists());
+
+    // Verify Grok skills path unregistered
+    let grok_toml_after = fs::read_to_string(work_dir.path().join(".grok").join("config.toml")).unwrap();
+    assert!(!grok_toml_after.contains("my-plugin"));
+
+    // 6. Test Unlink from catalog
+    plugin_unlink_from_catalog("my-plugin").unwrap();
+    assert!(!cat_dir.path().join("plugins").join("my-plugin").exists());
 }

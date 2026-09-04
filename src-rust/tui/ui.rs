@@ -76,7 +76,7 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(scope_widget, header_layout[1]);
 }
 
-fn render_body(f: &mut Frame, app: &App, area: Rect) {
+fn render_body(f: &mut Frame, app: &mut App, area: Rect) {
     match app.active_tab {
         ActiveTab::Skills => render_skills_tab(f, app, area),
         ActiveTab::Mcp => render_mcp_tab(f, app, area),
@@ -85,7 +85,7 @@ fn render_body(f: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn render_skills_tab(f: &mut Frame, app: &App, area: Rect) {
+fn render_skills_tab(f: &mut Frame, app: &mut App, area: Rect) {
     let panes = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
@@ -141,6 +141,7 @@ fn render_skills_tab(f: &mut Frame, app: &App, area: Rect) {
                     Some(SkillPlacementState::CopyCurrent) => (format!("{}:C", target.short_code()), Color::Cyan),
                     Some(SkillPlacementState::CopyStale) => (format!("{}:!", target.short_code()), Color::LightRed),
                     Some(SkillPlacementState::BrokenLink) => (format!("{}:X", target.short_code()), Color::Red),
+                    Some(SkillPlacementState::Registered) => (format!("{}:R", target.short_code()), Color::Blue),
                     _ => (format!("{}:-", target.short_code()), Color::DarkGray),
                 };
                 spans.push(Span::styled(format!(" {} ", badge.0), Style::default().fg(badge.1)));
@@ -156,15 +157,25 @@ fn render_skills_tab(f: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    let list_widget = List::new(items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(format!(" Skills ({}/{}) ", filtered_skills.len(), app.skills.len())),
-    );
-    f.render_widget(list_widget, left_layout[1]);
+    let selected_skill = filtered_skills.get(app.selected_skill_index).map(|s| (*s).clone());
+    let skill_count = app.skills.len();
+    let filtered_count = filtered_skills.len();
+
+    let list_widget = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!(" Skills ({}/{}) ", filtered_count, skill_count)),
+        )
+        .highlight_style(
+            Style::default()
+                .bg(Color::Rgb(30, 30, 50))
+                .add_modifier(Modifier::BOLD),
+        );
+    f.render_stateful_widget(list_widget, left_layout[1], &mut app.skill_list_state);
 
     // Right pane: Detail & Preview
-    if let Some(selected_skill) = filtered_skills.get(app.selected_skill_index) {
+    if let Some(selected_skill) = selected_skill {
         let mut lines = Vec::new();
         lines.push(Line::from(vec![
             Span::styled("Skill: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
@@ -215,7 +226,7 @@ fn render_skills_tab(f: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn render_plugins_tab(f: &mut Frame, app: &App, area: Rect) {
+fn render_plugins_tab(f: &mut Frame, app: &mut App, area: Rect) {
     let panes = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
@@ -286,15 +297,25 @@ fn render_plugins_tab(f: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    let list_widget = List::new(items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(format!(" Plugins ({}/{}) ", filtered_plugins.len(), app.plugins.len())),
-    );
-    f.render_widget(list_widget, left_layout[1]);
+    let selected_plugin = filtered_plugins.get(app.selected_plugin_index).map(|p| (*p).clone());
+    let plugin_count = app.plugins.len();
+    let filtered_count = filtered_plugins.len();
+
+    let list_widget = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!(" Plugins ({}/{}) ", filtered_count, plugin_count)),
+        )
+        .highlight_style(
+            Style::default()
+                .bg(Color::Rgb(30, 30, 50))
+                .add_modifier(Modifier::BOLD),
+        );
+    f.render_stateful_widget(list_widget, left_layout[1], &mut app.plugin_list_state);
 
     // Right pane: Plugin Detail & Components
-    if let Some(selected_plugin) = filtered_plugins.get(app.selected_plugin_index) {
+    if let Some(selected_plugin) = selected_plugin {
         let mut lines = Vec::new();
         lines.push(Line::from(vec![
             Span::styled("Plugin: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
@@ -354,7 +375,7 @@ fn render_plugins_tab(f: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn render_mcp_tab(f: &mut Frame, app: &App, area: Rect) {
+fn render_mcp_tab(f: &mut Frame, app: &mut App, area: Rect) {
     let panes = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
@@ -420,14 +441,24 @@ fn render_mcp_tab(f: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    let list_widget = List::new(items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(format!(" MCP Servers ({}/{}) ", filtered_mcps.len(), app.mcps.len())),
-    );
-    f.render_widget(list_widget, left_layout[1]);
+    let selected_mcp = filtered_mcps.get(app.selected_mcp_index).map(|m| (*m).clone());
+    let mcp_count = app.mcps.len();
+    let filtered_count = filtered_mcps.len();
 
-    if let Some(selected_mcp) = filtered_mcps.get(app.selected_mcp_index) {
+    let list_widget = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!(" MCP Servers ({}/{}) ", filtered_count, mcp_count)),
+        )
+        .highlight_style(
+            Style::default()
+                .bg(Color::Rgb(30, 30, 50))
+                .add_modifier(Modifier::BOLD),
+        );
+    f.render_stateful_widget(list_widget, left_layout[1], &mut app.mcp_list_state);
+
+    if let Some(selected_mcp) = selected_mcp {
         let mut lines = Vec::new();
         lines.push(Line::from(vec![
             Span::styled("MCP Server: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),

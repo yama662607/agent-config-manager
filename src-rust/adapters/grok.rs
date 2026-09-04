@@ -46,7 +46,7 @@ pub struct GrokConfig {
     pub extra: HashMap<String, toml::Value>,
 }
 
-fn sanitize_server_key(name: &str) -> String {
+pub fn sanitize_server_key(name: &str) -> String {
     let base = name.split('/').last().unwrap_or(name);
     let cleaned = base
         .trim_start_matches("server-")
@@ -206,6 +206,44 @@ pub fn register_skill_path<P: AsRef<Path>>(config_path: P, skill_dir: &str) -> a
         fs::write(&temp, toml_str)?;
         fs::rename(&temp, path)?;
         Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+/// Unregister a skill directory path from Grok's config.toml ([skills] paths)
+pub fn unregister_skill_path<P: AsRef<Path>>(config_path: P, skill_dir: &str) -> anyhow::Result<bool> {
+    let path = config_path.as_ref();
+    if !path.exists() {
+        return Ok(false);
+    }
+
+    let content = fs::read_to_string(path)?;
+    let mut config: GrokConfig = toml::from_str(&content)?;
+    if let Some(ref mut skills_cfg) = config.skills {
+        let before_len = skills_cfg.paths.len();
+        skills_cfg.paths.retain(|p| p != skill_dir);
+        if skills_cfg.paths.len() != before_len {
+            let toml_str = toml::to_string_pretty(&config)?;
+            let temp = format!("{}.{}.tmp", path.display(), std::process::id());
+            fs::write(&temp, toml_str)?;
+            fs::rename(&temp, path)?;
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Check if a skill directory path is registered in Grok's config.toml
+pub fn is_skill_path_registered<P: AsRef<Path>>(config_path: P, skill_dir: &str) -> anyhow::Result<bool> {
+    let path = config_path.as_ref();
+    if !path.exists() {
+        return Ok(false);
+    }
+    let content = fs::read_to_string(path)?;
+    let config: GrokConfig = toml::from_str(&content)?;
+    if let Some(skills_cfg) = config.skills {
+        Ok(skills_cfg.paths.iter().any(|p| p == skill_dir))
     } else {
         Ok(false)
     }

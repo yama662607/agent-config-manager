@@ -177,6 +177,12 @@ pub fn parse_plugin_dir<P: AsRef<Path>>(plugin_dir: P) -> anyhow::Result<ParsedP
 
 /// Create a target-native projection for Claude Code
 fn project_for_claude(catalog_plugin_dir: &Path, target_plugin_dir: &Path) -> anyhow::Result<()> {
+    if let (Ok(src_real), Ok(dst_real)) = (catalog_plugin_dir.canonicalize(), target_plugin_dir.canonicalize()) {
+        if src_real == dst_real {
+            return Ok(());
+        }
+    }
+
     if let Some(parent) = target_plugin_dir.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -194,6 +200,12 @@ fn project_for_claude(catalog_plugin_dir: &Path, target_plugin_dir: &Path) -> an
 
 /// Create an isolated projection for Google Antigravity WITHOUT polluting the source repository
 fn project_for_antigravity(catalog_plugin_dir: &Path, target_plugin_dir: &Path) -> anyhow::Result<()> {
+    if let (Ok(src_real), Ok(dst_real)) = (catalog_plugin_dir.canonicalize(), target_plugin_dir.canonicalize()) {
+        if src_real == dst_real {
+            return Ok(());
+        }
+    }
+
     if let Some(parent) = target_plugin_dir.parent() {
         fs::create_dir_all(parent)?;
     }

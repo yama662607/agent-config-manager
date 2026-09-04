@@ -169,6 +169,8 @@ pub enum PluginSubcommands {
     Install { plugin_id: String },
     /// Remove a plugin from agent targets
     Remove { plugin_id: String },
+    /// Unlink / remove a plugin from the catalog
+    Unlink { plugin_id: String },
     /// Show detailed info and components of a plugin
     Show { plugin_id: String },
 }
@@ -347,6 +349,10 @@ fn handle_plugin(
         PluginSubcommands::Remove { plugin_id } => {
             plugin_remove(root, &plugin_id, targets)?;
             println!("✓ Removed plugin '{}' from targets", plugin_id);
+        }
+        PluginSubcommands::Unlink { plugin_id } => {
+            crate::core::plugin::plugin_unlink_from_catalog(&plugin_id)?;
+            println!("✓ Unlinked plugin '{}' from catalog", plugin_id);
         }
         PluginSubcommands::Show { plugin_id } => {
             let status = get_plugin_status(root, &plugin_id, targets)?;

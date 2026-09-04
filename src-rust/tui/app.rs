@@ -12,6 +12,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifier
 use crossterm::execute;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::backend::CrosstermBackend;
+use ratatui::widgets::ListState;
 use ratatui::Terminal;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -36,14 +37,17 @@ pub struct App {
     // Skills state
     pub skills: Vec<SkillStatus>,
     pub selected_skill_index: usize,
+    pub skill_list_state: ListState,
 
     // MCP state
     pub mcps: Vec<McpStatus>,
     pub selected_mcp_index: usize,
+    pub mcp_list_state: ListState,
 
     // Plugin state
     pub plugins: Vec<PluginStatus>,
     pub selected_plugin_index: usize,
+    pub plugin_list_state: ListState,
 
     // Doctor state
     pub doctor_report: Option<DiagnosticReport>,
@@ -65,6 +69,13 @@ pub struct App {
 impl App {
     pub fn new(project_root: PathBuf, targets: Vec<TargetName>) -> Self {
         let is_home = project_root == home_dir();
+        let mut skill_list_state = ListState::default();
+        skill_list_state.select(Some(0));
+        let mut mcp_list_state = ListState::default();
+        mcp_list_state.select(Some(0));
+        let mut plugin_list_state = ListState::default();
+        plugin_list_state.select(Some(0));
+
         let mut app = Self {
             initial_project_root: project_root.clone(),
             project_root,
@@ -74,10 +85,13 @@ impl App {
             running: true,
             skills: Vec::new(),
             selected_skill_index: 0,
+            skill_list_state,
             mcps: Vec::new(),
             selected_mcp_index: 0,
+            mcp_list_state,
             plugins: Vec::new(),
             selected_plugin_index: 0,
+            plugin_list_state,
             doctor_report: None,
             search_mode: false,
             search_query: String::new(),
@@ -109,22 +123,34 @@ impl App {
         let skill_count = self.filtered_skills().len();
         if skill_count == 0 {
             self.selected_skill_index = 0;
-        } else if self.selected_skill_index >= skill_count {
-            self.selected_skill_index = skill_count - 1;
+            self.skill_list_state.select(None);
+        } else {
+            if self.selected_skill_index >= skill_count {
+                self.selected_skill_index = skill_count - 1;
+            }
+            self.skill_list_state.select(Some(self.selected_skill_index));
         }
 
         let mcp_count = self.filtered_mcps().len();
         if mcp_count == 0 {
             self.selected_mcp_index = 0;
-        } else if self.selected_mcp_index >= mcp_count {
-            self.selected_mcp_index = mcp_count - 1;
+            self.mcp_list_state.select(None);
+        } else {
+            if self.selected_mcp_index >= mcp_count {
+                self.selected_mcp_index = mcp_count - 1;
+            }
+            self.mcp_list_state.select(Some(self.selected_mcp_index));
         }
 
         let plugin_count = self.filtered_plugins().len();
         if plugin_count == 0 {
             self.selected_plugin_index = 0;
-        } else if self.selected_plugin_index >= plugin_count {
-            self.selected_plugin_index = plugin_count - 1;
+            self.plugin_list_state.select(None);
+        } else {
+            if self.selected_plugin_index >= plugin_count {
+                self.selected_plugin_index = plugin_count - 1;
+            }
+            self.plugin_list_state.select(Some(self.selected_plugin_index));
         }
     }
 
@@ -191,18 +217,21 @@ impl App {
                 let count = self.filtered_skills().len();
                 if count > 0 {
                     self.selected_skill_index = (self.selected_skill_index + 1) % count;
+                    self.skill_list_state.select(Some(self.selected_skill_index));
                 }
             }
             ActiveTab::Mcp => {
                 let count = self.filtered_mcps().len();
                 if count > 0 {
                     self.selected_mcp_index = (self.selected_mcp_index + 1) % count;
+                    self.mcp_list_state.select(Some(self.selected_mcp_index));
                 }
             }
             ActiveTab::Plugins => {
                 let count = self.filtered_plugins().len();
                 if count > 0 {
                     self.selected_plugin_index = (self.selected_plugin_index + 1) % count;
+                    self.plugin_list_state.select(Some(self.selected_plugin_index));
                 }
             }
             ActiveTab::Doctor => {}
@@ -220,6 +249,7 @@ impl App {
                     } else {
                         self.selected_skill_index - 1
                     };
+                    self.skill_list_state.select(Some(self.selected_skill_index));
                 }
             }
             ActiveTab::Mcp => {
@@ -230,6 +260,7 @@ impl App {
                     } else {
                         self.selected_mcp_index - 1
                     };
+                    self.mcp_list_state.select(Some(self.selected_mcp_index));
                 }
             }
             ActiveTab::Plugins => {
@@ -240,6 +271,7 @@ impl App {
                     } else {
                         self.selected_plugin_index - 1
                     };
+                    self.plugin_list_state.select(Some(self.selected_plugin_index));
                 }
             }
             ActiveTab::Doctor => {}
@@ -256,11 +288,15 @@ impl App {
                     let is_active = placement != SkillPlacementState::Missing && placement != SkillPlacementState::BrokenLink;
 
                     if is_active {
-                        let _ = skill_remove(&self.project_root, &name, &[target]);
-                        self.status_message = Some(format!("Disabled {} on {}", name, target));
+                        match skill_remove(&self.project_root, &name, &[target]) {
+                            Ok(_) => self.status_message = Some(format!("Disabled {} on {}", name, target)),
+                            Err(e) => self.status_message = Some(format!("Error disabling {}: {}", name, e)),
+                        }
                     } else {
-                        let _ = skill_add(&self.project_root, &name, &[target], None);
-                        self.status_message = Some(format!("Enabled {} on {}", name, target));
+                        match skill_add(&self.project_root, &name, &[target], None) {
+                            Ok(_) => self.status_message = Some(format!("Enabled {} on {}", name, target)),
+                            Err(e) => self.status_message = Some(format!("Error enabling {}: {}", name, e)),
+                        }
                     }
                     self.refresh();
                 }
@@ -270,11 +306,15 @@ impl App {
                 if let Some(mcp) = filtered.get(self.selected_mcp_index) {
                     let name = mcp.name.clone();
                     if mcp.targets.contains(&target) {
-                        let _ = mcp_remove(&self.project_root, &name, &[target]);
-                        self.status_message = Some(format!("Removed {} from {}", name, target));
+                        match mcp_remove(&self.project_root, &name, &[target]) {
+                            Ok(_) => self.status_message = Some(format!("Removed {} from {}", name, target)),
+                            Err(e) => self.status_message = Some(format!("Error removing {}: {}", name, e)),
+                        }
                     } else {
-                        let _ = crate::core::mcp::mcp_add(&self.project_root, &name, &[target], Some(&mcp.recipe));
-                        self.status_message = Some(format!("Added {} to {}", name, target));
+                        match crate::core::mcp::mcp_add(&self.project_root, &name, &[target], Some(&mcp.recipe)) {
+                            Ok(_) => self.status_message = Some(format!("Added {} to {}", name, target)),
+                            Err(e) => self.status_message = Some(format!("Error adding {}: {}", name, e)),
+                        }
                     }
                     self.refresh();
                 }
@@ -287,11 +327,15 @@ impl App {
                     let is_active = placement != PluginPlacementState::Missing && placement != PluginPlacementState::Broken;
 
                     if is_active {
-                        let _ = plugin_remove(&self.project_root, &id, &[target]);
-                        self.status_message = Some(format!("Removed plugin {} from {}", id, target));
+                        match plugin_remove(&self.project_root, &id, &[target]) {
+                            Ok(_) => self.status_message = Some(format!("Removed plugin {} from {}", id, target)),
+                            Err(e) => self.status_message = Some(format!("Error removing {}: {}", id, e)),
+                        }
                     } else {
-                        let _ = plugin_install(&self.project_root, &id, &[target]);
-                        self.status_message = Some(format!("Installed plugin {} on {}", id, target));
+                        match plugin_install(&self.project_root, &id, &[target]) {
+                            Ok(_) => self.status_message = Some(format!("Installed plugin {} on {}", id, target)),
+                            Err(e) => self.status_message = Some(format!("Error installing {}: {}", id, e)),
+                        }
                     }
                     self.refresh();
                 }
@@ -301,18 +345,15 @@ impl App {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
-        // Only handle Press event
         if key.kind != KeyEventKind::Press {
             return;
         }
 
-        // Ctrl+C immediate graceful termination
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             self.running = false;
             return;
         }
 
-        // Ctrl+N / Ctrl+P navigation
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
                 KeyCode::Char('n') => {
@@ -344,6 +385,7 @@ impl App {
                     self.selected_mcp_index = 0;
                     self.selected_plugin_index = 0;
                     self.preview_scroll = 0;
+                    self.clamp_indices();
                 }
                 KeyCode::Char(c) => {
                     self.search_query.push(c);
@@ -351,6 +393,7 @@ impl App {
                     self.selected_mcp_index = 0;
                     self.selected_plugin_index = 0;
                     self.preview_scroll = 0;
+                    self.clamp_indices();
                 }
                 _ => {}
             }
@@ -386,29 +429,24 @@ impl App {
                 self.active_tab = ActiveTab::Doctor;
                 self.preview_scroll = 0;
             }
-            // Scope toggle
             KeyCode::Char('H') | KeyCode::Char('S') => {
                 self.toggle_scope();
             }
-            // Realtime search
             KeyCode::Char('/') => {
                 self.search_mode = true;
             }
-            // List navigation (j, k, Down, Up)
             KeyCode::Char('j') | KeyCode::Down => {
                 self.nav_down();
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 self.nav_up();
             }
-            // Preview scrolling
             KeyCode::PageDown | KeyCode::Char('J') => {
                 self.preview_scroll = self.preview_scroll.saturating_add(5);
             }
             KeyCode::PageUp | KeyCode::Char('K') => {
                 self.preview_scroll = self.preview_scroll.saturating_sub(5);
             }
-            // Toggle all targets
             KeyCode::Char(' ') => match self.active_tab {
                 ActiveTab::Skills => {
                     let filtered = self.filtered_skills();
@@ -416,11 +454,15 @@ impl App {
                         let name = skill.name.clone();
                         let is_enabled = skill.enabled;
                         if is_enabled {
-                            let _ = skill_remove(&self.project_root, &name, &self.targets);
-                            self.status_message = Some(format!("Disabled skill: {}", name));
+                            match skill_remove(&self.project_root, &name, &self.targets) {
+                                Ok(_) => self.status_message = Some(format!("Disabled skill: {}", name)),
+                                Err(e) => self.status_message = Some(format!("Error disabling {}: {}", name, e)),
+                            }
                         } else {
-                            let _ = skill_add(&self.project_root, &name, &self.targets, None);
-                            self.status_message = Some(format!("Enabled skill: {}", name));
+                            match skill_add(&self.project_root, &name, &self.targets, None) {
+                                Ok(_) => self.status_message = Some(format!("Enabled skill: {}", name)),
+                                Err(e) => self.status_message = Some(format!("Error enabling {}: {}", name, e)),
+                            }
                         }
                         self.refresh();
                     }
@@ -430,11 +472,15 @@ impl App {
                     if let Some(mcp) = filtered.get(self.selected_mcp_index) {
                         let name = mcp.name.clone();
                         if mcp.enabled {
-                            let _ = mcp_disable(&self.project_root, &name, &self.targets);
-                            self.status_message = Some(format!("Disabled MCP server: {}", name));
+                            match mcp_disable(&self.project_root, &name, &self.targets) {
+                                Ok(_) => self.status_message = Some(format!("Disabled MCP server: {}", name)),
+                                Err(e) => self.status_message = Some(format!("Error disabling {}: {}", name, e)),
+                            }
                         } else {
-                            let _ = mcp_enable(&self.project_root, &name, &self.targets);
-                            self.status_message = Some(format!("Enabled MCP server: {}", name));
+                            match mcp_enable(&self.project_root, &name, &self.targets) {
+                                Ok(_) => self.status_message = Some(format!("Enabled MCP server: {}", name)),
+                                Err(e) => self.status_message = Some(format!("Error enabling {}: {}", name, e)),
+                            }
                         }
                         self.refresh();
                     }
@@ -444,23 +490,25 @@ impl App {
                     if let Some(plugin) = filtered.get(self.selected_plugin_index) {
                         let id = plugin.id.clone();
                         if plugin.enabled {
-                            let _ = plugin_remove(&self.project_root, &id, &self.targets);
-                            self.status_message = Some(format!("Disabled plugin: {}", id));
+                            match plugin_remove(&self.project_root, &id, &self.targets) {
+                                Ok(_) => self.status_message = Some(format!("Disabled plugin: {}", id)),
+                                Err(e) => self.status_message = Some(format!("Error disabling {}: {}", id, e)),
+                            }
                         } else {
-                            let _ = plugin_install(&self.project_root, &id, &self.targets);
-                            self.status_message = Some(format!("Enabled plugin: {}", id));
+                            match plugin_install(&self.project_root, &id, &self.targets) {
+                                Ok(_) => self.status_message = Some(format!("Enabled plugin: {}", id)),
+                                Err(e) => self.status_message = Some(format!("Error enabling {}: {}", id, e)),
+                            }
                         }
                         self.refresh();
                     }
                 }
                 ActiveTab::Doctor => {}
             },
-            // Target specific toggles
             KeyCode::Char('c') => self.toggle_single_target(TargetName::Claude),
             KeyCode::Char('x') => self.toggle_single_target(TargetName::Codex),
             KeyCode::Char('a') => self.toggle_single_target(TargetName::Antigravity),
             KeyCode::Char('g') => self.toggle_single_target(TargetName::Grok),
-            // Edit in external editor
             KeyCode::Char('e') => match self.active_tab {
                 ActiveTab::Skills => {
                     let filtered = self.filtered_skills();
@@ -494,14 +542,16 @@ impl App {
                             if root_m.exists() {
                                 self.pending_editor_file = Some(root_m);
                             } else {
-                                self.pending_editor_file = Some(pdir);
+                                let pkg = pdir.join("package.json");
+                                if pkg.exists() {
+                                    self.pending_editor_file = Some(pkg);
+                                }
                             }
                         }
                     }
                 }
                 ActiveTab::Doctor => {}
             },
-            // Update stale copies
             KeyCode::Char('u') => {
                 if self.active_tab == ActiveTab::Skills {
                     let filtered = self.filtered_skills();
@@ -512,7 +562,6 @@ impl App {
                     }
                 }
             }
-            // Auto fix doctor
             KeyCode::Char('f') => {
                 if self.active_tab == ActiveTab::Doctor {
                     if let Ok(report) = run_doctor(&self.project_root, true, &self.targets) {
@@ -522,7 +571,6 @@ impl App {
                     }
                 }
             }
-            // Delete
             KeyCode::Char('d') => match self.active_tab {
                 ActiveTab::Skills => {
                     let filtered = self.filtered_skills();
@@ -550,7 +598,6 @@ impl App {
 }
 
 pub fn run_tui(project_root: &Path, targets: &[TargetName]) -> anyhow::Result<()> {
-    // Install panic hook to restore terminal if panic occurs
     let default_panic = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();

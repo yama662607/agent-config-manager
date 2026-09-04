@@ -261,3 +261,12 @@ pub struct PluginWorkspaceStatus {
     pub total_count: usize,
     pub enabled_count: usize,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginUpdateResult {
+    pub id: String,
+    pub updated: bool,
+    pub message: String,
+    pub reprojected_targets: Vec<TargetName>,
+}
+

@@ -3,7 +3,10 @@ use crate::paths::{
     format_home_path, get_agent_mcp_config_path, get_agent_plugins_dir, get_agent_skills_dir,
     get_catalog_plugin_dir, get_catalog_plugins_dir,
 };
-use crate::types::{McpRecipe, PluginPlacementState, PluginStatus, PluginWorkspaceStatus, TargetName, TransportType};
+use crate::types::{
+    McpRecipe, PluginPlacementState, PluginStatus, PluginUpdateResult, PluginWorkspaceStatus,
+    TargetName, TransportType,
+};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -609,3 +612,112 @@ pub fn get_plugin_workspace_status(
         plugins,
     })
 }
+
+/// Update a single plugin from upstream (git pull or claude plugin update) and re-project to active targets
+pub fn plugin_update(
+    project_root: &Path,
+    plugin_id: &str,
+    targets: &[TargetName],
+) -> anyhow::Result<PluginUpdateResult> {
+    validate_plugin_id(plugin_id)?;
+    let catalog_plugin_dir = get_catalog_plugin_dir(plugin_id);
+    if !catalog_plugin_dir.exists() && fs::symlink_metadata(&catalog_plugin_dir).is_err() {
+        anyhow::bail!("Plugin '{}' not found in catalog", plugin_id);
+    }
+
+    let real_source = catalog_plugin_dir
+        .canonicalize()
+        .with_context(|| format!("Failed to resolve target for plugin '{}'", plugin_id))?;
+
+    // Find git root if in a git repository
+    let mut curr: Option<&Path> = Some(&real_source);
+    let mut git_root = None;
+    while let Some(p) = curr {
+        if p.join(".git").exists() {
+            git_root = Some(p);
+            break;
+        }
+        curr = p.parent();
+    }
+
+    let (updated, message) = if let Some(gr) = git_root {
+        let output = std::process::Command::new("git")
+            .args(["-C", &gr.to_string_lossy(), "pull", "--ff-only"])
+            .output();
+
+        match output {
+            Ok(out) if out.status.success() => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                if stdout.contains("Already up to date") {
+                    (false, "Up to date (git)".to_string())
+                } else {
+                    (true, format!("Updated via git pull: {}", stdout.trim().lines().next().unwrap_or("success")))
+                }
+            }
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                (false, format!("Git pull warning: {}", stderr.trim()))
+            }
+            Err(e) => {
+                (false, format!("Git pull skipped: {}", e))
+            }
+        }
+    } else {
+        // 2. Try Claude plugin update if it looks like a Claude plugin or marketplace
+        let is_claude_origin = real_source.to_string_lossy().contains(".claude/plugins");
+        if is_claude_origin {
+            let output = std::process::Command::new("claude")
+                .args(["plugin", "update", plugin_id, "-y"])
+                .output();
+
+            match output {
+                Ok(out) if out.status.success() => {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    if stdout.contains("updated from") {
+                        (true, "Updated via Claude plugin marketplace".to_string())
+                    } else {
+                        (false, "Up to date (Claude marketplace)".to_string())
+                    }
+                }
+                _ => {
+                    (false, "Local directory (no remote upstream)".to_string())
+                }
+            }
+        } else {
+            (false, "Local directory (no remote upstream)".to_string())
+        }
+    };
+
+    // 3. Re-project / Re-apply to all currently active targets
+    let status = get_plugin_status(project_root, plugin_id, targets)?;
+    let active_targets = status.targets.clone();
+
+    if !active_targets.is_empty() {
+        plugin_install(project_root, plugin_id, &active_targets)
+            .with_context(|| format!("Failed to re-project plugin '{}' after update", plugin_id))?;
+    }
+
+    Ok(PluginUpdateResult {
+        id: plugin_id.to_string(),
+        updated,
+        message,
+        reprojected_targets: active_targets,
+    })
+}
+
+/// Update all plugins in the catalog and re-project active targets
+pub fn plugin_update_all(
+    project_root: &Path,
+    targets: &[TargetName],
+) -> anyhow::Result<Vec<PluginUpdateResult>> {
+    let ws = get_plugin_workspace_status(project_root, targets)?;
+    let mut results = Vec::new();
+
+    for plugin in ws.plugins {
+        let res = plugin_update(project_root, &plugin.id, targets)?;
+        results.push(res);
+    }
+
+    Ok(results)
+}
+

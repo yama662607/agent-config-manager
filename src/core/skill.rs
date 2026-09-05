@@ -1,7 +1,8 @@
 use crate::adapters::grok::{register_skill_path, set_skill_disabled};
 use crate::catalog::store::list_skills;
 use crate::core::placement::{
-    copy_skill_dir_to_config, default_placement_mode, inspect_skill_placement, SkillPlacementMode,
+    copy_skill_dir_to_config_with_options, default_placement_mode, inspect_skill_placement,
+    SkillPlacementMode,
 };
 use crate::core::validate::validate_skill_name;
 use crate::paths::{
@@ -172,6 +173,55 @@ pub fn skill_add<P: AsRef<Path>>(
     targets: &[TargetName],
     placement: Option<SkillPlacementMode>,
 ) -> anyhow::Result<()> {
+    skill_add_with_options(project_root, skill_id, targets, placement, false)
+}
+
+pub use crate::core::skill_history::{list_skill_backups, restore_skill_backup};
+
+pub fn preview_skill_add<P: AsRef<Path>>(
+    project_root: P,
+    skill_id: &str,
+    targets: &[TargetName],
+    placement: Option<SkillPlacementMode>,
+    force: bool,
+) -> anyhow::Result<serde_json::Value> {
+    validate_skill_name(skill_id)?;
+    let root = project_root.as_ref();
+    let source = get_catalog_skill_dir(skill_id);
+    if !source.join("SKILL.md").is_file() {
+        anyhow::bail!("Skill {skill_id} not found in catalog");
+    }
+    let mode = placement.unwrap_or_else(|| default_placement_mode(root));
+    let mut plans = Vec::new();
+    for &target in targets {
+        if target == TargetName::Grok {
+            let config = get_agent_mcp_config_path(root, target);
+            let registered = crate::adapters::grok::is_skill_path_registered(
+                &config,
+                &get_catalog_skills_dir().display().to_string(),
+            )?;
+            let disabled = crate::adapters::grok::is_skill_disabled(&config, skill_id)?;
+            plans.push(serde_json::json!({"skill": skill_id, "target": target, "path": config, "action": if registered && !disabled { "unchanged" } else { "register" }, "blocked": false}));
+        } else {
+            plans.push(crate::core::skill_history::preview_skill_placement(
+                root, target, skill_id, &source, mode, force,
+            )?);
+        }
+    }
+    Ok(
+        serde_json::json!({"resource": "skill", "operation": "add", "dryRun": true, "blocked": plans.iter().any(|p| p["blocked"] == true), "targets": plans}),
+    )
+}
+
+pub fn skill_add_with_options<P: AsRef<Path>>(
+    project_root: P,
+    skill_id: &str,
+    targets: &[TargetName],
+    placement: Option<SkillPlacementMode>,
+    force: bool,
+) -> anyhow::Result<()> {
+    let preview = preview_skill_add(&project_root, skill_id, targets, placement, force)?;
+    reject_skill_conflicts(&preview)?;
     validate_skill_name(skill_id)?;
 
     let root = project_root.as_ref();
@@ -193,7 +243,14 @@ pub fn skill_add<P: AsRef<Path>>(
             register_skill_path(&grok_config, &catalog_skills.display().to_string())?;
             set_skill_disabled(&grok_config, skill_id, false)?;
         } else {
-            copy_skill_dir_to_config(root, target, skill_id, &source_dir, mode)?;
+            copy_skill_dir_to_config_with_options(
+                root,
+                target,
+                skill_id,
+                &source_dir,
+                mode,
+                force,
+            )?;
         }
     }
 
@@ -214,14 +271,7 @@ pub fn skill_remove<P: AsRef<Path>>(
             let grok_config = get_agent_mcp_config_path(root, TargetName::Grok);
             set_skill_disabled(&grok_config, skill_name, true)?;
         } else {
-            let dest_dir = get_skill_path(root, target, skill_name);
-            if dest_dir.exists() || fs::symlink_metadata(&dest_dir).is_ok() {
-                if fs::symlink_metadata(&dest_dir).is_ok_and(|m| m.file_type().is_symlink()) {
-                    fs::remove_file(&dest_dir)?;
-                } else {
-                    fs::remove_dir_all(&dest_dir)?;
-                }
-            }
+            crate::core::skill_history::remove_skill_placement(root, target, skill_name)?;
         }
     }
 
@@ -235,98 +285,163 @@ pub fn skill_update<P: AsRef<Path>>(
     targets: &[TargetName],
     force: bool,
 ) -> anyhow::Result<SkillUpdateResult> {
+    skill_update_with_placement(project_root, skill_name_filter, targets, force, None)
+}
+
+fn reject_skill_conflicts(preview: &serde_json::Value) -> anyhow::Result<()> {
+    let conflicts: Vec<_> = preview["targets"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|plan| plan["blocked"] == true)
+        .map(|plan| {
+            format!(
+                "{}/{}: {}",
+                plan["target"].as_str().unwrap_or("?"),
+                plan["skill"].as_str().unwrap_or("?"),
+                plan["conflict"].as_str().unwrap_or("conflict")
+            )
+        })
+        .collect();
+    if !conflicts.is_empty() {
+        anyhow::bail!("Skill update conflicts: {}", conflicts.join("; "));
+    }
+    Ok(())
+}
+
+pub fn preview_skill_update<P: AsRef<Path>>(
+    project_root: P,
+    skill_name_filter: Option<&str>,
+    targets: &[TargetName],
+    force: bool,
+    placement: Option<SkillPlacementMode>,
+) -> anyhow::Result<serde_json::Value> {
     let root = project_root.as_ref();
-    let ws_status = get_skill_workspace_status(root, targets)?;
-    let mut result = SkillUpdateResult::default();
-
-    for skill in ws_status.skills {
-        if let Some(filter) = skill_name_filter {
-            if skill.name != filter {
-                continue;
-            }
+    if let Some(id) = skill_name_filter {
+        validate_skill_name(id)?;
+        if !get_catalog_skill_dir(id).join("SKILL.md").is_file() {
+            anyhow::bail!("Skill {id} not found in catalog");
         }
-
-        let cat_dir = get_catalog_skill_dir(&skill.name);
-        if !cat_dir.exists() {
+    }
+    let mut plans = Vec::new();
+    for skill in get_skill_workspace_status(root, targets)?.skills {
+        if skill_name_filter.is_some_and(|id| id != skill.name)
+            || !get_catalog_skill_dir(&skill.name)
+                .join("SKILL.md")
+                .is_file()
+        {
             continue;
         }
-
         for &target in targets {
-            let placement = skill
+            let state = skill
                 .placement
                 .get(&target)
                 .copied()
                 .unwrap_or(SkillPlacementState::Missing);
-            match placement {
-                SkillPlacementState::CopyStale => {
-                    copy_skill_dir_to_config(
-                        root,
-                        target,
-                        &skill.name,
-                        &cat_dir,
-                        SkillPlacementMode::Copy,
-                    )?;
-                    result.updated_count += 1;
-                    result.details.push(SkillUpdateDetail {
-                        skill_name: skill.name.clone(),
-                        target,
-                        updated: true,
-                        reason: "Updated stale copy to latest catalog version".to_string(),
-                    });
-                }
-                SkillPlacementState::CopyCurrent => {
-                    if force {
-                        copy_skill_dir_to_config(
-                            root,
-                            target,
-                            &skill.name,
-                            &cat_dir,
-                            SkillPlacementMode::Copy,
-                        )?;
-                        result.updated_count += 1;
-                        result.details.push(SkillUpdateDetail {
-                            skill_name: skill.name.clone(),
-                            target,
-                            updated: true,
-                            reason: "Forced update of copy".to_string(),
-                        });
-                    } else {
-                        result.skipped_count += 1;
-                        result.details.push(SkillUpdateDetail {
-                            skill_name: skill.name.clone(),
-                            target,
-                            updated: false,
-                            reason: "Already up to date (CopyCurrent)".to_string(),
-                        });
-                    }
-                }
-                SkillPlacementState::Linked | SkillPlacementState::Registered => {
-                    result.skipped_count += 1;
-                    result.details.push(SkillUpdateDetail {
-                        skill_name: skill.name.clone(),
-                        target,
-                        updated: false,
-                        reason: "Symlinked or registered to catalog (always in sync)".to_string(),
-                    });
-                }
-                SkillPlacementState::Missing
-                | SkillPlacementState::BrokenLink
-                | SkillPlacementState::Unlinked => {
-                    if force {
-                        skill_add(root, &skill.name, &[target], None)?;
-                        result.updated_count += 1;
-                        result.details.push(SkillUpdateDetail {
-                            skill_name: skill.name.clone(),
-                            target,
-                            updated: true,
-                            reason: "Forced install of missing skill".to_string(),
-                        });
-                    }
-                }
+            let skip = if target == TargetName::Grok && state == SkillPlacementState::Registered {
+                Some("Registered catalog path is already current")
+            } else if placement.is_none() && matches!(state, SkillPlacementState::Linked) {
+                Some("Linked skill already references its source")
+            } else if !force
+                && matches!(
+                    state,
+                    SkillPlacementState::Missing
+                        | SkillPlacementState::BrokenLink
+                        | SkillPlacementState::Unlinked
+                )
+            {
+                Some("Not an installed copy; use --force to install")
+            } else {
+                None
+            };
+            if let Some(reason) = skip {
+                plans.push(serde_json::json!({"skill": skill.name, "target": target, "action": "skip", "reason": reason, "blocked": false}));
+                continue;
             }
+            let mode = placement.unwrap_or_else(|| {
+                if matches!(
+                    state,
+                    SkillPlacementState::CopyCurrent | SkillPlacementState::CopyStale
+                ) {
+                    SkillPlacementMode::Copy
+                } else {
+                    default_placement_mode(root)
+                }
+            });
+            let preview = preview_skill_add(root, &skill.name, &[target], Some(mode), force)?;
+            let mut plan = preview["targets"][0].clone();
+            plan["mode"] = serde_json::json!(if mode == SkillPlacementMode::Copy {
+                "copy"
+            } else {
+                "link"
+            });
+            plans.push(plan);
         }
     }
+    Ok(
+        serde_json::json!({"resource": "skill", "operation": "update", "dryRun": true, "blocked": plans.iter().any(|p| p["blocked"] == true), "targets": plans}),
+    )
+}
 
+pub fn skill_update_with_placement<P: AsRef<Path>>(
+    project_root: P,
+    skill_name_filter: Option<&str>,
+    targets: &[TargetName],
+    force: bool,
+    placement: Option<SkillPlacementMode>,
+) -> anyhow::Result<SkillUpdateResult> {
+    let root = project_root.as_ref();
+    let preview = preview_skill_update(root, skill_name_filter, targets, force, placement)?;
+    reject_skill_conflicts(&preview)?;
+    let mut result = SkillUpdateResult::default();
+    for plan in preview["targets"]
+        .as_array()
+        .context("Invalid skill update plan")?
+    {
+        let name = plan["skill"]
+            .as_str()
+            .context("Missing skill in update plan")?;
+        let target: TargetName = serde_json::from_value(plan["target"].clone())?;
+        let action = plan["action"].as_str().unwrap_or("skip");
+        let updated = action != "skip" && action != "unchanged";
+        if action != "skip" {
+            let mode = if plan["mode"] == "copy" {
+                SkillPlacementMode::Copy
+            } else {
+                SkillPlacementMode::Link
+            };
+            if let Err(error) = skill_add_with_options(root, name, &[target], Some(mode), force) {
+                anyhow::bail!(
+                    "Skill update failed for {target}/{name}: {error:#}. Completed updates: {}",
+                    result
+                        .details
+                        .iter()
+                        .filter(|d| d.updated)
+                        .map(|d| format!("{}/{}", d.target, d.skill_name))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
+        }
+        if updated {
+            result.updated_count += 1;
+        } else {
+            result.skipped_count += 1;
+        }
+        result.details.push(SkillUpdateDetail {
+            skill_name: name.into(),
+            target,
+            updated,
+            reason: plan["reason"]
+                .as_str()
+                .unwrap_or(if updated {
+                    "Updated; previous copy retained in local backups"
+                } else {
+                    "Already current"
+                })
+                .into(),
+        });
+    }
     Ok(result)
 }
 
@@ -484,6 +599,8 @@ pub fn skill_rename<P: AsRef<Path>>(
             }
         }
     }
+    let mut recovery =
+        crate::core::skill_history::SkillRenameState::prepare(root, old_name, new_name, targets)?;
     let staging = tempfile::tempdir_in(get_catalog_skills_dir())?;
     let backup = staging.path().join("catalog");
     fs::rename(&old_cat, &backup)?;
@@ -537,6 +654,7 @@ pub fn skill_rename<P: AsRef<Path>>(
                 Ok(())
             })?;
         }
+        recovery.apply()?;
         Ok(())
     })();
     if let Err(error) = result {

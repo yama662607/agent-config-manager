@@ -138,32 +138,26 @@ pub fn copy_skill_dir_to_config<P: AsRef<Path>, Q: AsRef<Path>>(
     source_dir: Q,
     mode: SkillPlacementMode,
 ) -> anyhow::Result<PathBuf> {
-    crate::storage::validate_id(skill_id)?;
-    let dest_dir = get_skill_path(project_root, target, skill_id);
-    let source = source_dir.as_ref();
-    if !source.join("SKILL.md").is_file() {
-        anyhow::bail!("No SKILL.md in {}", source.display());
-    }
-    if source
-        .canonicalize()
-        .ok()
-        .zip(dest_dir.canonicalize().ok())
-        .is_some_and(|(a, b)| a == b)
-        && !fs::symlink_metadata(&dest_dir)?.file_type().is_symlink()
-    {
-        anyhow::bail!(
-            "Source and destination are the same directory: {}",
-            dest_dir.display()
-        );
-    }
-    replace_directory(&dest_dir, |staged| {
-        if mode == SkillPlacementMode::Link {
-            create_dir_link(&stable_link_target(source, skill_id), staged)
-        } else {
-            copy_dir_recursive(source, staged)
-        }
-    })?;
-    Ok(dest_dir)
+    copy_skill_dir_to_config_with_options(project_root, target, skill_id, source_dir, mode, false)
+}
+
+/// Place a skill while preserving local edits and retaining recoverable previous copies.
+pub fn copy_skill_dir_to_config_with_options<P: AsRef<Path>, Q: AsRef<Path>>(
+    project_root: P,
+    target: TargetName,
+    skill_id: &str,
+    source_dir: Q,
+    mode: SkillPlacementMode,
+    force: bool,
+) -> anyhow::Result<PathBuf> {
+    crate::core::skill_history::deploy_skill(
+        project_root.as_ref(),
+        target,
+        skill_id,
+        source_dir.as_ref(),
+        mode,
+        force,
+    )
 }
 
 pub fn create_dir_link(source: &Path, destination: &Path) -> anyhow::Result<()> {
@@ -215,7 +209,9 @@ pub fn replace_directory(
 pub fn copy_dir_recursive<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q) -> anyhow::Result<()> {
     let src = src.as_ref();
     let dst = dst.as_ref();
-    if dst.starts_with(src) {
+    if dst.starts_with(src)
+        || crate::storage::canonical_destination(dst).starts_with(src.canonicalize()?)
+    {
         anyhow::bail!("Cannot copy a directory into itself");
     }
     fs::create_dir_all(dst)?;
@@ -227,17 +223,22 @@ pub fn copy_dir_recursive<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q) -> any
                 .iter()
                 .any(|name| entry.file_name() == *name)
         });
+    let mut directory_permissions = Vec::new();
     for entry in entries {
         let entry = entry?;
         let target = dst.join(entry.path().strip_prefix(src)?);
         if entry.file_type().is_dir() {
             fs::create_dir_all(&target)?;
+            directory_permissions.push((target, fs::metadata(entry.path())?.permissions()));
         } else if entry.file_type().is_file() {
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent)?;
             }
             fs::copy(entry.path(), target)?;
         }
+    }
+    for (directory, permissions) in directory_permissions.into_iter().rev() {
+        fs::set_permissions(directory, permissions)?;
     }
     Ok(())
 }

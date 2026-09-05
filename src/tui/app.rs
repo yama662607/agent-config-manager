@@ -1,14 +1,14 @@
-use crate::core::doctor::{run_doctor, DiagnosticReport};
-use crate::core::mcp::{get_mcp_workspace_status, mcp_disable, mcp_enable, mcp_remove};
+use crate::adapters::{get_mcp_servers, ServerInfo};
+use crate::core::doctor::{run_doctor, CheckStatus, DiagnosticReport};
+use crate::core::mcp::{get_mcp_workspace_status, mcp_disable, mcp_enable};
 use crate::core::plugin::{get_plugin_workspace_status, plugin_install, plugin_remove};
 use crate::core::skill::{get_skill_workspace_status, skill_add, skill_remove, skill_update};
 use crate::paths::{
     get_agent_mcp_config_path, get_catalog_plugin_dir, get_catalog_skill_dir, get_skill_path,
     home_dir,
 };
-use crate::types::{
-    McpStatus, PluginPlacementState, PluginStatus, SkillPlacementState, SkillStatus, TargetName,
-};
+use crate::types::{McpRecipe, McpStatus, PluginStatus, SkillStatus, TargetName};
+use anyhow::{bail, Context};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
@@ -17,7 +17,7 @@ use crossterm::terminal::{
 use ratatui::backend::CrosstermBackend;
 use ratatui::widgets::ListState;
 use ratatui::Terminal;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -67,11 +67,13 @@ pub struct App {
 
     // Flag to trigger external editor
     pub pending_editor_file: Option<PathBuf>,
+    pub pending_edit_targets: Vec<TargetName>,
+    pending_mcp_editor: Option<McpEditor>,
 }
 
 impl App {
     pub fn new(project_root: PathBuf, targets: Vec<TargetName>) -> Self {
-        let is_home = project_root == home_dir();
+        let is_home = crate::paths::is_home_scope(&project_root);
         let mut skill_list_state = ListState::default();
         skill_list_state.select(Some(0));
         let mut mcp_list_state = ListState::default();
@@ -101,6 +103,8 @@ impl App {
             preview_scroll: 0,
             status_message: None,
             pending_editor_file: None,
+            pending_edit_targets: Vec::new(),
+            pending_mcp_editor: None,
         };
         app.refresh();
         app
@@ -139,7 +143,10 @@ impl App {
             }
         }
         if !errors.is_empty() {
-            self.status_message = Some(format!("Error: {}", errors.join("; ")));
+            self.status_message = Some(crate::core::operations::redact_text(&format!(
+                "Error: {}",
+                errors.join("; ")
+            )));
         }
         self.clamp_indices();
     }
@@ -182,6 +189,10 @@ impl App {
     }
 
     pub fn toggle_scope(&mut self) {
+        if self.is_home_scope && crate::paths::is_home_scope(&self.initial_project_root) {
+            self.status_message = Some("Already in home scope; restart ACM from a project directory to manage project settings".into());
+            return;
+        }
         self.is_home_scope = !self.is_home_scope;
         if self.is_home_scope {
             self.project_root = home_dir();
@@ -312,117 +323,438 @@ impl App {
         }
     }
 
+    fn no_selection(&mut self) {
+        self.status_message = Some("No item selected; no changes made".into());
+    }
+
+    fn perform_targets(
+        &mut self,
+        action: &str,
+        targets: &[TargetName],
+        mut operation: impl FnMut(TargetName) -> anyhow::Result<String>,
+    ) {
+        let mut results = Vec::new();
+        let mut failed = Vec::new();
+        for &target in targets {
+            match operation(target) {
+                Ok(detail) => results.push(format!("{target}: {detail}")),
+                Err(error) => {
+                    results.push(format!("{target}: failed ({error:#})"));
+                    failed.push(target.to_string());
+                }
+            }
+        }
+        self.status_message = Some(if results.is_empty() {
+            format!("{action}: no targets selected; no changes made")
+        } else if failed.is_empty() {
+            format!("{action}: {}", results.join("; "))
+        } else {
+            format!(
+                "Error during {action}: {}. Retry targets: {}",
+                results.join("; "),
+                failed.join(",")
+            )
+        });
+        self.refresh_after_action();
+    }
+
+    fn refresh_after_action(&mut self) {
+        // A refresh failure must not hide the action's failure or partial completion.
+        let action_message = self.status_message.take();
+        self.refresh();
+        self.status_message = match (action_message, self.status_message.take()) {
+            (Some(action), Some(refresh)) => Some(format!("{action}. Refresh: {refresh}")),
+            (action, refresh) => action.or(refresh),
+        }
+        .map(|message| crate::core::operations::redact_text(&message));
+    }
+
     pub fn toggle_single_target(&mut self, target: TargetName) {
+        if !self.targets.contains(&target) {
+            self.status_message = Some(format!(
+                "Target {target} is outside the configured targets; no changes made"
+            ));
+            return;
+        }
+        self.toggle_selected(&[target], true);
+    }
+
+    fn toggle_selected(&mut self, targets: &[TargetName], individual: bool) {
+        let root = self.project_root.clone();
         match self.active_tab {
             ActiveTab::Skills => {
-                let filtered = self.filtered_skills();
-                if let Some(skill) = filtered.get(self.selected_skill_index) {
-                    let name = skill.name.clone();
-                    let placement = skill
-                        .placement
-                        .get(&target)
-                        .copied()
-                        .unwrap_or(SkillPlacementState::Missing);
-                    let is_active = placement != SkillPlacementState::Missing
-                        && placement != SkillPlacementState::BrokenLink;
-
-                    if is_active {
-                        match skill_remove(&self.project_root, &name, &[target]) {
-                            Ok(_) => {
-                                self.status_message =
-                                    Some(format!("Disabled {} on {}", name, target))
-                            }
-                            Err(e) => {
-                                self.status_message =
-                                    Some(format!("Error disabling {}: {}", name, e))
-                            }
-                        }
+                let Some(skill) = self
+                    .filtered_skills()
+                    .get(self.selected_skill_index)
+                    .cloned()
+                    .cloned()
+                else {
+                    return self.no_selection();
+                };
+                self.perform_targets(&format!("Toggle skill {}", skill.name), targets, |target| {
+                    let disable = if individual {
+                        skill.targets.contains(&target)
                     } else {
-                        match skill_add(&self.project_root, &name, &[target], None) {
-                            Ok(_) => {
-                                self.status_message =
-                                    Some(format!("Enabled {} on {}", name, target))
-                            }
-                            Err(e) => {
-                                self.status_message =
-                                    Some(format!("Error enabling {}: {}", name, e))
-                            }
+                        skill.enabled
+                    };
+                    if disable {
+                        skill_remove(&root, &skill.name, &[target])?;
+                        Ok("disabled".into())
+                    } else {
+                        skill_add(&root, &skill.name, &[target], None)?;
+                        Ok("enabled".into())
+                    }
+                });
+            }
+            ActiveTab::Mcp => {
+                let Some(mcp) = self
+                    .filtered_mcps()
+                    .get(self.selected_mcp_index)
+                    .cloned()
+                    .cloned()
+                else {
+                    return self.no_selection();
+                };
+                if mcp.plugin.is_some() {
+                    self.status_message = Some("This MCP is managed by a plugin; use the Plugins tab to change its installation".into());
+                    return;
+                }
+                self.perform_targets(&format!("Toggle MCP {}", mcp.name), targets, |target| {
+                    let state = mcp
+                        .state
+                        .get(&target)
+                        .map(String::as_str)
+                        .unwrap_or("missing");
+                    let disable = if individual {
+                        !matches!(state, "missing" | "disabled")
+                    } else {
+                        mcp.enabled
+                    };
+                    if disable && state == "missing" {
+                        return Ok("not configured; unchanged".into());
+                    }
+                    if state == "missing" {
+                        crate::core::mcp::mcp_add(&root, &mcp.name, &[target], Some(&mcp.recipe))?;
+                    } else {
+                        let (key, _) = mcp_native_identity(&root, &mcp, target)?;
+                        if disable {
+                            mcp_disable(&root, &key, &[target])?;
+                        } else {
+                            mcp_enable(&root, &key, &[target])?;
                         }
                     }
-                    self.refresh();
+                    Ok(if disable { "disabled" } else { "enabled" }.into())
+                });
+            }
+            ActiveTab::Plugins => {
+                let Some(plugin) = self
+                    .filtered_plugins()
+                    .get(self.selected_plugin_index)
+                    .cloned()
+                    .cloned()
+                else {
+                    return self.no_selection();
+                };
+                self.perform_targets(&format!("Toggle plugin {}", plugin.id), targets, |target| {
+                    let disable = if individual {
+                        plugin.targets.contains(&target)
+                    } else {
+                        plugin.enabled
+                    };
+                    if disable {
+                        plugin_remove(&root, &plugin.id, &[target])?;
+                        Ok("uninstalled".into())
+                    } else {
+                        plugin_install(&root, &plugin.id, &[target])?;
+                        Ok("installed".into())
+                    }
+                });
+            }
+            ActiveTab::Doctor => {}
+        }
+    }
+
+    /// Catalog skills are edited at their source; inline skills use a configured provider.
+    pub fn skill_editor_path(&self, name: &str) -> Option<PathBuf> {
+        let catalog = get_catalog_skill_dir(name).join("SKILL.md");
+        std::iter::once(catalog)
+            .chain(
+                self.targets.iter().map(|target| {
+                    get_skill_path(&self.project_root, *target, name).join("SKILL.md")
+                }),
+            )
+            .find(|path| path.is_file())
+    }
+
+    fn edit_selected(&mut self) {
+        self.pending_editor_file = None;
+        self.pending_mcp_editor = None;
+        match self.active_tab {
+            ActiveTab::Skills => {
+                let Some(skill) = self
+                    .filtered_skills()
+                    .get(self.selected_skill_index)
+                    .cloned()
+                else {
+                    return self.no_selection();
+                };
+                self.pending_editor_file = self.skill_editor_path(&skill.name);
+                if self.pending_editor_file.is_none() {
+                    self.status_message = Some(
+                        "Error: no editable SKILL.md in the catalog or configured targets".into(),
+                    );
                 }
             }
             ActiveTab::Mcp => {
-                let filtered = self.filtered_mcps();
-                if let Some(mcp) = filtered.get(self.selected_mcp_index) {
-                    let name = mcp.name.clone();
-                    if mcp.targets.contains(&target) {
-                        match mcp_remove(&self.project_root, &name, &[target]) {
-                            Ok(_) => {
-                                self.status_message =
-                                    Some(format!("Removed {} from {}", name, target))
-                            }
-                            Err(e) => {
-                                self.status_message =
-                                    Some(format!("Error removing {}: {}", name, e))
-                            }
-                        }
-                    } else {
-                        match crate::core::mcp::mcp_add(
-                            &self.project_root,
-                            &name,
-                            &[target],
-                            Some(&mcp.recipe),
-                        ) {
-                            Ok(_) => {
-                                self.status_message = Some(format!("Added {} to {}", name, target))
-                            }
-                            Err(e) => {
-                                self.status_message = Some(format!("Error adding {}: {}", name, e))
-                            }
-                        }
+                let Some(mcp) = self.filtered_mcps().get(self.selected_mcp_index).cloned() else {
+                    return self.no_selection();
+                };
+                if mcp.plugin.is_some() {
+                    self.status_message = Some("This MCP is managed by a plugin; edit the plugin source and update it from the Plugins tab".into());
+                    return;
+                }
+                let targets: Vec<_> = self
+                    .targets
+                    .iter()
+                    .filter(|target| mcp.targets.contains(target))
+                    .copied()
+                    .collect();
+                match targets.as_slice() {
+                    [] => {
+                        self.status_message =
+                            Some("No configured target contains this MCP; no changes made".into())
                     }
-                    self.refresh();
+                    [target] => self.prepare_mcp_editor(*target),
+                    _ => {
+                        self.status_message = Some(format!(
+                            "Edit MCP target: {}. Press c/x/a/g to choose; Esc cancels",
+                            targets
+                                .iter()
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ));
+                        self.pending_edit_targets = targets;
+                    }
                 }
             }
             ActiveTab::Plugins => {
-                let filtered = self.filtered_plugins();
-                if let Some(plugin) = filtered.get(self.selected_plugin_index) {
-                    let id = plugin.id.clone();
-                    let placement = plugin
-                        .placement
-                        .get(&target)
-                        .copied()
-                        .unwrap_or(PluginPlacementState::Missing);
-                    let is_active = placement != PluginPlacementState::Missing
-                        && placement != PluginPlacementState::Broken;
-
-                    if is_active {
-                        match plugin_remove(&self.project_root, &id, &[target]) {
-                            Ok(_) => {
-                                self.status_message =
-                                    Some(format!("Removed plugin {} from {}", id, target))
-                            }
-                            Err(e) => {
-                                self.status_message = Some(format!("Error removing {}: {}", id, e))
-                            }
-                        }
-                    } else {
-                        match plugin_install(&self.project_root, &id, &[target]) {
-                            Ok(_) => {
-                                self.status_message =
-                                    Some(format!("Installed plugin {} on {}", id, target))
-                            }
-                            Err(e) => {
-                                self.status_message =
-                                    Some(format!("Error installing {}: {}", id, e))
-                            }
-                        }
-                    }
-                    self.refresh();
+                let Some(plugin) = self
+                    .filtered_plugins()
+                    .get(self.selected_plugin_index)
+                    .cloned()
+                else {
+                    return self.no_selection();
+                };
+                let dir = get_catalog_plugin_dir(&plugin.id);
+                let mut manifests = Vec::new();
+                for target in &self.targets {
+                    manifests.push(match target {
+                        TargetName::Claude => ".claude-plugin/plugin.json",
+                        TargetName::Codex => ".codex-plugin/plugin.json",
+                        TargetName::Antigravity => ".gemini-plugin/plugin.json",
+                        TargetName::Grok => ".grok-plugin/plugin.json",
+                    });
+                }
+                manifests.extend([
+                    "plugin.json",
+                    ".claude-plugin/plugin.json",
+                    ".codex-plugin/plugin.json",
+                    ".gemini-plugin/plugin.json",
+                    ".grok-plugin/plugin.json",
+                    "package.json",
+                ]);
+                self.pending_editor_file = manifests
+                    .into_iter()
+                    .map(|relative| dir.join(relative))
+                    .find(|path| path.is_file());
+                if self.pending_editor_file.is_none() {
+                    self.status_message = Some("Error: no editable plugin manifest found".into());
                 }
             }
             ActiveTab::Doctor => {}
+        }
+    }
+
+    fn prepare_mcp_editor(&mut self, target: TargetName) {
+        let result = (|| -> anyhow::Result<McpEditor> {
+            let mcp = self
+                .filtered_mcps()
+                .get(self.selected_mcp_index)
+                .cloned()
+                .context("No MCP selected")?;
+            let (key, original) = mcp_native_identity(&self.project_root, mcp, target)?;
+            let mut file = tempfile::Builder::new()
+                .prefix("acm-mcp-")
+                .suffix(".json")
+                .tempfile()?;
+            let recipe = original
+                .recipe
+                .as_ref()
+                .context("MCP has no editable recipe")?;
+            file.write_all(serde_json::to_string_pretty(recipe)?.as_bytes())?;
+            file.flush()?;
+            Ok(McpEditor {
+                file,
+                target,
+                key,
+                original,
+            })
+        })();
+        match result {
+            Ok(editor) => {
+                self.pending_editor_file = Some(editor.file.path().to_path_buf());
+                self.status_message = Some(format!("Editing MCP recipe for {target}; validated changes will be applied through the provider adapter"));
+                self.pending_mcp_editor = Some(editor);
+            }
+            Err(error) => {
+                self.status_message = Some(crate::core::operations::redact_text(&format!(
+                    "Error opening MCP editor: {error:#}"
+                )))
+            }
+        }
+    }
+
+    /// Complete an editor action only after the editor successfully exits.
+    pub fn complete_editor(&mut self, file: &Path, editor_result: anyhow::Result<()>) {
+        let pending = self.pending_mcp_editor.take();
+        let result = editor_result.and_then(|()| {
+            if let Some(pending) = pending {
+                pending.apply(&self.project_root)
+            } else {
+                Ok(format!("Editor closed successfully: {}", file.display()))
+            }
+        });
+        self.status_message = Some(match result {
+            Ok(message) => message,
+            Err(error) => format!("Error editing: {error:#}"),
+        });
+        self.refresh_after_action();
+    }
+
+    fn update_selected(&mut self) {
+        let root = self.project_root.clone();
+        let targets = self.targets.clone();
+        match self.active_tab {
+            ActiveTab::Skills => {
+                let Some(skill) = self
+                    .filtered_skills()
+                    .get(self.selected_skill_index)
+                    .cloned()
+                    .cloned()
+                else {
+                    return self.no_selection();
+                };
+                self.perform_targets(
+                    &format!("Update skill {}", skill.name),
+                    &targets,
+                    |target| {
+                        let result = skill_update(&root, Some(&skill.name), &[target], false)?;
+                        let reasons = result
+                            .details
+                            .iter()
+                            .map(|detail| detail.reason.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        Ok(format!(
+                            "updated {}, skipped {}{}",
+                            result.updated_count,
+                            result.skipped_count,
+                            if reasons.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" ({reasons})")
+                            }
+                        ))
+                    },
+                );
+            }
+            ActiveTab::Plugins => {
+                let Some(plugin) = self
+                    .filtered_plugins()
+                    .get(self.selected_plugin_index)
+                    .cloned()
+                    .cloned()
+                else {
+                    return self.no_selection();
+                };
+                self.status_message = Some(match crate::core::plugin::plugin_update(&root, &plugin.id, &targets) {
+                    Ok(result) => format!("Plugin {}: {}", plugin.id, result.message),
+                    Err(error) => format!("Error updating plugin {}: {error:#}. Earlier source/provider changes may remain; inspect status before retrying", plugin.id),
+                });
+                self.refresh_after_action();
+            }
+            _ => {}
+        }
+    }
+
+    fn delete_selected(&mut self) {
+        let root = self.project_root.clone();
+        let targets = self.targets.clone();
+        match self.active_tab {
+            ActiveTab::Skills => {
+                let Some(skill) = self
+                    .filtered_skills()
+                    .get(self.selected_skill_index)
+                    .cloned()
+                    .cloned()
+                else {
+                    return self.no_selection();
+                };
+                self.perform_targets(
+                    &format!("Remove skill {}", skill.name),
+                    &targets,
+                    |target| {
+                        skill_remove(&root, &skill.name, &[target])?;
+                        Ok("removed".into())
+                    },
+                );
+            }
+            ActiveTab::Plugins => {
+                let Some(plugin) = self
+                    .filtered_plugins()
+                    .get(self.selected_plugin_index)
+                    .cloned()
+                    .cloned()
+                else {
+                    return self.no_selection();
+                };
+                self.perform_targets(
+                    &format!("Remove plugin {}", plugin.id),
+                    &targets,
+                    |target| {
+                        plugin_remove(&root, &plugin.id, &[target])?;
+                        Ok("uninstalled".into())
+                    },
+                );
+            }
+            _ => {}
+        }
+    }
+
+    fn repair(&mut self) {
+        match run_doctor(&self.project_root, true, &self.targets) {
+            Ok(report) => {
+                let remaining = report
+                    .checks
+                    .iter()
+                    .filter(|check| {
+                        matches!(check.status, CheckStatus::Error | CheckStatus::Warning)
+                    })
+                    .count();
+                self.status_message = Some(format!(
+                    "Repair completed: fixed {} issues; {} warnings/errors remain",
+                    report.fixed_count, remaining
+                ));
+                self.refresh_after_action();
+                self.doctor_report = Some(report);
+            }
+            Err(error) => {
+                self.status_message = Some(format!(
+                    "Error repairing diagnostics: {error:#}. Earlier repairs may remain applied"
+                ));
+                self.refresh_after_action();
+            }
         }
     }
 
@@ -433,6 +765,30 @@ impl App {
 
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             self.running = false;
+            return;
+        }
+
+        if !self.pending_edit_targets.is_empty() {
+            let target = match key.code {
+                KeyCode::Char('c') => Some(TargetName::Claude),
+                KeyCode::Char('x') => Some(TargetName::Codex),
+                KeyCode::Char('a') => Some(TargetName::Antigravity),
+                KeyCode::Char('g') => Some(TargetName::Grok),
+                KeyCode::Esc => {
+                    self.pending_edit_targets.clear();
+                    self.status_message = Some("Editing cancelled; no changes made".into());
+                    return;
+                }
+                _ => None,
+            };
+            if let Some(target) = target {
+                if self.pending_edit_targets.contains(&target) {
+                    self.pending_edit_targets.clear();
+                    self.prepare_mcp_editor(target);
+                } else {
+                    self.status_message = Some(format!("{target} has no selected MCP in the configured targets; choose another target or Esc"));
+                }
+            }
             return;
         }
 
@@ -533,216 +889,142 @@ impl App {
             KeyCode::PageUp | KeyCode::Char('K') => {
                 self.preview_scroll = self.preview_scroll.saturating_sub(5);
             }
-            KeyCode::Char(' ') => match self.active_tab {
-                ActiveTab::Skills => {
-                    let filtered = self.filtered_skills();
-                    if let Some(skill) = filtered.get(self.selected_skill_index) {
-                        let name = skill.name.clone();
-                        let is_enabled = skill.enabled;
-                        if is_enabled {
-                            match skill_remove(&self.project_root, &name, &self.targets) {
-                                Ok(_) => {
-                                    self.status_message = Some(format!("Disabled skill: {}", name))
-                                }
-                                Err(e) => {
-                                    self.status_message =
-                                        Some(format!("Error disabling {}: {}", name, e))
-                                }
-                            }
-                        } else {
-                            match skill_add(&self.project_root, &name, &self.targets, None) {
-                                Ok(_) => {
-                                    self.status_message = Some(format!("Enabled skill: {}", name))
-                                }
-                                Err(e) => {
-                                    self.status_message =
-                                        Some(format!("Error enabling {}: {}", name, e))
-                                }
-                            }
-                        }
-                        self.refresh();
-                    }
-                }
-                ActiveTab::Mcp => {
-                    let filtered = self.filtered_mcps();
-                    if let Some(mcp) = filtered.get(self.selected_mcp_index) {
-                        let name = mcp.name.clone();
-                        if mcp.enabled {
-                            match mcp_disable(&self.project_root, &name, &self.targets) {
-                                Ok(_) => {
-                                    self.status_message =
-                                        Some(format!("Disabled MCP server: {}", name))
-                                }
-                                Err(e) => {
-                                    self.status_message =
-                                        Some(format!("Error disabling {}: {}", name, e))
-                                }
-                            }
-                        } else {
-                            match mcp_enable(&self.project_root, &name, &self.targets) {
-                                Ok(_) => {
-                                    self.status_message =
-                                        Some(format!("Enabled MCP server: {}", name))
-                                }
-                                Err(e) => {
-                                    self.status_message =
-                                        Some(format!("Error enabling {}: {}", name, e))
-                                }
-                            }
-                        }
-                        self.refresh();
-                    }
-                }
-                ActiveTab::Plugins => {
-                    let filtered = self.filtered_plugins();
-                    if let Some(plugin) = filtered.get(self.selected_plugin_index) {
-                        let id = plugin.id.clone();
-                        if plugin.enabled {
-                            match plugin_remove(&self.project_root, &id, &self.targets) {
-                                Ok(_) => {
-                                    self.status_message = Some(format!("Disabled plugin: {}", id))
-                                }
-                                Err(e) => {
-                                    self.status_message =
-                                        Some(format!("Error disabling {}: {}", id, e))
-                                }
-                            }
-                        } else {
-                            match plugin_install(&self.project_root, &id, &self.targets) {
-                                Ok(_) => {
-                                    self.status_message = Some(format!("Enabled plugin: {}", id))
-                                }
-                                Err(e) => {
-                                    self.status_message =
-                                        Some(format!("Error enabling {}: {}", id, e))
-                                }
-                            }
-                        }
-                        self.refresh();
-                    }
-                }
-                ActiveTab::Doctor => {}
-            },
+            KeyCode::Char(' ') => self.toggle_selected(&self.targets.clone(), false),
             KeyCode::Char('c') => self.toggle_single_target(TargetName::Claude),
             KeyCode::Char('x') => self.toggle_single_target(TargetName::Codex),
             KeyCode::Char('a') => self.toggle_single_target(TargetName::Antigravity),
             KeyCode::Char('g') => self.toggle_single_target(TargetName::Grok),
-            KeyCode::Char('e') => match self.active_tab {
-                ActiveTab::Skills => {
-                    let filtered = self.filtered_skills();
-                    if let Some(skill) = filtered.get(self.selected_skill_index) {
-                        let skill_md = get_catalog_skill_dir(&skill.name).join("SKILL.md");
-                        if skill_md.exists() {
-                            self.pending_editor_file = Some(skill_md);
-                        } else {
-                            let target_md =
-                                get_skill_path(&self.project_root, TargetName::Claude, &skill.name)
-                                    .join("SKILL.md");
-                            if target_md.exists() {
-                                self.pending_editor_file = Some(target_md);
-                            }
-                        }
-                    }
-                }
-                ActiveTab::Mcp => {
-                    let config_path =
-                        get_agent_mcp_config_path(&self.project_root, TargetName::Claude);
-                    if config_path.exists() {
-                        self.pending_editor_file = Some(config_path);
-                    }
-                }
-                ActiveTab::Plugins => {
-                    let filtered = self.filtered_plugins();
-                    if let Some(plugin) = filtered.get(self.selected_plugin_index) {
-                        let pdir = get_catalog_plugin_dir(&plugin.id);
-                        let manifest = pdir.join(".claude-plugin").join("plugin.json");
-                        if manifest.exists() {
-                            self.pending_editor_file = Some(manifest);
-                        } else {
-                            let root_m = pdir.join("plugin.json");
-                            if root_m.exists() {
-                                self.pending_editor_file = Some(root_m);
-                            } else {
-                                let pkg = pdir.join("package.json");
-                                if pkg.exists() {
-                                    self.pending_editor_file = Some(pkg);
-                                }
-                            }
-                        }
-                    }
-                }
-                ActiveTab::Doctor => {}
-            },
-            KeyCode::Char('u') => match self.active_tab {
-                ActiveTab::Skills => {
-                    let filtered = self.filtered_skills();
-                    let skill_filter = filtered
-                        .get(self.selected_skill_index)
-                        .map(|s| s.name.as_str());
-                    if let Ok(res) =
-                        skill_update(&self.project_root, skill_filter, &self.targets, false)
-                    {
-                        self.status_message = Some(format!(
-                            "Updated {} skill copies (skipped {})",
-                            res.updated_count, res.skipped_count
-                        ));
-                        self.refresh();
-                    }
-                }
-                ActiveTab::Plugins => {
-                    let filtered = self.filtered_plugins();
-                    if let Some(plugin) = filtered.get(self.selected_plugin_index) {
-                        let id = plugin.id.clone();
-                        match crate::core::plugin::plugin_update(
-                            &self.project_root,
-                            &id,
-                            &self.targets,
-                        ) {
-                            Ok(res) => {
-                                self.status_message =
-                                    Some(format!("Plugin {}: {}", id, res.message))
-                            }
-                            Err(e) => {
-                                self.status_message =
-                                    Some(format!("Error updating plugin {}: {}", id, e))
-                            }
-                        }
-                        self.refresh();
-                    }
-                }
-                _ => {}
-            },
-            KeyCode::Char('f') if self.active_tab == ActiveTab::Doctor => {
-                if let Ok(report) = run_doctor(&self.project_root, true, &self.targets) {
-                    self.status_message = Some(format!("Fixed {} issues!", report.fixed_count));
-                    self.doctor_report = Some(report);
-                    self.refresh();
-                }
-            }
-            KeyCode::Char('d') => match self.active_tab {
-                ActiveTab::Skills => {
-                    let filtered = self.filtered_skills();
-                    if let Some(skill) = filtered.get(self.selected_skill_index) {
-                        let name = skill.name.clone();
-                        let _ = skill_remove(&self.project_root, &name, &self.targets);
-                        self.status_message = Some(format!("Removed skill: {}", name));
-                        self.refresh();
-                    }
-                }
-                ActiveTab::Plugins => {
-                    let filtered = self.filtered_plugins();
-                    if let Some(plugin) = filtered.get(self.selected_plugin_index) {
-                        let id = plugin.id.clone();
-                        let _ = plugin_remove(&self.project_root, &id, &self.targets);
-                        self.status_message = Some(format!("Removed plugin: {}", id));
-                        self.refresh();
-                    }
-                }
-                _ => {}
-            },
+            KeyCode::Char('e') => self.edit_selected(),
+            KeyCode::Char('u') => self.update_selected(),
+            KeyCode::Char('f') if self.active_tab == ActiveTab::Doctor => self.repair(),
+            KeyCode::Char('d') => self.delete_selected(),
             _ => {}
         }
     }
+}
+
+struct McpEditor {
+    file: tempfile::NamedTempFile,
+    target: TargetName,
+    key: String,
+    original: ServerInfo,
+}
+
+impl McpEditor {
+    fn apply(self, root: &Path) -> anyhow::Result<String> {
+        let value: serde_json::Value = serde_json::from_slice(&std::fs::read(self.file.path())?)
+            .context("Edited MCP recipe must be valid JSON; provider settings were not changed")?;
+        for field in value
+            .as_object()
+            .context("MCP recipe must be a JSON object")?
+            .keys()
+        {
+            if !["command", "args", "url", "cwd", "env", "transport"].contains(&field.as_str()) {
+                bail!("Unknown MCP recipe field: {field}; provider settings were not changed");
+            }
+        }
+        let recipe: McpRecipe = serde_json::from_value(value)
+            .context("Invalid MCP recipe; provider settings were not changed")?;
+        crate::adapters::validate_recipe(&recipe)?;
+        if self.original.recipe.as_ref() == Some(&recipe) {
+            return Ok(format!("MCP {} on {} unchanged", self.key, self.target));
+        }
+        let path = get_agent_mcp_config_path(root, self.target);
+        crate::adapters::replace_mcp_recipe(
+            self.target,
+            &path,
+            &self.key,
+            &self.original,
+            &recipe,
+        )?;
+        Ok(format!("Updated MCP {} on {}", self.key, self.target))
+    }
+}
+
+fn mcp_native_identity(
+    root: &Path,
+    mcp: &McpStatus,
+    target: TargetName,
+) -> anyhow::Result<(String, ServerInfo)> {
+    let entries = crate::catalog::store::list_mcps()?;
+    let servers = get_mcp_servers(target, get_agent_mcp_config_path(root, target))?;
+    let mut matches = servers.into_iter().filter(|(name, info)| {
+        let canonical = info
+            .recipe
+            .as_ref()
+            .and_then(|recipe| crate::core::mcp::match_entry(&entries, name, recipe))
+            .map(|entry| entry.id.as_str())
+            .unwrap_or(name.as_str());
+        canonical == mcp.name
+    });
+    let selected = matches
+        .next()
+        .context("MCP definition no longer exists on this target; refresh and try again")?;
+    if matches.next().is_some() {
+        bail!("Multiple native MCP definitions match this item; resolve the ambiguity using the CLI first");
+    }
+    Ok(selected)
+}
+
+/// Run an external editor without a shell, preserving quoted program paths and arguments.
+pub fn run_external_editor(editor: &str, file: &Path) -> anyhow::Result<()> {
+    let args = editor_arguments(editor)?;
+    let status = Command::new(&args[0])
+        .args(&args[1..])
+        .arg(file)
+        .status()
+        .context("Could not start the configured editor")?;
+    if !status.success() {
+        bail!("Editor exited unsuccessfully ({status}); no MCP recipe changes were applied");
+    }
+    Ok(())
+}
+
+fn editor_arguments(editor: &str) -> anyhow::Result<Vec<String>> {
+    let mut args = Vec::new();
+    let mut word = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut started = false;
+    let mut chars = editor.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if escaped {
+            word.push(ch);
+            escaped = false;
+            started = true;
+        } else if ch == '\\'
+            && quote != Some('\'')
+            && chars
+                .peek()
+                .is_some_and(|next| matches!(next, '\\' | '\'' | '"') || next.is_whitespace())
+        {
+            escaped = true;
+            started = true;
+        } else if Some(ch) == quote {
+            quote = None;
+        } else if quote.is_none() && matches!(ch, '\'' | '"') {
+            quote = Some(ch);
+            started = true;
+        } else if quote.is_none() && ch.is_whitespace() {
+            if started {
+                args.push(std::mem::take(&mut word));
+                started = false;
+            }
+        } else {
+            word.push(ch);
+            started = true;
+        }
+    }
+    if escaped || quote.is_some() {
+        bail!("Invalid editor command: unterminated quote or escape");
+    }
+    if started {
+        args.push(word);
+    }
+    if args.first().is_none_or(|program| program.is_empty()) {
+        bail!("Configured editor command is empty");
+    }
+    Ok(args)
 }
 
 pub fn run_tui(project_root: &Path, targets: &[TargetName]) -> anyhow::Result<()> {
@@ -791,29 +1073,14 @@ pub fn run_tui_tab(
                 .or_else(|_| std::env::var("EDITOR"))
                 .unwrap_or_else(|_| "nano".to_string());
 
-            let mut parts = editor_env.split_whitespace();
-            if let Some(cmd) = parts.next() {
-                let mut cmd_builder = Command::new(cmd);
-                for arg in parts {
-                    cmd_builder.arg(arg);
-                }
-                cmd_builder.arg(&file_to_edit);
-                let _ = cmd_builder.status();
-            }
+            let editor_result = run_external_editor(&editor_env, &file_to_edit);
 
             enable_raw_mode()?;
             execute!(terminal.backend_mut(), EnterAlternateScreen)?;
             terminal.hide_cursor()?;
             terminal.clear()?;
 
-            app.status_message = Some(format!(
-                "Edited {}",
-                file_to_edit
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-            ));
-            app.refresh();
+            app.complete_editor(&file_to_edit, editor_result);
         }
 
         if event::poll(std::time::Duration::from_millis(50))? {

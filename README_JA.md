@@ -1,6 +1,6 @@
 # agent-config-manager
 
-[English](README.md) · [Rust移行メモ](docs/rust-migration.md)
+[English](README.md) · [Rust移行メモ](docs/rust-migration.md) · [差分確認・復元・検証の詳細](docs/native-workflows.md)
 
 `acm` は Claude Code・Codex・Antigravity・Grok の MCP サーバー、スキル、プラグインを管理するツールです。CLIと対話型TUIは同じRust実装を使います。プロバイダーの設定ファイルを直接扱い、カタログには再利用する定義とディレクトリ一式を保存します。
 
@@ -39,7 +39,13 @@ Rustパッケージの公開まではnpmに旧版が残る場合があります�
 catalog_dir = "~/Code/my-agent-catalog"
 default_targets = ["claude", "codex"]
 # discovery_roots = ["~/Applications", "~/Library/Application Support/Claude"]
+
+# PATHを変えずにネイティブCLIを明示する場合
+# [provider_commands]
+# codex = "/path/to/codex"
 ```
+
+ネイティブCLIの優先順位は `ACM_CLAUDE_BIN` / `ACM_CODEX_BIN` / `ACM_ANTIGRAVITY_BIN` / `ACM_GROK_BIN` → `provider_commands` の該当項目 → PATH上の通常コマンド（Antigravityは `agy`）です。プラグイン操作とClaudeのホームMCP委譲に適用し、MCP定義自身の起動コマンドには影響しません。
 
 カタログの優先順位は `ACM_CATALOG_DIR` → `catalog_dir` → `~/.acm` です。対象の設定がなければ4プロバイダーを選択します。壊れた設定はエラーとして報告します。
 
@@ -66,6 +72,8 @@ acm mcp adopt example --targets codex    # 指定した1プロバイダーの定
 acm mcp list --catalog --search example
 acm catalog mcp show example             # 従来のコマンド形式も利用可能
 ```
+
+`mcp add/edit/remove/enable/disable/update/adopt` は `--dry-run` に対応します。変更先と機密値を伏せた変更前後の定義を表示し、ファイル更新やプロバイダーコマンドの実行はしません。更新は無効状態を保持し、カタログとの対応が曖昧な定義を推測で変更しません。
 
 状態には `synced`、`differs`、`disabled`、`inline`、`plugin`、`missing` を表示します。設定に含まれる無関係な項目とTOMLコメントを保持します。ClaudeのホームMCPは `claude mcp` 経由で変更します。Claude/Antigravityで無効化した定義はマシン側に保存し、再有効化時に復元します。
 
@@ -98,9 +106,21 @@ acm skill outdated renamed-skill
 acm skill update renamed-skill --catalog
 ```
 
-`skill update` は配置済みコピーを更新します。カタログスコープでは記録したローカル/GitHubソースから更新します。forked指定のスキルは `--force` がない限り更新しません。リネームは名前の衝突を拒否し、配置先で編集したファイルを保持します。
+`skill update` は最後に配置した内容と現在のコピーを比較します。配置後の編集や、baselineがない旧コピーの内容が異なる場合は `--force` が必要です。`--copy` / `--link` を明示しても保護を迂回しません。既存コピーの置き換え前に、補助ファイルと権限を含む完全なバックアップを保存します。カタログと一致する旧コピーは、置き換えずにbaselineを記録できます。カタログスコープでは記録したローカル/GitHubソースから更新します。forked指定のスキルは `--force` がない限り更新しません。リネームは名前の衝突を拒否し、配置先の編集内容・baseline・復元履歴を保持します。
 
 `remove` / `disable` は配置先から取り除きます。カタログを削除するのはカタログスコープを指定した場合です。カタログにないスキルを後で復元したい場合は、削除前にimportしてください。
+
+```sh
+acm skill update my-skill --targets codex --dry-run
+acm skill update my-skill --targets codex --force
+acm skill backups my-skill --targets codex --json
+acm skill restore my-skill BACKUP_ID --targets codex --dry-run
+acm skill restore my-skill BACKUP_ID --targets codex
+```
+
+復元はスキル名・プロジェクト/ホーム・対象プロバイダーを照合し、対象を1つに指定して実行します。バックアップ作成後の変更があれば `--force` が必要です。復元前のコピーも保存し、`undoBackupId` で復元操作を戻せます。復元先のリンクをたどることはありません。baselineと履歴は権限を制限した `~/.acm/skill-state/` に置き、公開カタログへ含めません。すべての削除を自動保存する機能ではありません。
+
+スキルの `add/import/install/update/enable/disable/remove/link/unlink/rename/restore` は `--dry-run` に対応します。コピーの差分は追加・変更・削除するパスと競合を表示し、本文を出力せず、カタログ・配置先・履歴を変更しません。GitHubインストールやカタログ更新のpreviewは一時領域へソースを取得するため、ネットワークを使う場合があります。未対応の組み合わせはエラーになります。[詳細](docs/native-workflows.md)も参照してください。
 
 ## プラグイン
 
@@ -132,7 +152,19 @@ acm plugin doctor
 acm plugin unlink my-plugin
 ```
 
-updateは移動したアプリ内のソースも探索し、判定可能な旧バージョンへの巻き戻しは `--force` がなければ拒否します。IDを省略するとカタログ内を確認します。repairは不足するファイルだけを補います。unlinkはアンインストール済みの開発リンクが対象です。状態表示はACMで成功したネイティブインストールの記録を利用します。既存のプロバイダーセッションでは再起動が必要な場合があります。
+updateは記録したアプリ由来の情報を根拠に、移動したアプリ内のソースを再探索します。通常のローカルソースが消えた場合は同名の別ソースへ切り替えず、エラーにします。移転先は `plugin import /new/path --as my-plugin --force` で明示的に登録してください。判定可能な旧バージョンへの巻き戻しは `--force` がなければ拒否します。IDを省略するとカタログ内を確認します。repairは不足するファイルだけを補います。unlinkはアンインストール済みの開発リンクが対象です。状態表示はACMで成功したネイティブインストールの記録を利用します。既存のプロバイダーセッションでは再起動が必要な場合があります。
+
+```sh
+acm plugin verify my-plugin --targets claude,codex --json
+acm plugin verify my-plugin --targets claude,codex --reconcile
+acm plugin list --verify --targets claude,codex --json
+acm status --home --verify --targets claude,codex --json
+acm plugin compatibility my-plugin --targets all
+```
+
+verifyはネイティブCLIへ問い合わせ、ACMの過去の記録と現在の `installed`・`disabled`・`missing`・`unknown` を区別します。`--reconcile` は明確な観測結果だけをACMの記録へ反映し、インストールや削除はしません。CLI不在・失敗・未対応の出力・識別の曖昧さはunknownとして非ゼロ終了します。インストールの存在と有効状態は別で、`enabled: null` はCLIから確認できないことを示します。
+
+compatibilityは保持する各機能の対応根拠をプロバイダー別に示し、convertのpreviewにも含めます。2026-09-05に、スキルだけを含むローカルプラグインを隔離環境で検証し、Claude Code 2.1.261・Codex 0.149.0・Antigravity 1.1.27・Grok 1.0.5でインストール・一覧・削除が成功しました。Claude/Codexは識別と有効状態を確認でき、Grokは有効状態、Antigravityは一覧からの取得元の識別に限界がありました。フック・MCP実行・認証付きアプリ連携・任意のスキル実行まで保証する検証ではなく、未検証機能はunknownです。[実CLI検証記録](openspec/changes/harden-native-workflows/live-provider-verification.md)に詳細があります。
 
 ## 診断とカタログ公開
 
@@ -160,6 +192,8 @@ acm catalog publish --to ./public-catalog-checkout --commit
 端末で `acm` / `acm init` を実行するとRatatuiの画面を開きます。Tab・1〜4でタブ移動、矢印・Ctrl+N/Pで選択、`/` で検索、`H` でスコープ切替、`q` で終了します。自動処理では明示的なコマンドと `--json` を使用してください。
 
 MCP/スキルのプロバイダー一覧JSONは従来の `servers` / `skills`、`projectRoot`、`totalCount`、`enabledCount` を含む形式です。カタログ一覧は配列です。
+
+`--json` では引数・実行エラーも1つのJSON文書と非ゼロ終了コードで返します。複数対象への変更は `results` に対象ごとの結果を残し、成功済みの変更を保持して `retryTargets` を示します。複数資産の操作では `retryResources` を示す場合もあります。途中成功は内側のdetailも確認してください。`--verbose` はバージョン・スコープ・対象・カタログ情報をstderrへ追加し、stdoutのJSONを壊しません。TUIでも失敗・部分成功と外部エディターの終了エラーを表示します。
 
 ```sh
 just check          # フォーマット・Clippy・Rustテスト・配布構成

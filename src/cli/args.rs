@@ -41,7 +41,11 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Overview of skills, MCP servers, and plugins
-    Status,
+    Status {
+        /// Query native plugin state instead of relying only on ACM records
+        #[arg(long)]
+        verify: bool,
+    },
     /// Interactive setup (use resource add commands for automation)
     #[command(alias = "tui")]
     Init,
@@ -97,6 +101,9 @@ pub struct Filters {
 
 #[derive(Args, Debug)]
 pub struct McpArgs {
+    /// Preview changes without writing configuration or running providers
+    #[arg(long, global = true)]
+    pub dry_run: bool,
     #[command(subcommand)]
     pub command: Option<McpSubcommands>,
 }
@@ -166,6 +173,9 @@ pub struct RecipeArgs {
 
 #[derive(Args, Debug)]
 pub struct SkillArgs {
+    /// Preview changes without modifying catalog, deployments, or recovery history
+    #[arg(long, global = true)]
+    pub dry_run: bool,
     #[command(subcommand)]
     pub command: Option<SkillSubcommands>,
 }
@@ -200,6 +210,9 @@ pub enum SkillSubcommands {
         no_register: bool,
         #[arg(long, conflicts_with = "no_register")]
         register: bool,
+        /// Allow replacement of a locally edited copy after keeping a backup
+        #[arg(long)]
+        force: bool,
         #[command(flatten)]
         placement: PlacementArgs,
     },
@@ -276,6 +289,17 @@ pub enum SkillSubcommands {
         #[arg(long)]
         all: bool,
     },
+    /// List machine-local recovery copies for this skill and scope
+    Backups {
+        id: String,
+    },
+    /// Restore a backup to its original scope and target
+    Restore {
+        id: String,
+        backup_id: String,
+        #[arg(long)]
+        force: bool,
+    },
     Init,
 }
 #[derive(Args, Debug)]
@@ -310,9 +334,24 @@ pub struct PluginArgs {
 }
 #[derive(Subcommand, Debug)]
 pub enum PluginSubcommands {
-    List,
+    List {
+        #[arg(long)]
+        verify: bool,
+    },
     Show {
         id: String,
+    },
+    /// Query native installed state; reconcile only unambiguous observations
+    Verify {
+        ids: Vec<String>,
+        #[arg(long)]
+        reconcile: bool,
+    },
+    /// Inspect which plugin capabilities each selected provider can use
+    Compatibility {
+        id: Option<String>,
+        #[arg(long)]
+        all: bool,
     },
     /// Link a development plugin into the catalog
     Add {

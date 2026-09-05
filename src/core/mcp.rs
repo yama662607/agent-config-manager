@@ -26,18 +26,32 @@ pub fn match_entry<'a>(
                 && infer_package(&entry.recipe) == infer_package(recipe)
         })
         .collect();
-    if let Some(entry) = same
+    let exact: Vec<_> = same
         .iter()
-        .find(|entry| recipes_match(&entry.recipe, recipe))
-    {
-        return Some(entry);
+        .filter(|entry| recipes_match(&entry.recipe, recipe))
+        .collect();
+    if exact.len() == 1 {
+        return Some(exact[0]);
     }
-    if let Some(entry) = same.first() {
-        return Some(entry);
+    if same.len() == 1 {
+        return Some(same[0]);
+    }
+    let exact: Vec<_> = entries
+        .iter()
+        .filter(|entry| recipes_match(&entry.recipe, recipe))
+        .collect();
+    if exact.len() == 1 {
+        return Some(exact[0]);
     }
     let candidates: Vec<_> = entries
         .iter()
         .filter(|entry| sanitize_server_key(&entry.id) == sanitize_server_key(name))
+        .filter(
+            |entry| match (infer_package(&entry.recipe), infer_package(recipe)) {
+                (Some(expected), Some(actual)) => expected == actual,
+                _ => true,
+            },
+        )
         .collect();
     if candidates.len() == 1 {
         Some(candidates[0])
@@ -47,11 +61,62 @@ pub fn match_entry<'a>(
 }
 
 pub fn recipes_match(left: &McpRecipe, right: &McpRecipe) -> bool {
+    fn transport(recipe: &McpRecipe) -> TransportType {
+        recipe.transport.unwrap_or(if recipe.url.is_some() {
+            TransportType::Http
+        } else {
+            TransportType::Stdio
+        })
+    }
     left.command == right.command
+        && transport(left) == transport(right)
         && left.url == right.url
         && left.cwd == right.cwd
         && left.args.clone().unwrap_or_default() == right.args.clone().unwrap_or_default()
         && left.env.clone().unwrap_or_default() == right.env.clone().unwrap_or_default()
+}
+
+pub fn resolve_native_server<'a>(
+    servers: &'a HashMap<String, crate::adapters::ServerInfo>,
+    catalog: &[McpCatalogEntry],
+    id: &str,
+) -> anyhow::Result<Option<(&'a String, &'a crate::adapters::ServerInfo)>> {
+    if let Some(found) = servers.get_key_value(id) {
+        return Ok(Some(found));
+    }
+    if let Some(found) = servers.get_key_value(&sanitize_server_key(id)) {
+        if let Some(recipe) = found.1.recipe.as_ref() {
+            let expected = catalog
+                .iter()
+                .find(|entry| entry.id == id)
+                .and_then(|entry| infer_package(&entry.recipe))
+                .unwrap_or(id);
+            let owner = match_entry(catalog, found.0, recipe);
+            let ambiguous = owner.is_none()
+                && catalog
+                    .iter()
+                    .filter(|entry| sanitize_server_key(&entry.id) == sanitize_server_key(id))
+                    .count()
+                    > 1;
+            if infer_package(recipe).is_some_and(|actual| actual != expected)
+                || owner.is_some_and(|entry| entry.id != id)
+                || ambiguous
+            {
+                bail!("MCP identity conflict: {id} would modify unrelated server {}; use its exact native key only when intended",found.0);
+            }
+        }
+        return Ok(Some(found));
+    }
+    let mut matches = servers.iter().filter(|(key, server)| {
+        server.recipe.as_ref().is_some_and(|recipe| {
+            match_entry(catalog, key, recipe).is_some_and(|entry| entry.id == id)
+        })
+    });
+    let first = matches.next();
+    if matches.next().is_some() {
+        bail!("Ambiguous MCP identity {id}; use a native server key");
+    }
+    Ok(first)
 }
 
 pub fn get_mcp_workspace_status<P: AsRef<Path>>(
@@ -218,12 +283,14 @@ pub fn mcp_remove<P: AsRef<Path>>(
     name: &str,
     targets: &[TargetName],
 ) -> anyhow::Result<()> {
+    let catalog = list_mcps()?;
     for &target in targets {
-        remove_mcp_from_config(
-            target,
-            get_agent_mcp_config_path(root.as_ref(), target),
-            name,
-        )?;
+        let path = get_agent_mcp_config_path(root.as_ref(), target);
+        let servers = get_mcp_servers(target, &path)?;
+        let Some((key, _)) = resolve_native_server(&servers, &catalog, name)? else {
+            continue;
+        };
+        remove_mcp_from_config(target, path, key)?;
     }
     Ok(())
 }
@@ -238,12 +305,9 @@ pub fn mcp_enable<P: AsRef<Path>>(
     for &target in targets {
         let path = get_agent_mcp_config_path(root.as_ref(), target);
         let servers = get_mcp_servers(target, &path)?;
-        let key = servers
-            .keys()
-            .find(|key| *key == name || **key == sanitize_server_key(name))
-            .cloned();
+        let key = resolve_native_server(&servers, &entries, name)?.map(|(key, _)| key);
         if let Some(key) = key {
-            set_mcp_enabled(target, &path, &key, true)?;
+            set_mcp_enabled(target, &path, key, true)?;
             changed = true;
         } else if let Some(entry) = entries
             .iter()
@@ -264,16 +328,14 @@ pub fn mcp_disable<P: AsRef<Path>>(
     name: &str,
     targets: &[TargetName],
 ) -> anyhow::Result<()> {
+    let entries = list_mcps()?;
     let mut found = false;
     for &target in targets {
         let path = get_agent_mcp_config_path(root.as_ref(), target);
         let servers = get_mcp_servers(target, &path)?;
-        let key = servers
-            .keys()
-            .find(|key| *key == name || **key == sanitize_server_key(name))
-            .cloned();
+        let key = resolve_native_server(&servers, &entries, name)?.map(|(key, _)| key);
         if let Some(key) = key {
-            set_mcp_enabled(target, &path, &key, false)?;
+            set_mcp_enabled(target, &path, key, false)?;
             found = true;
         }
     }
@@ -290,7 +352,7 @@ pub fn mcp_update(
 ) -> anyhow::Result<Vec<String>> {
     let entries = list_mcps()?;
     let status = get_mcp_workspace_status(root, targets)?;
-    let mut updated = Vec::new();
+    let mut candidates = Vec::new();
     let mut found = name.is_none();
     for server in status.servers {
         if server.source == "plugin" {
@@ -304,37 +366,61 @@ pub fn mcp_update(
         let Some(entry) = entry else {
             if name.is_some() {
                 bail!("Not in the catalog: {}", server.name);
-            } else {
-                continue;
             }
+            continue;
         };
+        // Known invalid recipes and stale snapshots must fail before the first write.
+        validate_recipe(&entry.recipe)
+            .with_context(|| format!("Invalid catalog MCP: {}", entry.id))?;
         for &target in targets {
             if server
                 .deployed
                 .get(&target)
                 .is_some_and(|recipe| !recipes_match(recipe, &entry.recipe))
             {
-                add_mcp_to_config(
-                    target,
-                    get_agent_mcp_config_path(root, target),
-                    &server.name,
-                    &entry.recipe,
-                )?;
-                if server.state.get(&target).map(String::as_str) == Some("disabled") {
-                    set_mcp_enabled(
-                        target,
-                        get_agent_mcp_config_path(root, target),
-                        &server.name,
-                        false,
-                    )?;
+                let path = get_agent_mcp_config_path(root, target);
+                let native = get_mcp_servers(target, &path)?;
+                let (key, observed) = resolve_native_server(&native, &entries, &server.name)?
+                    .context("MCP changed during update")?;
+                if observed.recipe.as_ref() != server.deployed.get(&target) {
+                    bail!("MCP conflict: {} changed during update", server.name);
                 }
-                updated.push(format!("Updated {target}: {}", server.name));
+                candidates.push((
+                    target,
+                    path,
+                    key.clone(),
+                    observed.clone(),
+                    entry.recipe.clone(),
+                    server.name.clone(),
+                ));
             }
         }
     }
     if !found {
         bail!("MCP server not configured: {}", name.unwrap());
     }
+    let mut updated = Vec::new();
+    let mut results = Vec::new();
+    let mut retry_targets = std::collections::BTreeSet::new();
+    let mut retry_resources = std::collections::BTreeSet::new();
+    for (target, path, key, observed, recipe, name) in candidates {
+        match crate::adapters::replace_mcp_recipe(target, &path, &key, &observed, &recipe) {
+            Ok(()) => {
+                updated.push(format!("Updated {target}: {name}"));
+                results
+                    .push(serde_json::json!({"target":target,"resource":name,"status":"success"}));
+            }
+            Err(error) => {
+                retry_targets.insert(target.to_string());
+                retry_resources.insert(name.clone());
+                results.push(serde_json::json!({"target":target,"resource":name,"status":"failed","error":{"code":crate::core::operations::error_code(&error),"message":crate::core::operations::redact_text(&format!("{error:#}"))}}));
+            }
+        }
+    }
+    if !retry_targets.is_empty() {
+        return Err(crate::core::operations::OperationFailure{report:serde_json::json!({"ok":false,"operation":"mcp.update","results":results,"updated":updated,"retryTargets":retry_targets,"retryResources":retry_resources,"error":{"code":"operation_failed","message":"One or more MCP updates failed; successful updates were retained"}})}.into());
+    }
+
     Ok(updated)
 }
 

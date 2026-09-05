@@ -11,7 +11,6 @@ use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerInfo {
@@ -101,6 +100,14 @@ pub fn validate_recipe(recipe: &McpRecipe) -> anyhow::Result<()> {
     let url = recipe.url.as_deref().filter(|s| !s.trim().is_empty());
     if command.is_some() == url.is_some() {
         bail!("Specify exactly one MCP command or URL");
+    }
+    if matches!(recipe.transport, Some(TransportType::Stdio)) && url.is_some()
+        || matches!(
+            recipe.transport,
+            Some(TransportType::Http | TransportType::Sse)
+        ) && command.is_some()
+    {
+        bail!("MCP transport conflicts with the selected command or URL");
     }
     if let Some(url) = url {
         if !url.starts_with("https://") && !url.starts_with("http://") {
@@ -268,17 +275,14 @@ fn is_claude_user(target: TargetName, path: &Path) -> bool {
 }
 
 fn claude_command(args: &[String]) -> anyhow::Result<()> {
-    let output = Command::new("claude")
-        .args(args)
-        .output()
-        .context("Claude user configuration requires the claude CLI on PATH")?;
-    if !output.status.success() {
-        bail!(
-            "claude mcp failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    Ok(())
+    crate::core::plugin::provider_command(TargetName::Claude, &home_dir(), args)
+        .map(|_| ())
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "claude mcp failed: {}",
+                crate::core::operations::redact_command_output(&format!("{error:#}"), args)
+            )
+        })
 }
 
 fn put_server(target: TargetName, path: &Path, key: &str, server: &Value) -> anyhow::Result<()> {
@@ -362,15 +366,14 @@ fn delete_server(target: TargetName, path: &Path, key: &str) -> anyhow::Result<(
     Ok(())
 }
 
-pub fn add_mcp_to_config<P: AsRef<Path>>(
+/// Read-only validation shared by previews and locked writes.
+pub fn preview_mcp_add(
     target: TargetName,
-    config_path: P,
+    path: &Path,
     server_name: &str,
     recipe: &McpRecipe,
 ) -> anyhow::Result<String> {
     validate_recipe(recipe)?;
-    let path = config_path.as_ref();
-    let _operation = FileLock::acquire(&operation_lock(path))?;
     let configured = raw_servers(target, path)?;
     let key = resolve_key(&configured, server_name);
     if key != server_name && configured.contains_key(&key) {
@@ -379,6 +382,28 @@ pub fn add_mcp_to_config<P: AsRef<Path>>(
             bail!("Server name collision: {server_name} would replace {key}");
         }
     }
+    let saved = read_value(&disabled_path(path))?;
+    if !saved.is_object() {
+        bail!("Invalid saved MCP definitions");
+    }
+    native_definition(
+        target,
+        recipe,
+        configured.get(&key).or_else(|| saved.get(&key)),
+    )?;
+    Ok(key)
+}
+
+pub fn add_mcp_to_config<P: AsRef<Path>>(
+    target: TargetName,
+    config_path: P,
+    server_name: &str,
+    recipe: &McpRecipe,
+) -> anyhow::Result<String> {
+    let path = config_path.as_ref();
+    let _operation = FileLock::acquire(&operation_lock(path))?;
+    let key = preview_mcp_add(target, path, server_name, recipe)?;
+    let configured = raw_servers(target, path)?;
     let saved_path = disabled_path(path);
     let saved = read_value(&saved_path)?;
     put_server(
@@ -426,6 +451,41 @@ pub fn edit_mcp_in_config(
     let recipe: McpRecipe = serde_json::from_value(recipe)?;
     add_mcp_to_config(target, path, &key, &recipe)?;
     Ok(())
+}
+
+/// Replace an observed recipe without changing its enabled state or losing concurrent edits.
+pub fn replace_mcp_recipe(
+    target: TargetName,
+    path: &Path,
+    key: &str,
+    expected: &ServerInfo,
+    recipe: &McpRecipe,
+) -> anyhow::Result<()> {
+    validate_recipe(recipe)?;
+    let _operation = FileLock::acquire(&operation_lock(path))?;
+    let current = get_mcp_servers(target, path)?;
+    if current.get(key) != Some(expected) {
+        bail!("MCP conflict: {key} changed since it was inspected; refresh before editing");
+    }
+    let configured = raw_servers(target, path)?;
+    let saved_path = disabled_path(path);
+    if !expected.enabled
+        && matches!(target, TargetName::Claude | TargetName::Antigravity)
+        && !configured.contains_key(key)
+    {
+        let mut saved = read_value(&saved_path)?;
+        let previous = saved
+            .get(key)
+            .context("Saved disabled MCP definition disappeared")?;
+        saved[key] = native_definition(target, recipe, Some(previous))?;
+        return write_value(&saved_path, &saved);
+    }
+    let previous = configured.get(key).context("MCP definition disappeared")?;
+    let mut value = native_definition(target, recipe, Some(previous))?;
+    if !expected.enabled {
+        value["enabled"] = json!(false);
+    }
+    put_server(target, path, key, &value)
 }
 
 pub fn remove_mcp_from_config<P: AsRef<Path>>(

@@ -130,11 +130,18 @@ description: Session recall for coding agents.
     // Modify target to make it stale
     fs::write(&codex_skill_md, "old content").unwrap();
 
+    assert!(skill_update(
+        root,
+        Some("ai-agent-archive-recall"),
+        &[TargetName::Codex],
+        false
+    )
+    .is_err());
     let update_res = skill_update(
         root,
         Some("ai-agent-archive-recall"),
         &[TargetName::Codex],
-        false,
+        true,
     )
     .unwrap();
     assert_eq!(update_res.updated_count, 1);

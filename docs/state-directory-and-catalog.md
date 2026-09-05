@@ -5,10 +5,10 @@ difference is easy to forget, so it is written down here.
 
 | | Holds | Machine-specific | Shared between machines |
 |---|---|---|---|
-| `~/.acm` | `config.toml`, and the entrance below | Yes | No |
+| `~/.acm` | `config.toml`, disabled MCP state, locks, skill baselines/recovery, and the entrance below | Yes | No |
 | Catalog | Skills, MCP recipes, plugins, their metadata | No | Yes, as a git repository |
 
-`~/.acm` is a pointer. The catalog is the payload.
+`~/.acm` owns machine settings and recovery state. The catalog holds reusable payloads.
 
 ## Why they are separate
 
@@ -44,7 +44,9 @@ distribution. `stable_link_target` in `src/core/placement.rs` writes that addres
 only after `realpath` confirms both names lead to the same directory, and falls
 back to the catalog's own path otherwise.
 
-`~/.acm/config.toml` selects machine defaults, and `disabled-mcps/` stores reversible MCP disable state. Metadata (`skills-metadata.toml`,
+`~/.acm/config.toml` selects machine defaults and optional `provider_commands` executable paths. `disabled-mcps/` stores reversible MCP disable state, `locks/` coordinates directory changes, and `skill-state/` stores deployment baselines and complete recovery copies keyed by project/home, target, and skill. These remain machine-local when the catalog moves. Skill recovery directories have private permissions; their payloads retain original permissions inside that boundary. They are not included in allowlisted publication. Use `skill backups` and `skill restore` to inspect or restore a scope; see [recovery semantics](native-workflows.md#protect-and-restore-skill-copies).
+
+Metadata (`skills-metadata.toml`,
 `mcps-metadata.toml`, `plugins-metadata.toml`, `plugin-snapshot.toml`),
 `PUBLIC.txt` and `plugins/` are all resolved through `get_catalog_dir()`.
 

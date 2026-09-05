@@ -1,7 +1,7 @@
 use crate::core::doctor::CheckStatus;
-use crate::paths::{get_agent_mcp_config_path, get_catalog_skill_dir, get_skill_path};
+use crate::paths::{get_agent_mcp_config_path, get_skill_path};
 use crate::tui::app::{ActiveTab, App};
-use crate::types::{PluginPlacementState, SkillPlacementState, TargetName};
+use crate::types::{PluginPlacementState, SkillPlacementState};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -10,12 +10,17 @@ use ratatui::Frame;
 use std::fs;
 
 pub fn render(f: &mut Frame, app: &mut App) {
+    let footer_height = app.status_message.as_ref().map_or(3, |message| {
+        let width = usize::from(f.area().width.saturating_sub(2).max(1));
+        let lines = unicode_width::UnicodeWidthStr::width(message.as_str()).div_ceil(width);
+        (lines as u16 + 2).clamp(3, f.area().height.saturating_sub(15).max(3))
+    });
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // Header & Tabs
-            Constraint::Min(10),   // Body (2-pane)
-            Constraint::Length(3), // Footer & Help
+            Constraint::Length(3),             // Header & Tabs
+            Constraint::Min(10),               // Body (2-pane)
+            Constraint::Length(footer_height), // Footer & Help
         ])
         .split(f.area());
 
@@ -255,16 +260,13 @@ fn render_skills_tab(f: &mut Frame, app: &mut App, area: Rect) {
             "──────────────────────────────────────────────────────────────────────────",
         ));
 
-        let skill_md_path = get_catalog_skill_dir(&selected_skill.name).join("SKILL.md");
-        let content = if skill_md_path.exists() {
-            fs::read_to_string(&skill_md_path)
-                .unwrap_or_else(|_| "Error reading SKILL.md".to_string())
-        } else {
-            let target_md =
-                get_skill_path(&app.project_root, TargetName::Claude, &selected_skill.name)
-                    .join("SKILL.md");
-            fs::read_to_string(target_md).unwrap_or_else(|_| "No SKILL.md found".to_string())
-        };
+        let content = app
+            .skill_editor_path(&selected_skill.name)
+            .map(|path| {
+                fs::read_to_string(path)
+                    .unwrap_or_else(|error| format!("Error reading SKILL.md: {error}"))
+            })
+            .unwrap_or_else(|| "No SKILL.md found in configured targets".into());
 
         lines.push(Line::from(Span::styled(
             format!(
@@ -365,6 +367,9 @@ fn render_plugins_tab(f: &mut Frame, app: &mut App, area: Rect) {
                     Some(PluginPlacementState::Injected) => {
                         (format!("{}:I", target.short_code()), Color::LightBlue)
                     }
+                    Some(PluginPlacementState::Disabled) => {
+                        (format!("{}:D", target.short_code()), Color::Yellow)
+                    }
                     Some(PluginPlacementState::Broken) => {
                         (format!("{}:X", target.short_code()), Color::Red)
                     }
@@ -437,7 +442,7 @@ fn render_plugins_tab(f: &mut Frame, app: &mut App, area: Rect) {
         lines.push(Line::from(""));
 
         lines.push(Line::from(Span::styled(
-            "Target Placements (Cross-Provider Projection):",
+            "ACM installation records (use plugin verify to check provider state):",
             Style::default().fg(Color::Yellow),
         )));
         for target in &app.targets {
@@ -447,10 +452,11 @@ fn render_plugins_tab(f: &mut Frame, app: &mut App, area: Rect) {
                 .copied()
                 .unwrap_or(PluginPlacementState::Missing);
             let state_str = match state {
-                PluginPlacementState::NativeLinked => "Native Plugin Linked",
+                PluginPlacementState::NativeLinked => "Native installation recorded",
+                PluginPlacementState::Disabled => "Native installation disabled",
                 PluginPlacementState::ConvertedLinked => "Converted to Antigravity & Linked",
                 PluginPlacementState::Injected => "Injected (Skills & MCP auto-mapped)",
-                PluginPlacementState::Broken => "Broken Link (Press 'f' to repair)",
+                PluginPlacementState::Broken => "Missing payload (use plugin repair)",
                 PluginPlacementState::Missing => "Not Installed",
             };
             lines.push(Line::from(format!(
@@ -646,20 +652,10 @@ fn render_mcp_tab(f: &mut Frame, app: &mut App, area: Rect) {
             "Recipe Configuration:",
             Style::default().fg(Color::Cyan),
         )));
-        if let Some(cmd) = &selected_mcp.recipe.command {
-            lines.push(Line::from(format!("  Command: {}", cmd)));
-        }
-        if let Some(args) = &selected_mcp.recipe.args {
-            lines.push(Line::from(format!("  Args:    {}", args.join(" "))));
-        }
-        if let Some(url) = &selected_mcp.recipe.url {
-            lines.push(Line::from(format!("  URL:     {}", url)));
-        }
-        if let Some(cwd) = &selected_mcp.recipe.cwd {
-            lines.push(Line::from(format!("  CWD:     {}", cwd)));
-        }
-        if let Some(env) = &selected_mcp.recipe.env {
-            lines.push(Line::from(format!("  Env:     {:?}", env)));
+        let recipe = serde_json::to_value(&selected_mcp.recipe).unwrap_or_default();
+        let redacted = crate::core::operations::redact_value(&recipe);
+        if let Ok(preview) = serde_json::to_string_pretty(&redacted) {
+            lines.extend(preview.lines().map(|line| Line::from(line.to_owned())));
         }
 
         let detail_widget = Paragraph::new(lines)
@@ -695,7 +691,7 @@ fn render_doctor_tab(f: &mut Frame, app: &App, area: Rect) {
                         format!("[{}] ", check.category),
                         Style::default().fg(Color::Cyan),
                     ),
-                    Span::raw(&check.title),
+                    Span::raw(crate::core::operations::redact_text(&check.title)),
                 ];
 
                 if let Some(fix) = &check.fix_applied {
@@ -705,7 +701,14 @@ fn render_doctor_tab(f: &mut Frame, app: &App, area: Rect) {
                     ));
                 }
 
-                ListItem::new(Line::from(spans))
+                let mut lines = vec![Line::from(spans)];
+                if let Some(detail) = &check.detail {
+                    lines.push(Line::from(format!(
+                        "    {}",
+                        crate::core::operations::redact_text(detail)
+                    )));
+                }
+                ListItem::new(lines)
             })
             .collect();
 
@@ -730,7 +733,8 @@ fn render_footer(f: &mut Frame, app: &App, area: Rect) {
     let msg = app.status_message.as_deref().unwrap_or(default_msg);
     let footer_text = Paragraph::new(msg)
         .style(Style::default().fg(Color::White).bg(Color::DarkGray))
-        .alignment(Alignment::Center)
+        .alignment(Alignment::Left)
+        .wrap(Wrap { trim: false })
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(footer_text, area);
 }

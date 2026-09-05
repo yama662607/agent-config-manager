@@ -2,7 +2,7 @@
 
 Where each agent keeps its MCP servers and skills, which of those places `acm` may
 write to, and how it decides. Verified on 2026-08-02 against the CLIs installed on a
-macOS machine; every claim below cites how it was checked.
+macOS machine; every claim below cites how it was checked. Native plugin contracts were revalidated on 2026-09-05; see the [isolated lifecycle record](../openspec/changes/harden-native-workflows/live-provider-verification.md) and [verification commands](native-workflows.md#observe-actual-native-plugin-state).
 
 Providers change. The point of this document is not the paths — those go stale — but
 the **rule for deciding how to write**, which does not.
@@ -242,11 +242,12 @@ the provider does not read.
 launches:
 
 ```bash
-acm mcp -H --verbose     # "Launches (<target>)" lines
+acm mcp list --home --targets codex --json --verbose
 ```
 
-A server showing `(nothing configured)` means the file uses a field `acm` does not
-read.
+`--verbose` emits scope, target, catalog, and version context to stderr. The JSON
+contains the definitions ACM reads; compare those with the provider's own listing.
+Verbose output does not itself prove that a server launched.
 
 **Did the file gain runtime state?** Count its top-level keys. A configuration file
 holds settings; if it starts holding caches, tokens or counters, direct editing is no

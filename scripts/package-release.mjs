@@ -11,7 +11,7 @@ for (const [platform, target] of Object.entries(platforms)) {
   const executable = platform.startsWith('win32') ? 'acm.exe' : 'acm';
   chmodSync(join('native', platform, executable), 0o755);
   const output = join('release', `acm-v${version}-${target}.tar.gz`);
-  const archive = spawnSync('tar', ['-czf', output, '-C', join('native', platform), executable, 'manifest.json'], { stdio: 'inherit' });
+  const archive = spawnSync('tar', ['-czf', output, '-C', join('native', platform), executable, 'manifest.json', '-C', process.cwd(), 'LICENSE'], { stdio: 'inherit' });
   if (archive.status !== 0) process.exit(archive.status ?? 1);
 }
 const pack = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['pack', '--pack-destination', 'release'], { stdio: 'inherit', shell: process.platform === 'win32' });

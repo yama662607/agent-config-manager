@@ -22,4 +22,4 @@
 ## 4. Final verification
 
 - [x] 4.1 Run complete native checks, migration/lifecycle regressions, package smoke tests, and OpenSpec validation; record results and remaining platform limitations.
-- [ ] 4.2 Review the complete diff and commit on the feature branch, preparing a reviewable PR when repository access is available.
+- [x] 4.2 Review the complete diff and commit on the feature branch, preparing a reviewable PR when repository access is available.

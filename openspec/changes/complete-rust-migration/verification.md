@@ -8,7 +8,7 @@ Local environment: macOS arm64; Rust 1.95.0. The initial branch audit fetched al
 - `openspec validate complete-rust-migration --strict`: passed.
 - `scripts/check-public-safe.sh` and `git diff --check`: passed. A pre-existing personal path in a historical proposal was replaced with a placeholder.
 - Release binary privacy: build paths are remapped; native staging rejects embedded build-home paths.
-- GitHub PR CI: pending branch push. The PR includes a Rust quality job and a six-platform native release/package matrix; no registry publishing or public release creation is configured.
+- GitHub PR: [#59](https://github.com/yama662607/agent-config-manager/pull/59). Current CI results are attached to the PR: a Rust quality job and a six-platform native release/package matrix. The workflows prepare artifacts without registry publication or public release creation.
 
 Test coverage includes legacy and alternate catalogs, concurrent writes, metadata preservation, malformed native files, symlink/comment preservation, scoped MCP identity and JSON envelopes, Claude CLI delegation, reversible toggles, full local/remote skill directories, Grok registration, source provenance, rename collisions and preserved edits, native plugin lifecycle/failures, moved app sources/downgrade protection, repair, snapshots, publication refusal and destination preservation, local diagnostics/scans, and TUI rendering/input.
 

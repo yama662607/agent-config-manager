@@ -1,197 +1,242 @@
-use agent_config_manager::core::plugin::{
-    get_plugin_status, get_plugin_workspace_status, parse_plugin_dir, plugin_add_to_catalog,
-    plugin_install, plugin_remove, plugin_unlink_from_catalog, plugin_update,
-};
-use agent_config_manager::types::{PluginPlacementState, TargetName};
+mod common;
+use common::*;
 use std::fs;
-use std::sync::Mutex;
-use tempfile::tempdir;
-
-static PLUGIN_TEST_LOCK: Mutex<()> = Mutex::new(());
-
+fn source(f: &Fixture) -> std::path::PathBuf {
+    f.file("plugin/.claude-plugin/plugin.json", r#"{"name":"fixture-plugin","version":"1.0.0","interface":{"displayName":"Useful plugin","capabilities":["tools"]},"futureField":{"keep":true}}"#);
+    f.file(
+        "plugin/skills/alpha/SKILL.md",
+        "---\nname: alpha\ndescription: Complete plugin skill with files.\n---\n",
+    );
+    f.file(
+        "plugin/skills/alpha/scripts/run.sh",
+        "#!/bin/sh\necho alpha\n",
+    );
+    f.file("plugin/commands/command.md", "A command");
+    f.file("plugin/hooks/hooks.json", r#"{"hooks":{}}"#);
+    f.file(
+        "plugin/.mcp.json",
+        r#"{"mcpServers":{"test":{"command":"echo","args":["fixture"],"customField":42}}}"#,
+    );
+    f.temp.path().join("plugin")
+}
 #[test]
-fn test_plugin_full_lifecycle_and_conversion() {
-    let _guard = PLUGIN_TEST_LOCK.lock().unwrap();
-
-    let work_dir = tempdir().unwrap();
-    let cat_dir = tempdir().unwrap();
-    std::env::set_var("ACM_CATALOG_DIR", cat_dir.path().to_str().unwrap());
-
-    // 1. Create a mock Claude plugin directory (original format)
-    let plugin_src = tempdir().unwrap();
-    let claude_plugin_dir = plugin_src.path().join(".claude-plugin");
-    fs::create_dir_all(&claude_plugin_dir).unwrap();
-    fs::write(
-        claude_plugin_dir.join("plugin.json"),
-        r#"{
-            "name": "test-dev-suite",
-            "description": "Comprehensive developer test suite",
-            "version": "1.0.0"
-        }"#,
+fn complete_import_conversion_and_snapshot() {
+    let f = Fixture::new();
+    let source = source(&f);
+    f.ok(&[
+        "plugin",
+        "import",
+        source.to_str().unwrap(),
+        "--as",
+        "alias",
+    ]);
+    assert!(f
+        .catalog
+        .join("plugins/alias/skills/alpha/scripts/run.sh")
+        .is_file());
+    f.ok(&["plugin", "convert", "alias", "--assemble-only"]);
+    let path = f.catalog.join("marketplace/plugins/alias");
+    for name in [
+        ".codex-plugin/plugin.json",
+        ".claude-plugin/plugin.json",
+        ".grok-plugin/plugin.json",
+        "plugin.json",
+        "commands/command.md",
+        "hooks/hooks.json",
+        "skills/alpha/scripts/run.sh",
+    ] {
+        assert!(path.join(name).is_file(), "{name}");
+    }
+    let manifest = json_file(&path.join(".codex-plugin/plugin.json"));
+    assert_eq!(manifest["name"], "alias");
+    assert_eq!(manifest["futureField"]["keep"], true);
+    assert_eq!(
+        json_file(&path.join(".mcp.json"))["mcpServers"]["test"]["customField"],
+        42
+    );
+    assert!(!source.join("plugin.json").exists());
+    f.ok(&["plugin", "snapshot"]);
+    let diff = f.json(&["plugin", "scan", "--diff"]);
+    assert!(diff["added"].as_array().unwrap().is_empty());
+    assert!(diff["changed"].as_array().unwrap().is_empty());
+}
+#[cfg(unix)]
+#[test]
+fn native_lifecycle_calls_providers_and_propagates_failures() {
+    let f = Fixture::new();
+    f.providers();
+    let source = source(&f);
+    f.ok(&["plugin", "import", source.to_str().unwrap()]);
+    let status = f.mock_ok(&["plugin", "install", "fixture-plugin", "-t", "all"]);
+    assert_eq!(status["targets"].as_array().unwrap().len(), 4);
+    let calls = fs::read_to_string(f.home.join("calls.jsonl")).unwrap();
+    assert!(calls.contains("\"codex\", \"plugin\", \"add\", \"fixture-plugin@acm-catalog\""));
+    assert!(calls.contains("--trust"));
+    assert!(
+        !f.home.join(".codex/skills/alpha").exists(),
+        "Native install must not independently inject extracted skills"
+    );
+    f.mock_ok(&["plugin", "remove", "fixture-plugin", "-t", "all"]);
+    assert_eq!(
+        f.json(&["plugin", "show", "fixture-plugin"])["plugin"]["enabled"],
+        false
+    );
+    f.file("home/fail-provider", "fail");
+    assert!(!f
+        .mocked(&["plugin", "install", "fixture-plugin", "-t", "codex"])
+        .status
+        .success());
+    assert_eq!(
+        f.json(&["plugin", "show", "fixture-plugin"])["plugin"]["enabled"],
+        false
+    );
+    assert!(f
+        .fail(&[
+            "plugin",
+            "install",
+            "fixture-plugin",
+            "--project",
+            "-t",
+            "codex"
+        ])
+        .contains("scope"));
+}
+#[cfg(unix)]
+#[test]
+fn source_update_and_legacy_extracted_skill_payload() {
+    let f = Fixture::new();
+    f.providers();
+    let source = source(&f);
+    f.ok(&["plugin", "import", source.to_str().unwrap()]);
+    f.mock_ok(&["plugin", "install", "fixture-plugin", "-t", "codex"]);
+    f.file(
+        "plugin/skills/beta/SKILL.md",
+        "---\nname: beta\ndescription: New upstream skill\n---\n",
+    );
+    let updated = f.mock_ok(&["plugin", "update", "fixture-plugin", "-t", "codex"]);
+    assert_eq!(updated[0]["updated"], true);
+    assert!(f
+        .catalog
+        .join("marketplace/plugins/fixture-plugin/skills/beta/SKILL.md")
+        .is_file());
+    fs::remove_dir_all(f.catalog.join("plugins/fixture-plugin/skills/alpha")).unwrap();
+    // Simulate old TypeScript layouts that extracted skills to the central catalog.
+    fs::remove_file(f.catalog.join("skills/alpha")).unwrap();
+    f.file(
+        "catalog/skills/alpha/SKILL.md",
+        "---\nname: alpha\ndescription: Legacy extracted skill\n---\n",
+    );
+    f.file("catalog/skills/alpha/scripts/legacy.sh", "echo legacy");
+    f.ok(&["plugin", "convert", "fixture-plugin", "--assemble-only"]);
+    assert!(f
+        .catalog
+        .join("marketplace/plugins/fixture-plugin/skills/alpha/scripts/legacy.sh")
+        .is_file());
+}
+#[test]
+fn discovery_and_repair_preserve_existing_payload() {
+    let f = Fixture::new();
+    let source = source(&f);
+    let discovered = f.json(&[
+        "plugin",
+        "discover",
+        "--root",
+        source.to_str().unwrap(),
+        "--import",
+    ]);
+    assert_eq!(discovered[0]["name"], "fixture-plugin");
+    fs::remove_file(
+        f.catalog
+            .join("plugins/fixture-plugin/skills/alpha/scripts/run.sh"),
     )
     .unwrap();
-
-    // Add skills to plugin
-    let skill_a = plugin_src.path().join("skills").join("skill-alpha");
-    fs::create_dir_all(&skill_a).unwrap();
-    fs::write(
-        skill_a.join("SKILL.md"),
-        "---\nname: skill-alpha\ndescription: Alpha skill\n---\n# Alpha Skill\n",
-    )
-    .unwrap();
-
-    let skill_b = plugin_src.path().join("skills").join("skill-beta");
-    fs::create_dir_all(&skill_b).unwrap();
-    fs::write(
-        skill_b.join("SKILL.md"),
-        "---\nname: skill-beta\ndescription: Beta skill\n---\n# Beta Skill\n",
-    )
-    .unwrap();
-
-    // Add .mcp.json to plugin
-    fs::write(
-        plugin_src.path().join(".mcp.json"),
-        r#"{
-            "mcpServers": {
-                "test-mcp": {
-                    "command": "npx",
-                    "args": ["-y", "test-mcp-server"],
-                    "env": { "TEST_KEY": "test_val" }
-                }
-            }
-        }"#,
-    )
-    .unwrap();
-
-    // 2. Parse plugin
-    let parsed = parse_plugin_dir(plugin_src.path()).unwrap();
-    assert_eq!(parsed.name, "test-dev-suite");
-    assert_eq!(parsed.skills.len(), 2);
-    assert!(parsed.skills.contains(&"skill-alpha".to_string()));
-    assert!(parsed.skills.contains(&"skill-beta".to_string()));
-    assert!(parsed.mcp_servers.contains_key("test-mcp"));
-
-    // 3. Register plugin into catalog
-    let plugin_id = plugin_add_to_catalog(plugin_src.path(), Some("my-plugin")).unwrap();
-    assert_eq!(plugin_id, "my-plugin");
-
-    let targets = vec![
-        TargetName::Claude,
-        TargetName::Antigravity,
-        TargetName::Codex,
-        TargetName::Grok,
-    ];
-
-    // Initial status: Missing
-    let status_before = get_plugin_status(work_dir.path(), "my-plugin", &targets).unwrap();
-    assert!(!status_before.enabled);
-    assert_eq!(status_before.placement.get(&TargetName::Claude), Some(&PluginPlacementState::Missing));
-    assert_eq!(status_before.placement.get(&TargetName::Antigravity), Some(&PluginPlacementState::Missing));
-    assert_eq!(status_before.placement.get(&TargetName::Codex), Some(&PluginPlacementState::Missing));
-
-    // 4. Install / Convert across all targets
-    let installed = plugin_install(work_dir.path(), "my-plugin", &targets).unwrap();
-    assert!(installed.enabled);
-
-    // Verify Claude target: plugin directory linked
-    let claude_plugin_path = work_dir.path().join(".claude").join("plugins").join("my-plugin");
-    assert!(claude_plugin_path.exists());
-
-    // Verify Antigravity target: converted & linked, plugin.json and mcp_config.json generated
-    let agy_plugin_path = work_dir.path().join(".agents").join("plugins").join("my-plugin");
-    assert!(agy_plugin_path.exists());
-    assert!(agy_plugin_path.join("plugin.json").exists());
-    assert!(agy_plugin_path.join("mcp_config.json").exists());
-
-    // ★ CRITICAL: Source repository MUST NOT be polluted!
-    assert!(!plugin_src.path().join("plugin.json").exists(), "Original plugin source repository must not be polluted with root plugin.json");
-    assert!(!plugin_src.path().join("mcp_config.json").exists(), "Original plugin source repository must not be polluted with mcp_config.json");
-
-    // Verify Codex target: skills linked into .codex/skills, MCP injected into config.toml
-    let codex_skills = work_dir.path().join(".codex").join("skills");
-    assert!(codex_skills.join("skill-alpha").exists());
-    assert!(codex_skills.join("skill-beta").exists());
-    let codex_toml = fs::read_to_string(work_dir.path().join(".codex").join("config.toml")).unwrap();
-    assert!(codex_toml.contains("test-mcp"));
-
-    // Verify Grok target: MCP injected into config.toml and skills registered
-    let grok_toml = fs::read_to_string(work_dir.path().join(".grok").join("config.toml")).unwrap();
-    assert!(grok_toml.contains("test-mcp"));
-    assert!(grok_toml.contains("paths"));
-
-    // Verify workspace status
-    let ws = get_plugin_workspace_status(work_dir.path(), &targets).unwrap();
-    assert_eq!(ws.total_count, 1);
-    assert_eq!(ws.enabled_count, 1);
-
-    // 5. Remove plugin across all targets
-    plugin_remove(work_dir.path(), "my-plugin", &targets).unwrap();
-
-    let status_after = get_plugin_status(work_dir.path(), "my-plugin", &targets).unwrap();
-    assert!(!status_after.enabled);
-    assert!(!claude_plugin_path.exists());
-    assert!(!agy_plugin_path.exists());
-    assert!(!codex_skills.join("skill-alpha").exists());
-    assert!(!codex_skills.join("skill-beta").exists());
-
-    // Verify Grok skills path unregistered
-    let grok_toml_after = fs::read_to_string(work_dir.path().join(".grok").join("config.toml")).unwrap();
-    assert!(!grok_toml_after.contains("my-plugin"));
-
-    // 6. Test Unlink from catalog
-    plugin_unlink_from_catalog("my-plugin").unwrap();
-    assert!(!cat_dir.path().join("plugins").join("my-plugin").exists());
+    f.file(
+        "catalog/plugins/fixture-plugin/commands/command.md",
+        "local edit",
+    );
+    f.ok(&["plugin", "repair"]);
+    assert!(!f
+        .catalog
+        .join("plugins/fixture-plugin/skills/alpha/scripts/run.sh")
+        .exists());
+    f.ok(&["plugin", "repair", "--apply"]);
+    assert!(f
+        .catalog
+        .join("plugins/fixture-plugin/skills/alpha/scripts/run.sh")
+        .is_file());
+    assert_eq!(
+        fs::read_to_string(f.catalog.join("plugins/fixture-plugin/commands/command.md")).unwrap(),
+        "local edit"
+    );
 }
 
 #[test]
-fn test_plugin_update_lifecycle() {
-    let _guard = PLUGIN_TEST_LOCK.lock().unwrap();
-
-    let work_dir = tempdir().unwrap();
-    let cat_dir = tempdir().unwrap();
-    std::env::set_var("ACM_CATALOG_DIR", cat_dir.path().to_str().unwrap());
-
-    let plugin_src = tempdir().unwrap();
-    let claude_plugin_dir = plugin_src.path().join(".claude-plugin");
-    fs::create_dir_all(&claude_plugin_dir).unwrap();
-    fs::write(
-        claude_plugin_dir.join("plugin.json"),
-        r#"{"name": "updatable-plugin", "version": "1.0.0"}"#,
-    )
-    .unwrap();
-
-    let skill_a = plugin_src.path().join("skills").join("skill-one");
-    fs::create_dir_all(&skill_a).unwrap();
-    fs::write(skill_a.join("SKILL.md"), "---\nname: skill-one\n---\n").unwrap();
-
-    plugin_add_to_catalog(plugin_src.path(), Some("updatable-plugin")).unwrap();
-
-    let targets = vec![TargetName::Codex, TargetName::Antigravity];
-    plugin_install(work_dir.path(), "updatable-plugin", &targets).unwrap();
-
-    // Verify initial install
-    let codex_skills = work_dir.path().join(".codex").join("skills");
-    assert!(codex_skills.join("skill-one").exists());
-    assert!(!codex_skills.join("skill-two").exists());
-
-    // Modify plugin source (e.g. simulated git pull / update)
-    let skill_b = plugin_src.path().join("skills").join("skill-two");
-    fs::create_dir_all(&skill_b).unwrap();
-    fs::write(skill_b.join("SKILL.md"), "---\nname: skill-two\n---\n").unwrap();
-
-    fs::write(
-        plugin_src.path().join(".mcp.json"),
-        r#"{"mcpServers": {"new-server": {"command": "echo", "args": ["hello"]}}}"#,
-    )
-    .unwrap();
-
-    // Trigger acm plugin update
-    let res = plugin_update(work_dir.path(), "updatable-plugin", &targets).unwrap();
-    assert_eq!(res.id, "updatable-plugin");
-
-    // Verify that new skill and MCP server were automatically re-projected!
-    assert!(codex_skills.join("skill-two").exists());
-    let codex_toml = fs::read_to_string(work_dir.path().join(".codex").join("config.toml")).unwrap();
-    assert!(codex_toml.contains("new-server"));
+fn moved_application_source_and_downgrade_guard() {
+    let f = Fixture::new();
+    f.file(
+        "home/.acm/config.toml",
+        "discovery_roots = ['~/Applications']\n",
+    );
+    let bundle = f.home.join("Applications/Fixture.app");
+    let old = bundle.join("Contents/Resources/plugins/old");
+    write(
+        &old.join(".claude-plugin/plugin.json"),
+        r#"{"name":"movable","version":"2.0"}"#,
+    );
+    write(
+        &bundle.join("Contents/Info.plist"),
+        "<key>CFBundleShortVersionString</key><string>2.0</string>",
+    );
+    f.ok(&[
+        "plugin",
+        "import",
+        old.to_str().unwrap(),
+        "--as",
+        "qualified",
+    ]);
+    fs::remove_dir_all(&old).unwrap();
+    let new = bundle.join("Contents/Resources/plugins/new");
+    write(
+        &new.join(".claude-plugin/plugin.json"),
+        r#"{"name":"movable","version":"3.0"}"#,
+    );
+    write(&new.join("commands/new.md"), "new command");
+    write(
+        &bundle.join("Contents/Info.plist"),
+        "<key>CFBundleShortVersionString</key><string>3.0</string>",
+    );
+    f.ok(&["plugin", "update", "qualified", "--dry-run"]);
+    assert!(!f.catalog.join("plugins/qualified/commands/new.md").exists());
+    f.ok(&["plugin", "update", "qualified"]);
+    assert!(f
+        .catalog
+        .join("plugins/qualified/commands/new.md")
+        .is_file());
+    assert_eq!(
+        f.json(&["plugin", "show", "qualified"])["metadata"]["sourceAppVersion"],
+        "3.0"
+    );
+    write(
+        &bundle.join("Contents/Info.plist"),
+        "<key>CFBundleShortVersionString</key><string>1.0</string>",
+    );
+    assert!(f.fail(&["plugin", "update", "qualified"]).contains("older"));
 }
 
+#[cfg(unix)]
+#[test]
+fn catalog_scope_never_installs_providers_and_removal_keeps_source() {
+    let f = Fixture::new();
+    f.providers();
+    let source = source(&f);
+    f.ok(&["plugin", "import", source.to_str().unwrap()]);
+    let output = f.mocked(&["--catalog", "plugin", "install", "fixture-plugin"]);
+    assert!(!output.status.success());
+    assert!(!f.home.join("calls.jsonl").exists());
+    f.mock_ok(&["--catalog", "plugin", "convert", "fixture-plugin"]);
+    assert!(!f.home.join("calls.jsonl").exists());
+    f.ok(&["--catalog", "plugin", "remove", "fixture-plugin"]);
+    assert!(source.join("skills/alpha/SKILL.md").is_file());
+    assert!(!f.catalog.join("plugins/fixture-plugin").exists());
+    assert!(fs::symlink_metadata(f.catalog.join("skills/alpha")).is_err());
+}

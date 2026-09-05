@@ -1,65 +1,51 @@
-# =============================================================================
-# Configuration & Variables
-# =============================================================================
-
-set dotenv-load := true
 set shell := ["bash", "-c"]
 
-# =============================================================================
-# Standard Interface (AI Agent Protocol)
-# =============================================================================
-
-# Default: Run read-only quality check
 default: check
 
-# Setup: Build dependencies
+# Build the native runtime and verify the complete quality gate.
+check: fmt-check lint test package-check
+
 setup:
-    @echo "Setting up Rust environment..."
-    cargo check
-    @echo "Setup complete! Run 'just check' to verify."
+    cargo fetch --locked
 
-# Quality gate: Read-only verification (CI compatible)
-check: build test
-    @echo "All quality checks passed!"
-
-# Auto-fix: Run cargo clippy / fmt if configured
-fix:
-    @echo "Formatting and fixing Rust code..."
-    cargo fmt --all || true
-
-# =============================================================================
-# Testing & Verification
-# =============================================================================
-
-# Run all Rust tests
-test *args="":
-    @echo "Running Rust tests..."
-    cargo test {{args}}
-
-# Run unit and integration tests
-test-unit:
-    @echo "Running unit tests..."
-    cargo test --test types_test --test adapters_test --test validate_test
-
-test-integration:
-    @echo "Running integration tests..."
-    cargo test --test skill_test --test cli_test
-
-# =============================================================================
-# Operations & Utilities
-# =============================================================================
-
-# Start development interactive TUI
-dev:
-    @echo "Launching Rust ACM TUI..."
-    cargo run --bin acm
-
-# Production release build
 build:
-    @echo "Building optimized Rust binary..."
-    cargo build --release
+    node scripts/build-native.mjs
 
-# Clean build artifacts
+fmt-check:
+    cargo fmt --all --check
+
+lint:
+    cargo clippy --all-targets --locked -- -D warnings
+
+fix:
+    cargo fmt --all
+
+test *args="":
+    cargo test --locked {{args}}
+
+test-unit *args="":
+    cargo test --locked --test types_test --test adapters_test --test validate_test {{args}}
+
+test-integration *args="":
+    cargo test --locked --test cli_test --test migration_test --test skill_test --test skill_recovery_test --test skill_preview_test --test plugin_test --test plugin_verification_test --test plugin_source_identity_test --test operation_test --test tui_test {{args}}
+
+package-check:
+    node scripts/check-package.mjs --source
+
+prepare-native: build
+    node scripts/prepare-native.mjs
+
+test-smoke: prepare-native
+    node scripts/package-smoke.mjs
+
+dev *args="":
+    cargo run --locked --bin acm -- {{args}}
+
 clean:
-    @echo "Cleaning target directory..."
     cargo clean
+
+# Review dependency changes before committing them.
+upgrade:
+    test -z "$(git status --porcelain)"
+    cargo update
+    just check

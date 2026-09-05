@@ -5,10 +5,10 @@ difference is easy to forget, so it is written down here.
 
 | | Holds | Machine-specific | Shared between machines |
 |---|---|---|---|
-| `~/.acm` | `config.toml`, and the entrance below | Yes | No |
+| `~/.acm` | `config.toml`, disabled MCP state, locks, skill baselines/recovery, and the entrance below | Yes | No |
 | Catalog | Skills, MCP recipes, plugins, their metadata | No | Yes, as a git repository |
 
-`~/.acm` is a pointer. The catalog is the payload.
+`~/.acm` owns machine settings and recovery state. The catalog holds reusable payloads.
 
 ## Why they are separate
 
@@ -40,13 +40,15 @@ distributed links can hold a fixed address:
 ```
 
 Relocating the catalog then means repointing one symlink instead of every
-distribution. `stableLinkTarget` in `src/skill-adapters.ts` writes that address
+distribution. `stable_link_target` in `src/core/placement.rs` writes that address
 only after `realpath` confirms both names lead to the same directory, and falls
 back to the catalog's own path otherwise.
 
-Nothing else in `~/.acm` is read. Metadata (`skills-metadata.toml`,
+`~/.acm/config.toml` selects machine defaults and optional `provider_commands` executable paths. `disabled-mcps/` stores reversible MCP disable state, `locks/` coordinates directory changes, and `skill-state/` stores deployment baselines and complete recovery copies keyed by project/home, target, and skill. These remain machine-local when the catalog moves. Skill recovery directories have private permissions; their payloads retain original permissions inside that boundary. They are not included in allowlisted publication. Use `skill backups` and `skill restore` to inspect or restore a scope; see [recovery semantics](native-workflows.md#protect-and-restore-skill-copies).
+
+Metadata (`skills-metadata.toml`,
 `mcps-metadata.toml`, `plugins-metadata.toml`, `plugin-snapshot.toml`),
-`PUBLIC.txt` and `plugins/` are all resolved through `getCatalogDir()`.
+`PUBLIC.txt` and `plugins/` are all resolved through `get_catalog_dir()`.
 
 ## How this came about
 
@@ -57,17 +59,17 @@ reconstructed from timestamps.
 |---|---|
 | 2026-06-19 | The catalog repository is created, separate from `~/.acm` |
 | 2026-08-02 00:31 | `catalog_dir` is added, so the catalog can live outside `~/.acm` |
-| 2026-08-02 00:43 | The last reader moves onto `getCatalogDir()` |
+| 2026-08-02 00:43 | The last reader moves onto `get_catalog_dir()` |
 | 2026-08-02 01:18 | A machine is migrated: `~/.acm`'s contents are replaced by *seven* symlinks into the catalog |
-| 2026-08-02 01:22 | `stableLinkTarget` adopts one of them, `skills`, as the fixed address |
+| 2026-08-02 01:22 | `stable_link_target` adopts one of them, `skills`, as the fixed address |
 
 The seven symlinks were made by hand and never committed, which caused two
 problems that went unnoticed for weeks:
 
 1. **Six of them were dead on arrival.** Every reader had already moved to
-   `getCatalogDir()` by 00:43, so only `skills` was ever followed — and only by
+   `get_catalog_dir()` by 00:43, so only `skills` was ever followed — and only by
    links already on disk, not by any code. They made `~/.acm` look like a second
    copy of the catalog, which misled both a reader and a later audit.
 2. **Nothing created the seventh.** A second machine got no entrance, so
-   `stableLinkTarget` silently fell back to the catalog's path and the
-   relocatability above quietly stopped being true. It is created on demand now.
+   `stable_link_target` silently fell back to the catalog's path and the
+   relocatability above quietly stopped being true. The Rust implementation follows the entrance when it already resolves to the selected catalog; it otherwise links directly to the configured catalog without creating or repointing unrelated user links.

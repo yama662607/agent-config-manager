@@ -1,75 +1,39 @@
 # Agent Configuration Guide
 
-This document contains guidelines and instructions for AI agents working on this project.
+`agent-config-manager` manages native MCP configurations, skills, and plugins across Claude Code, Codex, Antigravity, and Grok.
 
-## Project Overview
+## Implementation and layout
 
-`agent-config-manager` is a cross-agent configuration manager for MCP servers and skills. It directly edits native config files without requiring manifests or sync steps.
+- Rust is the only application runtime. CLI: Clap; TUI: Ratatui/Crossterm.
+- `src/cli/`: argument parsing and scope routing.
+- `src/core/`: resource operations, discovery, publication, diagnostics.
+- `src/adapters/`: provider configuration boundaries.
+- `src/catalog/`, `src/storage.rs`, `src/paths.rs`: locked persistence and resolution.
+- `tests/`: Rust regressions; subprocess fixtures isolate HOME and the catalog.
+- `bin/acm.cjs`: dependency-free npm launcher. JavaScript under `scripts/` is packaging only.
+- `openspec/`: behavior specifications and change records.
 
-**Tech Stack:**
-- Language: TypeScript (ES modules)
-- Runtime: Node.js >= 20.0.0
-- Build: tsc (TypeScript compiler)
-- Test: tsx (Node.js built-in test runner)
+Use existing mise-managed runtimes and the project task runner. Keep secrets out of project files. Never read private SSH keys or `~/.config/mise/config.local.toml` without an explicit current-session request.
 
-## Justfile Usage (AI Agent Protocol)
+## Git workflow
 
-This project expects agents to use `just` commands to keep quality high.
+Do not commit or push directly to `main`. Use a `feature/`, `fix/`, `docs/`, or `chore/` branch and a pull request. Before deleting an existing worktree, inspect its status and obtain approval if it has uncommitted work.
 
-### Daily Commands
-- `just check` — Run all read-only checks (build, tests).
-- `just fix` — Not applicable (no auto-formatter configured).
+## Quality gate
 
-### Workflow
-1. After editing files: Run `just check` to verify quality
-2. If errors occur: Fix the issues manually, then `just check` again
-3. Before committing: Ensure `just check` passes
+Run `just check` after code changes and before committing. It checks Rust formatting, Clippy with warnings denied, all Rust tests, and package structure. Use `just fix` for formatting. Targeted commands include `just test`, `just test-unit`, and `just test-integration`; they accept Cargo test arguments.
 
-### Targeted Commands
-- `just build` — Build the project (typecheck + compilation)
-- `just test [args]` — Run all tests (argument pass-through)
-- `just test-unit [args]` — Run unit tests only
-- `just test-integration [args]` — Run integration tests only
-- `just test-smoke` — Run smoke tests (requires build)
-- `just dev` — Run CLI in development mode
-- `just clean` — Remove build artifacts
+Use `just build` for the release binary, `just dev --help` for the CLI, and `just test-smoke` after distribution changes. The smoke test packs, extracts, and executes the npm package without installing it globally. `npm run check` and `npm test` remain aliases for Rust checks.
 
-### Dependency Management
-- `just upgrade` — Upgrade all dependencies safely (checks git cleanliness first)
+Never test mutations against developer provider settings. Use fixture HOME/USERPROFILE and ACM_CATALOG_DIR values on child commands. Fake provider executables exercise CLI delegation; Python is used only by these test fixtures.
 
-## Project Structure
+## Behavioral boundaries
 
-```
-agent-config-manager/
-├── src/              # Source code
-├── dist/             # Compiled output (generated)
-├── test/             # Test files
-│   ├── unit/         # Unit tests
-│   └── integration/  # Integration tests
-├── justfile          # Task runner commands
-├── package.json      # Dependencies and scripts
-└── tsconfig.json     # TypeScript configuration
-```
-
-## Key Commands (npm scripts)
-
-The project also supports direct npm scripts:
-- `npm run build` - Compile TypeScript to `dist/`
-- `npm run clean` - Remove `dist/` directory
-- `npm run dev` - Run CLI in development mode with tsx
-- `npm run check` - Clean and build (alias for quality check)
-
-## Testing
-
-Tests use Node.js built-in test runner with tsx:
-- Unit tests: `test/unit/*.test.ts`
-- Integration tests: `test/integration/*.test.ts`
-- Run with: `npm run test` or `just test`
-
-## Quality Standards
-
-Since this project doesn't use a formatter or linter:
-- Follow existing code style
-- Use TypeScript strict mode (already configured)
-- Ensure type safety with `strict: true`
-- Keep functions focused and modules small
+- Keep catalog definitions separate from provider runtime state.
+- Preserve unknown metadata, unrelated config keys, comments, and symlinks.
+- Use locked read-modify-write and prepare directory replacements before mutation.
+- Reads must not initialize catalogs or silently repair malformed data.
+- Claude user MCP changes must go through the Claude CLI. Native plugins must use provider installers; file placement alone is not activation.
+- Report provider failures and unsupported scopes. Do not claim success after a failed subprocess.
+- Keep complete skill/plugin payloads and source provenance.
+- Registry publication and merging require explicit authorization; preparing packages and a draft PR are normal implementation work.

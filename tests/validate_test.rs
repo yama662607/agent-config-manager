@@ -1,4 +1,6 @@
-use agent_config_manager::core::validate::{validate_skill_content, validate_skill_directory, validate_skill_name};
+use agent_config_manager::core::validate::{
+    validate_skill_content, validate_skill_directory, validate_skill_name,
+};
 use agent_config_manager::types::IssueSeverity;
 use std::fs;
 use tempfile::tempdir;
@@ -59,5 +61,9 @@ description: Comprehensive testing skill for AI agent workflow validation.
     .unwrap();
 
     let issues = validate_skill_directory(&skill_path).unwrap();
-    assert!(issues.is_empty(), "Expected valid directory, got: {:?}", issues);
+    assert!(
+        issues.is_empty(),
+        "Expected valid directory, got: {:?}",
+        issues
+    );
 }

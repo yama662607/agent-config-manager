@@ -1,4 +1,4 @@
-use agent_config_manager::catalog::catalog::add_skill;
+use agent_config_manager::catalog::store::add_skill;
 use agent_config_manager::paths::home_dir;
 use agent_config_manager::tui::app::{ActiveTab, App};
 use agent_config_manager::types::TargetName;
@@ -23,15 +23,31 @@ fn test_tui_full_interaction_scenarios() {
     let _guard = TUI_TEST_LOCK.lock().unwrap();
 
     let dir = tempdir().unwrap();
+    let test_home = tempdir().unwrap();
+    std::env::set_var("HOME", test_home.path());
+    std::env::set_var("USERPROFILE", test_home.path());
     let cat_dir = tempdir().unwrap();
     std::env::set_var("ACM_CATALOG_DIR", cat_dir.path().to_str().unwrap());
 
     // Populate catalog with skills
     add_skill("alpha-skill", "---\nname: alpha-skill\ndescription: Alpha description\n---\n# Header\nLine 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9\nLine 10").unwrap();
-    add_skill("beta-skill", "---\nname: beta-skill\ndescription: Beta description\n---\n").unwrap();
-    add_skill("gamma-skill", "---\nname: gamma-skill\ndescription: Gamma description\n---\n").unwrap();
+    add_skill(
+        "beta-skill",
+        "---\nname: beta-skill\ndescription: Beta description\n---\n",
+    )
+    .unwrap();
+    add_skill(
+        "gamma-skill",
+        "---\nname: gamma-skill\ndescription: Gamma description\n---\n",
+    )
+    .unwrap();
 
-    let targets = vec![TargetName::Claude, TargetName::Codex, TargetName::Antigravity, TargetName::Grok];
+    let targets = vec![
+        TargetName::Claude,
+        TargetName::Codex,
+        TargetName::Antigravity,
+        TargetName::Grok,
+    ];
     let mut app = App::new(dir.path().to_path_buf(), targets);
 
     // --- Scenario 1: Initial State & Tab Navigation ---
@@ -65,12 +81,27 @@ fn test_tui_full_interaction_scenarios() {
 
     // Toggle Claude only
     app.handle_key(make_key(KeyCode::Char('c')));
-    assert!(dir.path().join(".claude").join("skills").join("alpha-skill").exists());
-    assert!(!dir.path().join(".codex").join("skills").join("alpha-skill").exists());
+    assert!(dir
+        .path()
+        .join(".claude")
+        .join("skills")
+        .join("alpha-skill")
+        .exists());
+    assert!(!dir
+        .path()
+        .join(".codex")
+        .join("skills")
+        .join("alpha-skill")
+        .exists());
 
     // Toggle Codex only
     app.handle_key(make_key(KeyCode::Char('x')));
-    assert!(dir.path().join(".codex").join("skills").join("alpha-skill").exists());
+    assert!(dir
+        .path()
+        .join(".codex")
+        .join("skills")
+        .join("alpha-skill")
+        .exists());
 
     // --- Scenario 5: Preview Scrolling ('J' / 'K') ---
     assert_eq!(app.preview_scroll, 0);
@@ -103,16 +134,24 @@ fn test_tui_full_interaction_scenarios() {
     let mut terminal = Terminal::new(backend).unwrap();
 
     app.active_tab = ActiveTab::Skills;
-    terminal.draw(|f| agent_config_manager::tui::ui::render(f, &mut app)).unwrap();
+    terminal
+        .draw(|f| agent_config_manager::tui::ui::render(f, &mut app))
+        .unwrap();
 
     app.active_tab = ActiveTab::Mcp;
-    terminal.draw(|f| agent_config_manager::tui::ui::render(f, &mut app)).unwrap();
+    terminal
+        .draw(|f| agent_config_manager::tui::ui::render(f, &mut app))
+        .unwrap();
 
     app.active_tab = ActiveTab::Plugins;
-    terminal.draw(|f| agent_config_manager::tui::ui::render(f, &mut app)).unwrap();
+    terminal
+        .draw(|f| agent_config_manager::tui::ui::render(f, &mut app))
+        .unwrap();
 
     app.active_tab = ActiveTab::Doctor;
-    terminal.draw(|f| agent_config_manager::tui::ui::render(f, &mut app)).unwrap();
+    terminal
+        .draw(|f| agent_config_manager::tui::ui::render(f, &mut app))
+        .unwrap();
 
     // --- Scenario 8: Exit Key ('q') ---
     assert!(app.running);

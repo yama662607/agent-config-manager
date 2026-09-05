@@ -40,13 +40,13 @@ distributed links can hold a fixed address:
 ```
 
 Relocating the catalog then means repointing one symlink instead of every
-distribution. `stableLinkTarget` in `src/skill-adapters.ts` writes that address
+distribution. `stable_link_target` in `src/core/placement.rs` writes that address
 only after `realpath` confirms both names lead to the same directory, and falls
 back to the catalog's own path otherwise.
 
-Nothing else in `~/.acm` is read. Metadata (`skills-metadata.toml`,
+`~/.acm/config.toml` selects machine defaults, and `disabled-mcps/` stores reversible MCP disable state. Metadata (`skills-metadata.toml`,
 `mcps-metadata.toml`, `plugins-metadata.toml`, `plugin-snapshot.toml`),
-`PUBLIC.txt` and `plugins/` are all resolved through `getCatalogDir()`.
+`PUBLIC.txt` and `plugins/` are all resolved through `get_catalog_dir()`.
 
 ## How this came about
 
@@ -57,17 +57,17 @@ reconstructed from timestamps.
 |---|---|
 | 2026-06-19 | The catalog repository is created, separate from `~/.acm` |
 | 2026-08-02 00:31 | `catalog_dir` is added, so the catalog can live outside `~/.acm` |
-| 2026-08-02 00:43 | The last reader moves onto `getCatalogDir()` |
+| 2026-08-02 00:43 | The last reader moves onto `get_catalog_dir()` |
 | 2026-08-02 01:18 | A machine is migrated: `~/.acm`'s contents are replaced by *seven* symlinks into the catalog |
-| 2026-08-02 01:22 | `stableLinkTarget` adopts one of them, `skills`, as the fixed address |
+| 2026-08-02 01:22 | `stable_link_target` adopts one of them, `skills`, as the fixed address |
 
 The seven symlinks were made by hand and never committed, which caused two
 problems that went unnoticed for weeks:
 
 1. **Six of them were dead on arrival.** Every reader had already moved to
-   `getCatalogDir()` by 00:43, so only `skills` was ever followed — and only by
+   `get_catalog_dir()` by 00:43, so only `skills` was ever followed — and only by
    links already on disk, not by any code. They made `~/.acm` look like a second
    copy of the catalog, which misled both a reader and a later audit.
 2. **Nothing created the seventh.** A second machine got no entrance, so
-   `stableLinkTarget` silently fell back to the catalog's path and the
-   relocatability above quietly stopped being true. It is created on demand now.
+   `stable_link_target` silently fell back to the catalog's path and the
+   relocatability above quietly stopped being true. The Rust implementation follows the entrance when it already resolves to the selected catalog; it otherwise links directly to the configured catalog without creating or repointing unrelated user links.

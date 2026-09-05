@@ -1,7 +1,9 @@
-use agent_config_manager::catalog::catalog::{add_skill, get_skill, list_skills};
+use agent_config_manager::catalog::store::{add_skill, get_skill, list_skills};
 use agent_config_manager::core::doctor::run_doctor;
 use agent_config_manager::core::placement::{copy_skill_dir_to_config, SkillPlacementMode};
-use agent_config_manager::core::skill::{skill_add, skill_link, skill_rename, skill_unlink, skill_update};
+use agent_config_manager::core::skill::{
+    skill_add, skill_link, skill_rename, skill_unlink, skill_update,
+};
 use agent_config_manager::paths::{get_catalog_skill_dir, get_catalog_skills_dir};
 use agent_config_manager::types::TargetName;
 use std::fs;
@@ -15,6 +17,9 @@ fn test_all_skill_and_catalog_operations() {
     let _guard = TEST_LOCK.lock().unwrap();
 
     // 1. Skill Catalog CRUD
+    let test_home = tempdir().unwrap();
+    std::env::set_var("HOME", test_home.path());
+    std::env::set_var("USERPROFILE", test_home.path());
     let catalog_dir = tempdir().unwrap();
     std::env::set_var("ACM_CATALOG_DIR", catalog_dir.path().to_str().unwrap());
 
@@ -52,7 +57,10 @@ description: Source of truth skill in development repo.
     assert_eq!(id, "my-dev-skill");
 
     let linked_path = get_catalog_skills_dir().join("my-dev-skill");
-    assert!(fs::symlink_metadata(&linked_path).unwrap().file_type().is_symlink());
+    assert!(fs::symlink_metadata(&linked_path)
+        .unwrap()
+        .file_type()
+        .is_symlink());
 
     skill_unlink("my-dev-skill").unwrap();
     assert!(!linked_path.exists());
@@ -75,7 +83,10 @@ description: Session recall for coding agents.
     let targets = vec![TargetName::Claude, TargetName::Codex];
     skill_add(root, "coding-agent-session-recall", &targets, None).unwrap();
 
-    let claude_skill = root.join(".claude").join("skills").join("coding-agent-session-recall");
+    let claude_skill = root
+        .join(".claude")
+        .join("skills")
+        .join("coding-agent-session-recall");
     assert!(claude_skill.exists());
 
     skill_rename(
@@ -87,20 +98,45 @@ description: Session recall for coding agents.
     )
     .unwrap();
 
-    assert!(!get_catalog_skills_dir().join("coding-agent-session-recall").exists());
-    assert!(get_catalog_skills_dir().join("ai-agent-archive-recall").exists());
+    assert!(!get_catalog_skills_dir()
+        .join("coding-agent-session-recall")
+        .exists());
+    assert!(get_catalog_skills_dir()
+        .join("ai-agent-archive-recall")
+        .exists());
     assert!(!claude_skill.exists());
-    assert!(root.join(".claude").join("skills").join("ai-agent-archive-recall").exists());
+    assert!(root
+        .join(".claude")
+        .join("skills")
+        .join("ai-agent-archive-recall")
+        .exists());
 
     // 4. Update Stale Copies (Priority 1 Roadmap)
     let cat_skill_dir = get_catalog_skill_dir("ai-agent-archive-recall");
     // Manually place a stale copy in Codex
-    copy_skill_dir_to_config(root, TargetName::Codex, "ai-agent-archive-recall", &cat_skill_dir, SkillPlacementMode::Copy).unwrap();
-    let codex_skill_md = root.join(".codex").join("skills").join("ai-agent-archive-recall").join("SKILL.md");
+    copy_skill_dir_to_config(
+        root,
+        TargetName::Codex,
+        "ai-agent-archive-recall",
+        &cat_skill_dir,
+        SkillPlacementMode::Copy,
+    )
+    .unwrap();
+    let codex_skill_md = root
+        .join(".codex")
+        .join("skills")
+        .join("ai-agent-archive-recall")
+        .join("SKILL.md");
     // Modify target to make it stale
     fs::write(&codex_skill_md, "old content").unwrap();
 
-    let update_res = skill_update(root, Some("ai-agent-archive-recall"), &[TargetName::Codex], false).unwrap();
+    let update_res = skill_update(
+        root,
+        Some("ai-agent-archive-recall"),
+        &[TargetName::Codex],
+        false,
+    )
+    .unwrap();
     assert_eq!(update_res.updated_count, 1);
     let updated_content = fs::read_to_string(&codex_skill_md).unwrap();
     assert!(updated_content.contains("Session recall"));

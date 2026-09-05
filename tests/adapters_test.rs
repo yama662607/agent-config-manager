@@ -1,4 +1,6 @@
-use agent_config_manager::adapters::{add_mcp_to_config, get_mcp_servers, remove_mcp_from_config, set_mcp_enabled};
+use agent_config_manager::adapters::{
+    add_mcp_to_config, get_mcp_servers, remove_mcp_from_config, set_mcp_enabled,
+};
 use agent_config_manager::types::{McpRecipe, TargetName, TransportType};
 use tempfile::tempdir;
 
@@ -20,7 +22,7 @@ fn test_claude_adapter_crud() {
     add_mcp_to_config(TargetName::Claude, &config_path, "test-server", &recipe).unwrap();
     let servers = get_mcp_servers(TargetName::Claude, &config_path).unwrap();
     assert!(servers.contains_key("test-server"));
-    assert_eq!(servers["test-server"].enabled, true);
+    assert!(servers["test-server"].enabled);
 
     // Remove
     remove_mcp_from_config(TargetName::Claude, &config_path, "test-server").unwrap();
@@ -46,12 +48,12 @@ fn test_codex_adapter_crud() {
     let key = add_mcp_to_config(TargetName::Codex, &config_path, "my-pkg", &recipe).unwrap();
     let servers = get_mcp_servers(TargetName::Codex, &config_path).unwrap();
     assert!(servers.contains_key(&key));
-    assert_eq!(servers[&key].enabled, true);
+    assert!(servers[&key].enabled);
 
     // Disable
     set_mcp_enabled(TargetName::Codex, &config_path, &key, false).unwrap();
     let servers_disabled = get_mcp_servers(TargetName::Codex, &config_path).unwrap();
-    assert_eq!(servers_disabled[&key].enabled, false);
+    assert!(!servers_disabled[&key].enabled);
 
     // Remove
     remove_mcp_from_config(TargetName::Codex, &config_path, &key).unwrap();

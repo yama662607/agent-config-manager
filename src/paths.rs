@@ -166,6 +166,40 @@ pub fn get_catalog_plugin_dir(id: &str) -> PathBuf {
     get_catalog_plugins_dir().join(id)
 }
 
+/// The configured native home, normalized before provider commands change directory.
+pub fn provider_home_override(target: TargetName) -> Option<PathBuf> {
+    let variable = match target {
+        TargetName::Claude => "CLAUDE_CONFIG_DIR",
+        TargetName::Codex => "CODEX_HOME",
+        _ => return None,
+    };
+    let value = std::env::var_os(variable).filter(|value| !value.is_empty())?;
+    let path = PathBuf::from(value);
+    Some(if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir().unwrap_or_default().join(path)
+    })
+}
+
+/// Resolve a provider-owned path under its home directory, respecting native overrides.
+pub fn provider_home_path(target: TargetName, relative: &str) -> PathBuf {
+    let prefix = match target {
+        TargetName::Claude => ".claude",
+        TargetName::Codex => ".codex",
+        _ => return home_dir().join(relative),
+    };
+    if let Some(dir) = provider_home_override(target) {
+        if target == TargetName::Claude && relative == ".claude.json" {
+            return dir.join(".claude.json");
+        }
+        if let Ok(suffix) = Path::new(relative).strip_prefix(prefix) {
+            return dir.join(suffix);
+        }
+    }
+    home_dir().join(relative)
+}
+
 /// Get the agent plugins directory for a provider, if it has a single directory
 pub fn get_agent_plugins_dir<P: AsRef<Path>>(
     project_root: P,
@@ -174,7 +208,11 @@ pub fn get_agent_plugins_dir<P: AsRef<Path>>(
     let root = project_root.as_ref();
     let spec = target.spec();
     if is_home_scope(root) {
-        spec.home_plugins_dir.map(|rel| home_dir().join(rel))
+        if let TargetName::Profile(instance) = target {
+            return instance.plugins_dir.clone();
+        }
+        spec.home_plugins_dir
+            .map(|rel| provider_home_path(target, rel))
     } else {
         spec.project_plugins_dir.map(|rel| root.join(rel))
     }
@@ -196,7 +234,10 @@ pub fn get_agent_skills_dir<P: AsRef<Path>>(project_root: P, target: TargetName)
     let root = project_root.as_ref();
     let spec = target.spec();
     if is_home_scope(root) {
-        home_dir().join(spec.home_skills_dir)
+        if let TargetName::Profile(instance) = target {
+            return instance.skills_dir.clone();
+        }
+        provider_home_path(target, spec.home_skills_dir)
     } else {
         root.join(spec.project_skills_dir)
     }
@@ -216,7 +257,10 @@ pub fn get_agent_mcp_config_path<P: AsRef<Path>>(project_root: P, target: Target
     let root = project_root.as_ref();
     let spec = target.spec();
     if is_home_scope(root) {
-        home_dir().join(spec.home_mcp_config)
+        if let TargetName::Profile(instance) = target {
+            return instance.mcp_config.clone();
+        }
+        provider_home_path(target, spec.home_mcp_config)
     } else {
         root.join(spec.project_mcp_config)
     }

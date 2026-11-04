@@ -291,6 +291,9 @@ fn preview(ctx: &ContextOptions, command: &McpSubcommands) -> anyhow::Result<()>
         let mut matched = false;
         for &target in &ctx.targets {
             let path = get_agent_mcp_config_path(&root, target);
+            if !matches!(command, McpSubcommands::Adopt { .. }) {
+                crate::adapters::validate_mcp_mutation_target(target, &path)?;
+            }
             let servers = crate::adapters::get_mcp_servers(target, &path)?;
             let specific = match command {
                 McpSubcommands::Add(args) => Some(args.id.as_str()),

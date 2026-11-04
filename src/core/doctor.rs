@@ -269,6 +269,20 @@ pub fn run_doctor<P: AsRef<Path>>(
         if let Some(dir) = get_agent_plugins_dir(root, target) {
             links(&mut report, &dir, fix, false)?;
         }
+        // Opt-in profiles also have independent home directories when doctor is
+        // invoked in project scope; inspect those without changing built-in behavior.
+        if !is_home_scope(root) && matches!(target, TargetName::Profile(_)) {
+            let home = home_dir();
+            links(
+                &mut report,
+                &get_agent_skills_dir(&home, target),
+                fix,
+                false,
+            )?;
+            if let Some(dir) = get_agent_plugins_dir(&home, target) {
+                links(&mut report, &dir, fix, false)?;
+            }
+        }
     }
     if let Ok(status) = crate::core::mcp::get_mcp_workspace_status(root, targets) {
         for server in status.servers {

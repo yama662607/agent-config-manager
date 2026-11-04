@@ -1,7 +1,7 @@
 use crate::core::doctor::CheckStatus;
 use crate::paths::{get_agent_mcp_config_path, get_skill_path};
 use crate::tui::app::{ActiveTab, App};
-use crate::types::{PluginPlacementState, SkillPlacementState, TargetName};
+use crate::types::{PluginPlacementState, SkillPlacementState};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -729,8 +729,10 @@ fn render_doctor_tab(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_footer(f: &mut Frame, app: &App, area: Rect) {
-    let target_keys = TargetName::all()
+    let target_keys = app
+        .targets
         .iter()
+        .filter(|t| t.tui_key() != '\0')
         .map(|t| t.tui_key().to_string())
         .collect::<Vec<_>>()
         .join("/");

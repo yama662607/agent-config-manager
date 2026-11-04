@@ -5,5 +5,6 @@ pub mod core;
 pub mod paths;
 pub mod providers;
 pub mod storage;
+pub mod targets;
 pub mod tui;
 pub mod types;

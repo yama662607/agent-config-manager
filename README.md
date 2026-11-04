@@ -46,9 +46,31 @@ default_targets = ["claude", "codex"]
 # codex = "/path/to/codex"
 ```
 
-Native provider commands resolve from `ACM_CLAUDE_BIN`, `ACM_CODEX_BIN`, `ACM_ANTIGRAVITY_BIN`, or `ACM_GROK_BIN`, then the corresponding `provider_commands` entry, then the normal command on PATH (`agy` for Antigravity). Overrides affect native plugin operations and Claude home MCP delegation; they do not select the command run by an MCP recipe.
+Native provider commands resolve from `ACM_CLAUDE_BIN`, `ACM_CODEX_BIN`, `ACM_ANTIGRAVITY_BIN`, `ACM_GROK_BIN`, or `ACM_DEEPSEEK_BIN`, then the corresponding `provider_commands` entry, then the normal command on PATH (`agy` for Antigravity). Overrides affect native plugin operations and Claude home MCP delegation; they do not select the command run by an MCP recipe.
 
-Catalog location precedence is `ACM_CATALOG_DIR`, `catalog_dir`, then `~/.acm`. Without `default_targets`, all four targets are selected. Invalid configuration produces an error. See [state and catalog storage](docs/state-directory-and-catalog.md) and [provider surfaces](docs/provider-config-surfaces.md).
+Catalog location precedence is `ACM_CATALOG_DIR`, `catalog_dir`, then `~/.acm`. Without `default_targets`, all five built-in targets are selected. Invalid configuration produces an error. See [state and catalog storage](docs/state-directory-and-catalog.md) and [provider surfaces](docs/provider-config-surfaces.md).
+
+Additional Claude and Codex accounts can be configured as opt-in profiles:
+
+```toml
+[[profiles]]
+id = "claude-personal"
+provider = "claude"
+display_name = "Claude Personal"
+short_code = "cp"
+tui_key = "P"
+home_dir = "~/.claude-personal"
+
+[[profiles]]
+id = "codex-team"
+provider = "codex"
+display_name = "Codex Team"
+short_code = "xt"
+tui_key = "T"
+home_dir = "~/.codex-team"
+```
+
+Select one with `--home -t claude-personal`, include IDs in `default_targets`, or use `-t all` to include all configured profiles. The standard Claude and Codex targets also respect `CLAUDE_CONFIG_DIR` and `CODEX_HOME`. Paths may be absolute or start with `~/`; optional `mcp_config`, `skills_dir`, and Claude `plugins_dir` override the defaults under `home_dir`. Claude CLI operations reject custom MCP or plugin paths that its native CLI cannot select. Project MCP and skill files are shared by profiles of the same provider and are changed once per operation. `doctor` checks registered profile home links by default, including from project scope; `--home doctor` also checks their home MCP configurations. Selecting multiple IDs for the same provider installation or resource path is rejected, including paths that resolve through symlinks.
 
 ## MCP servers
 

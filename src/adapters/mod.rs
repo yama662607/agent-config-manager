@@ -239,6 +239,7 @@ pub fn get_mcp_servers<P: AsRef<Path>>(
     config_path: P,
 ) -> anyhow::Result<HashMap<String, ServerInfo>> {
     let path = config_path.as_ref();
+    validate_mcp_mutation_target(target, path)?;
     if target == TargetName::DeepSeek {
         return deepseek::get_mcp_servers(path);
     }
@@ -277,7 +278,7 @@ fn delegates_user_mcp_to_cli(target: TargetName, path: &Path) -> bool {
     if !spec.mcp_delegates_user_scope_to_cli {
         return false;
     }
-    let home_config = home_dir().join(spec.home_mcp_config);
+    let home_config = crate::paths::get_agent_mcp_config_path(home_dir(), target);
     path == home_config
         || path
             .canonicalize()
@@ -286,8 +287,23 @@ fn delegates_user_mcp_to_cli(target: TargetName, path: &Path) -> bool {
             .is_some_and(|(a, b)| a == b)
 }
 
-fn claude_command(args: &[String]) -> anyhow::Result<()> {
-    crate::core::plugin::provider_command(TargetName::Claude, &home_dir(), args)
+/// Check whether the native CLI can mutate the resolved user MCP file.
+pub fn validate_mcp_mutation_target(target: TargetName, path: &Path) -> anyhow::Result<()> {
+    if delegates_user_mcp_to_cli(target, path) {
+        if let TargetName::Profile(instance) = target {
+            if instance.mcp_config != instance.home_dir.join(".claude.json") {
+                anyhow::bail!(
+                    "profile {} has an MCP path that Claude CLI cannot select",
+                    instance.id
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn claude_command(target: TargetName, args: &[String]) -> anyhow::Result<()> {
+    crate::core::plugin::provider_command(target, &home_dir(), args)
         .map(|_| ())
         .map_err(|error| {
             anyhow::anyhow!(
@@ -307,31 +323,40 @@ fn put_server(target: TargetName, path: &Path, key: &str, server: &Value) -> any
             return Ok(());
         }
         if previous.is_some() {
-            claude_command(&[
-                "mcp".into(),
-                "remove".into(),
-                key.into(),
-                "-s".into(),
-                "user".into(),
-            ])?;
-        }
-        if let Err(error) = claude_command(&[
-            "mcp".into(),
-            "add-json".into(),
-            key.into(),
-            serde_json::to_string(server)?,
-            "-s".into(),
-            "user".into(),
-        ]) {
-            if let Some(previous) = previous {
-                if let Err(rollback) = claude_command(&[
+            claude_command(
+                target,
+                &[
                     "mcp".into(),
-                    "add-json".into(),
+                    "remove".into(),
                     key.into(),
-                    serde_json::to_string(&previous)?,
                     "-s".into(),
                     "user".into(),
-                ]) {
+                ],
+            )?;
+        }
+        if let Err(error) = claude_command(
+            target,
+            &[
+                "mcp".into(),
+                "add-json".into(),
+                key.into(),
+                serde_json::to_string(server)?,
+                "-s".into(),
+                "user".into(),
+            ],
+        ) {
+            if let Some(previous) = previous {
+                if let Err(rollback) = claude_command(
+                    target,
+                    &[
+                        "mcp".into(),
+                        "add-json".into(),
+                        key.into(),
+                        serde_json::to_string(&previous)?,
+                        "-s".into(),
+                        "user".into(),
+                    ],
+                ) {
                     return Err(error.context(format!(
                         "Restoring the previous server also failed: {rollback}"
                     )));
@@ -364,13 +389,16 @@ fn delete_server(target: TargetName, path: &Path, key: &str) -> anyhow::Result<(
     }
     if delegates_user_mcp_to_cli(target, path) {
         if raw_servers(target, path)?.contains_key(key) {
-            claude_command(&[
-                "mcp".into(),
-                "remove".into(),
-                key.into(),
-                "-s".into(),
-                "user".into(),
-            ])?;
+            claude_command(
+                target,
+                &[
+                    "mcp".into(),
+                    "remove".into(),
+                    key.into(),
+                    "-s".into(),
+                    "user".into(),
+                ],
+            )?;
             if raw_servers(target, path)?.contains_key(key) {
                 bail!("Claude did not remove {key}");
             }
@@ -391,6 +419,7 @@ pub fn preview_mcp_add(
     server_name: &str,
     recipe: &McpRecipe,
 ) -> anyhow::Result<String> {
+    validate_mcp_mutation_target(target, path)?;
     validate_recipe(recipe)?;
     let configured = raw_servers(target, path)?;
     let key = resolve_key(&configured, server_name);
@@ -479,6 +508,7 @@ pub fn replace_mcp_recipe(
     expected: &ServerInfo,
     recipe: &McpRecipe,
 ) -> anyhow::Result<()> {
+    validate_mcp_mutation_target(target, path)?;
     validate_recipe(recipe)?;
     let _operation = FileLock::acquire(&operation_lock(path))?;
     let current = get_mcp_servers(target, path)?;
@@ -512,6 +542,7 @@ pub fn remove_mcp_from_config<P: AsRef<Path>>(
     name: &str,
 ) -> anyhow::Result<()> {
     let path = config_path.as_ref();
+    validate_mcp_mutation_target(target, path)?;
     let saved_path = disabled_path(path);
     let _operation = FileLock::acquire(&operation_lock(path))?;
     let mut saved = read_value(&saved_path)?;
@@ -531,6 +562,7 @@ pub fn set_mcp_enabled<P: AsRef<Path>>(
     enabled: bool,
 ) -> anyhow::Result<()> {
     let path = config_path.as_ref();
+    validate_mcp_mutation_target(target, path)?;
     if target == TargetName::DeepSeek {
         return deepseek::set_server_enabled(path, name, enabled);
     }

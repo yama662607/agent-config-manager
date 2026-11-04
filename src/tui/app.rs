@@ -335,7 +335,15 @@ impl App {
     ) {
         let mut results = Vec::new();
         let mut failed = Vec::new();
+        let mut providers = std::collections::HashSet::new();
         for &target in targets {
+            if !crate::paths::is_home_scope(&self.project_root)
+                && matches!(self.active_tab, ActiveTab::Skills | ActiveTab::Mcp)
+                && !providers.insert(target.provider())
+            {
+                results.push(format!("{target}: shared project configuration; unchanged"));
+                continue;
+            }
             match operation(target) {
                 Ok(detail) => results.push(format!("{target}: {detail}")),
                 Err(error) => {
@@ -526,8 +534,10 @@ impl App {
                     }
                     [target] => self.prepare_mcp_editor(*target),
                     _ => {
-                        let key_hints = TargetName::all()
+                        let key_hints = self
+                            .targets
                             .iter()
+                            .filter(|t| t.tui_key() != '\0')
                             .map(|t| t.tui_key().to_string())
                             .collect::<Vec<_>>()
                             .join("/");

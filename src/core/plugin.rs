@@ -446,10 +446,31 @@ fn validate_scope(root: &Path, targets: &[TargetName]) -> anyhow::Result<()> {
 
 pub(crate) fn installation_key(root: &Path, target: TargetName) -> String {
     if !target.spec().supports_project_plugins || is_home_scope(root) {
-        format!("{target}:home")
+        if let TargetName::Profile(instance) = target {
+            return format!("{target}:home:{}", instance.home_dir.display());
+        }
+        let default_dir = match target.provider() {
+            TargetName::Claude => Some(crate::paths::home_dir().join(".claude")),
+            TargetName::Codex => Some(crate::paths::home_dir().join(".codex")),
+            _ => None,
+        };
+        match crate::paths::provider_home_override(target) {
+            Some(dir) if Some(&dir) != default_dir.as_ref() => {
+                format!("{target}:home:{}", dir.display())
+            }
+            _ => format!("{target}:home"),
+        }
     } else {
         format!("{target}:{}", root.display())
     }
+}
+
+/// Legacy records have no profile or alternate-home identity; they describe only
+/// the historical built-in home and must never be attributed to another account.
+pub(crate) fn legacy_home_applies(root: &Path, target: TargetName) -> bool {
+    is_home_scope(root)
+        && !matches!(target, TargetName::Profile(_))
+        && installation_key(root, target) == format!("{target}:home")
 }
 
 pub(crate) fn native_operation_lock(id: &str) -> anyhow::Result<crate::storage::FileLock> {
@@ -504,6 +525,9 @@ pub fn plugin_install(
     id: &str,
     targets: &[TargetName],
 ) -> anyhow::Result<PluginStatus> {
+    for &target in targets {
+        super::plugin_verification::validate_provider_paths(target, "plugin")?;
+    }
     let _lock = native_operation_lock(id)?;
     plugin_install_unlocked(root, id, targets)
 }
@@ -514,6 +538,9 @@ fn plugin_install_unlocked(
     targets: &[TargetName],
 ) -> anyhow::Result<PluginStatus> {
     validate_scope(root, targets)?;
+    for &target in targets {
+        super::plugin_verification::validate_provider_paths(target, "plugin")?;
+    }
     let marketplace = build_marketplace(&[id.to_owned()])?;
     let digest = digest_plugin(&get_catalog_plugin_dir(id))?;
     let mut report = super::operations::OperationReport::new("plugin.install", id);
@@ -521,7 +548,7 @@ fn plugin_install_unlocked(
         let result = (|| {
             register_marketplace(root, &[target], &marketplace)?;
             let selector = format!("{id}@{MARKETPLACE}");
-            let args = match target {
+            let args = match target.provider() {
                 TargetName::Claude => vec![
                     "plugin".into(),
                     "install".into(),
@@ -553,9 +580,12 @@ fn plugin_install_unlocked(
                     "add".into(),
                     marketplace.join("plugins").join(id).display().to_string(),
                 ],
+                TargetName::Profile(_) => unreachable!(),
             };
             if let Err(error) = provider_command(target, root, &args) {
-                if target == TargetName::Grok && error.to_string().contains("already installed") {
+                if target.provider() == TargetName::Grok
+                    && error.to_string().contains("already installed")
+                {
                     let observed =
                         super::plugin_verification::observe_provider_plugin(root, id, target)?;
                     if observed["installed"] != true {
@@ -630,7 +660,7 @@ pub fn plugin_remove(root: &Path, id: &str, targets: &[TargetName]) -> anyhow::R
                 .get("nativeInstallations")
                 .and_then(|v| v.get(&key))
                 .is_some();
-            let legacy = is_home_scope(root)
+            let legacy = legacy_home_applies(root, target)
                 && metadata
                     .get("installedFor")
                     .and_then(Value::as_array)
@@ -638,7 +668,7 @@ pub fn plugin_remove(root: &Path, id: &str, targets: &[TargetName]) -> anyhow::R
             if !recorded && !legacy {
                 return Ok(json!({"id":id,"installed":false,"skipped":true}));
             }
-            let args = match target {
+            let args = match target.provider() {
                 TargetName::Claude => vec![
                     "plugin".into(),
                     "uninstall".into(),
@@ -670,11 +700,12 @@ pub fn plugin_remove(root: &Path, id: &str, targets: &[TargetName]) -> anyhow::R
                     "remove".into(),
                     id.into(),
                 ],
+                TargetName::Profile(_) => unreachable!(),
             };
             provider_command(target, root, &args)?;
             update_metadata(id, |entry| {
                 object_at(entry, "nativeInstallations")?.remove(&key);
-                if is_home_scope(root) {
+                if legacy_home_applies(root, target) {
                     if let Some(values) =
                         entry.get_mut("installedFor").and_then(Value::as_array_mut)
                     {
@@ -751,7 +782,7 @@ fn plugin_status(
             .get("nativeInstallations")
             .and_then(|v| v.get(&key))
             .is_some();
-        let legacy = is_home_scope(root)
+        let legacy = legacy_home_applies(root, target)
             && metadata
                 .get("installedFor")
                 .and_then(Value::as_array)
@@ -939,6 +970,9 @@ pub fn plugin_update_options(
 ) -> anyhow::Result<PluginUpdateResult> {
     validate_plugin_id(id)?;
     validate_scope(root, targets)?;
+    for &target in targets {
+        super::plugin_verification::validate_provider_paths(target, "plugin")?;
+    }
     // A dry-run must not create machine-state lock files.
     let _lock = if dry_run {
         None

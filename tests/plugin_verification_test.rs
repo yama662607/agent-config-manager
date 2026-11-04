@@ -36,12 +36,14 @@ fn providers(f: &Fixture) {
 import json,os,pathlib,subprocess,sys,time
 home=pathlib.Path(os.environ['HOME']);name=pathlib.Path(sys.argv[0]).name;args=sys.argv[1:]
 with (home/'native-calls.jsonl').open('a') as file:file.write(json.dumps([name]+args)+'\n')
+with (home/'native-env.jsonl').open('a') as file:file.write(json.dumps([name,os.environ.get('CLAUDE_CONFIG_DIR'),os.environ.get('CODEX_HOME')])+'\n')
 if (home/('sleep-'+name)).exists():time.sleep(20)
 if (home/('spawn-'+name)).exists():
  subprocess.Popen([sys.executable,'-c',"import pathlib,time;time.sleep(0.8);pathlib.Path("+repr(str(home/'orphan-wrote'))+").write_text('unexpected')"])
  time.sleep(20)
 if (home/('large-'+name)).exists():print('x'*2000000);sys.exit(0)
 if (home/('fail-'+name)).exists():print('token=private_fixture_credential',file=sys.stderr);sys.exit(19)
+if os.environ.get('CLAUDE_CONFIG_DIR') and (pathlib.Path(os.environ['CLAUDE_CONFIG_DIR'])/'fail-provider').exists():print('profile failure',file=sys.stderr);sys.exit(19)
 if args[:3]==['plugin','marketplace','add'] and (home/('duplicate-'+name)).exists():print('marketplace already added from a different source',file=sys.stderr);sys.exit(17)
 if args==['plugin','marketplace','list','--json']:print((home/(name+'.marketplaces')).read_text());sys.exit(0)
 if name=='grok' and len(args)>1 and args[1]=='install' and (home/'already-grok').exists():print('repo already installed',file=sys.stderr);sys.exit(17)
@@ -567,4 +569,246 @@ fn compatibility_is_evidence_based_and_conversion_preview_is_read_only() {
         fs::read(f.catalog.join("plugins-metadata.toml")).unwrap(),
         before
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn profile_native_plugins_use_separate_homes_and_records() {
+    let f = Fixture::new();
+    providers(&f);
+    plugin(&f, "probe");
+    f.file(
+        "home/.acm/config.toml",
+        r#"
+[[profiles]]
+id = "claude-personal"
+provider = "claude"
+display_name = "Claude Personal"
+short_code = "cp"
+tui_key = "P"
+home_dir = "~/.claude-personal"
+[[profiles]]
+id = "codex-team"
+provider = "codex"
+display_name = "Codex Team"
+short_code = "xt"
+tui_key = "T"
+home_dir = "~/.codex-team"
+"#,
+    );
+    output(
+        &f,
+        &[
+            "plugin",
+            "install",
+            "probe",
+            "--home",
+            "-t",
+            "claude,claude-personal,codex,codex-team",
+        ],
+        true,
+    );
+    let metadata = toml_file(&f.catalog.join("plugins-metadata.toml"));
+    let installs = &metadata["plugins"]["probe"]["nativeInstallations"];
+    for key in [
+        "claude:home".to_string(),
+        format!(
+            "claude-personal:home:{}",
+            f.home.join(".claude-personal").display()
+        ),
+        "codex:home".to_string(),
+        format!("codex-team:home:{}", f.home.join(".codex-team").display()),
+    ] {
+        assert!(installs.get(&key).is_some(), "missing {key}: {installs}");
+    }
+    let log = fs::read_to_string(f.home.join("native-env.jsonl")).unwrap();
+    let calls: Vec<Value> = log
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(calls
+        .iter()
+        .any(|v| v[0] == "claude" && v[1] == f.home.join(".claude-personal").to_str().unwrap()));
+    assert!(calls
+        .iter()
+        .any(|v| v[0] == "codex" && v[2] == f.home.join(".codex-team").to_str().unwrap()));
+    assert!(calls.iter().any(|v| v[0] == "claude" && v[1].is_null()));
+    assert!(calls.iter().any(|v| v[0] == "codex" && v[2].is_null()));
+    let config_path = f.home.join(".acm/config.toml");
+    let config = fs::read_to_string(&config_path)
+        .unwrap()
+        .replace("~/.codex-team", "~/.codex-other");
+    fs::write(config_path, config).unwrap();
+    let status = output(
+        &f,
+        &["plugin", "show", "probe", "--home", "-t", "codex-team"],
+        true,
+    );
+    assert_eq!(status["plugin"]["placement"]["codex-team"], "missing");
+}
+
+#[cfg(unix)]
+#[test]
+fn alternate_home_does_not_adopt_or_clear_legacy_installation() {
+    let f = Fixture::new();
+    providers(&f);
+    plugin(&f, "probe");
+    let path = f.catalog.join("plugins-metadata.toml");
+    let mut metadata = toml_file(&path);
+    metadata["plugins"]["probe"]["installedFor"] = json!(["codex"]);
+    fs::write(&path, toml::to_string(&metadata).unwrap()).unwrap();
+    let alternate = f.home.join(".codex-team");
+    let result = command(&f, &["plugin", "show", "probe", "--home", "-t", "codex"])
+        .env("CODEX_HOME", &alternate)
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+    let status: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(status["plugin"]["placement"]["codex"], "missing");
+    let result = command(
+        &f,
+        &["plugin", "uninstall", "probe", "--home", "-t", "codex"],
+    )
+    .env("CODEX_HOME", &alternate)
+    .output()
+    .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(!f.home.join("native-calls.jsonl").exists());
+    assert_eq!(
+        toml_file(&path)["plugins"]["probe"]["installedFor"],
+        json!(["codex"])
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn unsupported_claude_plugin_path_fails_before_preparation() {
+    let f = Fixture::new();
+    providers(&f);
+    plugin(&f, "probe");
+    f.file(
+        "home/.acm/config.toml",
+        r#"
+[[profiles]]
+id = "claude-custom"
+provider = "claude"
+display_name = "Claude Custom"
+short_code = "cc"
+tui_key = "C"
+home_dir = "~/.claude-custom"
+plugins_dir = "~/.different-plugins"
+"#,
+    );
+    let before = fs::read(f.catalog.join("plugins-metadata.toml")).unwrap();
+    let out = command(
+        &f,
+        &[
+            "plugin",
+            "install",
+            "probe",
+            "--home",
+            "-t",
+            "claude-custom",
+        ],
+    )
+    .output()
+    .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("Claude CLI cannot select"));
+    assert!(!f.catalog.join("marketplace").exists());
+    assert!(!f.home.join("native-calls.jsonl").exists());
+    assert_eq!(
+        fs::read(f.catalog.join("plugins-metadata.toml")).unwrap(),
+        before
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_profile_install_keeps_success_and_reports_retry_target() {
+    let f = Fixture::new();
+    providers(&f);
+    plugin(&f, "probe");
+    f.file(
+        "home/.acm/config.toml",
+        r#"
+[[profiles]]
+id = "claude-personal"
+provider = "claude"
+display_name = "Claude Personal"
+short_code = "cp"
+tui_key = "P"
+home_dir = "~/.claude-personal"
+"#,
+    );
+    f.file("home/.claude-personal/fail-provider", "failure");
+    let report = output(
+        &f,
+        &[
+            "plugin",
+            "install",
+            "probe",
+            "--home",
+            "-t",
+            "claude,claude-personal",
+        ],
+        false,
+    );
+    assert_eq!(report["retryTargets"], json!(["claude-personal"]));
+    assert_eq!(report["results"][0]["status"], "success");
+    assert_eq!(report["results"][1]["status"], "failed");
+    let metadata = toml_file(&f.catalog.join("plugins-metadata.toml"));
+    let installs = &metadata["plugins"]["probe"]["nativeInstallations"];
+    assert!(installs.get("claude:home").is_some());
+    let personal_key = format!(
+        "claude-personal:home:{}",
+        f.home.join(".claude-personal").display()
+    );
+    assert!(installs.get(&personal_key).is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn unsupported_profile_conversion_is_rejected_before_preparation() {
+    let f = Fixture::new();
+    providers(&f);
+    plugin(&f, "probe");
+    f.file(
+        "home/.acm/config.toml",
+        r#"
+[[profiles]]
+id = "claude-custom"
+provider = "claude"
+display_name = "Claude Custom"
+short_code = "cc"
+tui_key = "C"
+home_dir = "~/.claude-custom"
+plugins_dir = "~/.different-plugins"
+"#,
+    );
+    for preview in [false, true] {
+        let mut cmd = command(
+            &f,
+            &[
+                "plugin",
+                "convert",
+                "probe",
+                "--home",
+                "-t",
+                "claude-custom",
+            ],
+        );
+        if preview {
+            cmd.arg("--dry-run");
+        }
+        let out = cmd.output().unwrap();
+        assert!(!out.status.success());
+        assert!(String::from_utf8_lossy(&out.stdout).contains("Claude CLI cannot select"));
+    }
+    assert!(!f.catalog.join("marketplace").exists());
+    assert!(!f.home.join("native-calls.jsonl").exists());
 }

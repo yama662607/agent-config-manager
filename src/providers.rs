@@ -259,5 +259,6 @@ pub const fn provider_spec(target: TargetName) -> &'static ProviderSpec {
         TargetName::Antigravity => &ANTIGRAVITY_SPEC,
         TargetName::Grok => &GROK_SPEC,
         TargetName::DeepSeek => &DEEPSEEK_SPEC,
+        TargetName::Profile(instance) => provider_spec(instance.provider),
     }
 }

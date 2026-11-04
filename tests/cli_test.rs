@@ -316,3 +316,483 @@ fn scoped_package_identity_and_legacy_remote_environment() {
         "1BAD=value",
     ]);
 }
+
+#[test]
+fn native_home_overrides_isolate_mcp_and_delegate_claude() {
+    let f = Fixture::new();
+    let bin = f.providers();
+    let mut paths = vec![bin];
+    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+    let claude_home = f.temp.path().join("alternate-claude");
+    let codex_home = f.temp.path().join("alternate-codex");
+    for (target, variable, dir) in [
+        ("claude", "CLAUDE_CONFIG_DIR", &claude_home),
+        ("codex", "CODEX_HOME", &codex_home),
+    ] {
+        let output = f
+            .command()
+            .env("PATH", std::env::join_paths(&paths).unwrap())
+            .env(variable, dir)
+            .args([
+                "--home",
+                "mcp",
+                "add",
+                "fixture",
+                "--command",
+                "echo",
+                "-t",
+                target,
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    assert_eq!(
+        json_file(&claude_home.join(".claude.json"))["mcpServers"]["fixture"]["command"],
+        "echo"
+    );
+    assert!(fs::read_to_string(codex_home.join("config.toml"))
+        .unwrap()
+        .contains("fixture"));
+    assert!(!f.home.join(".claude.json").exists());
+    assert!(!f.home.join(".codex/config.toml").exists());
+    let calls = fs::read_to_string(f.home.join("calls.jsonl")).unwrap();
+    assert!(calls.contains("add-json"));
+}
+
+#[test]
+fn profiles_isolate_mcp_targets_and_all_includes_them() {
+    let f = Fixture::new();
+    let bin = f.providers();
+    let mut paths = vec![bin];
+    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+    write(
+        &f.home.join(".acm/config.toml"),
+        r#"
+[[profiles]]
+id = "claude-personal"
+provider = "claude"
+display_name = "Claude Personal"
+short_code = "cp"
+tui_key = "P"
+home_dir = "~/.claude-personal"
+[[profiles]]
+id = "codex-team"
+provider = "codex"
+display_name = "Codex Team"
+short_code = "xt"
+tui_key = "T"
+home_dir = "~/.codex-team"
+"#,
+    );
+    for target in ["claude-personal", "codex-team"] {
+        let output = f
+            .command()
+            .env("PATH", std::env::join_paths(&paths).unwrap())
+            .args([
+                "--home",
+                "mcp",
+                "add",
+                "sample",
+                "--command",
+                "echo",
+                "-t",
+                target,
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{target}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    assert_eq!(
+        json_file(&f.home.join(".claude-personal/.claude.json"))["mcpServers"]["sample"]["command"],
+        "echo"
+    );
+    assert!(fs::read_to_string(f.home.join(".codex-team/config.toml"))
+        .unwrap()
+        .contains("sample"));
+    assert!(!f.home.join(".claude.json").exists());
+    assert!(!f.home.join(".codex/config.toml").exists());
+    let output = f
+        .command()
+        .args(["--home", "--json", "mcp", "list", "-t", "all"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        text.contains("claude-personal") && text.contains("codex-team"),
+        "{text}"
+    );
+}
+
+#[test]
+fn external_profile_skill_and_doctor_use_the_configured_directory() {
+    let f = Fixture::new();
+    let external = f.temp.path().join("outside-home");
+    write(
+        &f.home.join(".acm/config.toml"),
+        &format!(
+            r#"
+[[profiles]]
+id = "codex-team"
+provider = "codex"
+display_name = "Codex Team"
+short_code = "xt"
+tui_key = "T"
+home_dir = {:?}
+"#,
+            external.display().to_string()
+        ),
+    );
+    let source = f.skill("fixture").join("SKILL.md");
+    let output = f
+        .command()
+        .args([
+            "--home",
+            "skill",
+            "add",
+            "fixture",
+            "--file",
+            source.to_str().unwrap(),
+            "--no-register",
+            "--copy",
+            "-t",
+            "codex-team",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(external.join("skills/fixture/SKILL.md").is_file());
+    assert!(!f.home.join(".codex/skills/fixture").exists());
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(external.join("missing"), external.join("skills/dangling"))
+            .unwrap();
+        let output = f
+            .command()
+            .args(["--home", "--json", "doctor"])
+            .output()
+            .unwrap();
+        let report = String::from_utf8(output.stdout).unwrap();
+        assert!(report.contains("dangling"), "{report}");
+        let output = f
+            .command()
+            .args(["--home", "doctor", "--fix"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(fs::symlink_metadata(external.join("skills/dangling")).is_err());
+    }
+}
+
+#[test]
+fn project_skill_operations_deduplicate_shared_provider_paths() {
+    let f = Fixture::new();
+    f.file(
+        "home/.acm/config.toml",
+        r#"
+[[profiles]]
+id = "codex-team"
+provider = "codex"
+display_name = "Codex Team"
+short_code = "xt"
+tui_key = "T"
+home_dir = "~/.codex-team"
+"#,
+    );
+    let source = f.skill("fixture").join("SKILL.md");
+    let output = f
+        .command()
+        .args([
+            "--json",
+            "skill",
+            "add",
+            "fixture",
+            "--file",
+            source.to_str().unwrap(),
+            "--no-register",
+            "--copy",
+            "-t",
+            "codex,codex-team",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(f.project.join(".codex/skills/fixture/SKILL.md").is_file());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["results"].as_array().unwrap().len(), 1);
+    assert!(!f.home.join(".codex-team/skills/fixture").exists());
+}
+
+#[test]
+fn overlapping_profile_selection_fails_before_mutation() {
+    let f = Fixture::new();
+    f.file(
+        "home/.acm/config.toml",
+        r#"
+[[profiles]]
+id = "claude-personal"
+provider = "claude"
+display_name = "Claude Personal"
+short_code = "cp"
+tui_key = "P"
+home_dir = "~/.shared"
+"#,
+    );
+    let output = f
+        .command()
+        .env("CLAUDE_CONFIG_DIR", f.home.join(".shared"))
+        .args([
+            "--home",
+            "mcp",
+            "add",
+            "fixture",
+            "--command",
+            "echo",
+            "-t",
+            "claude,claude-personal",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("share the same home"));
+    assert!(!f.home.join(".shared").exists());
+    assert!(fs::read_dir(&f.catalog).unwrap().next().is_none());
+}
+
+#[test]
+fn claude_custom_mcp_path_is_rejected_by_preview_and_mutation() {
+    let f = Fixture::new();
+    f.providers();
+    f.file(
+        "home/.acm/config.toml",
+        r#"
+[[profiles]]
+id = "claude-custom"
+provider = "claude"
+display_name = "Claude Custom"
+short_code = "cc"
+tui_key = "C"
+home_dir = "~/.claude-custom"
+mcp_config = "~/.custom-mcp.json"
+"#,
+    );
+    for preview in [false, true] {
+        let mut cmd = f.command();
+        cmd.args([
+            "--home",
+            "mcp",
+            "add",
+            "fixture",
+            "--command",
+            "echo",
+            "-t",
+            "claude-custom",
+        ]);
+        if preview {
+            cmd.arg("--dry-run");
+        }
+        let out = cmd.output().unwrap();
+        assert!(!out.status.success());
+        assert!(String::from_utf8_lossy(&out.stderr).contains("Claude CLI cannot select"));
+    }
+    assert!(!f.home.join(".custom-mcp.json").exists());
+    assert!(!f.home.join(".claude-custom").exists());
+    assert!(!f.home.join("calls.jsonl").exists());
+}
+
+#[test]
+fn profile_default_targets_apply_without_explicit_target_option() {
+    let f = Fixture::new();
+    f.file(
+        "home/.acm/config.toml",
+        r#"
+default_targets = ["codex-team"]
+[[profiles]]
+id = "codex-team"
+provider = "codex"
+display_name = "Codex Team"
+short_code = "xt"
+tui_key = "T"
+home_dir = "~/.codex-team"
+"#,
+    );
+    let result = f
+        .command()
+        .args(["--home", "mcp", "add", "fixture", "--command", "echo"])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(fs::read_to_string(f.home.join(".codex-team/config.toml"))
+        .unwrap()
+        .contains("fixture"));
+    assert!(!f.home.join(".codex/config.toml").exists());
+    assert!(!f.home.join(".claude.json").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_repairs_profile_plugin_and_skill_links() {
+    use std::os::unix::fs::symlink;
+    let f = Fixture::new();
+    f.file(
+        "home/.acm/config.toml",
+        r#"
+[[profiles]]
+id = "claude-personal"
+provider = "claude"
+display_name = "Claude Personal"
+short_code = "cp"
+tui_key = "P"
+home_dir = "~/.claude-personal"
+"#,
+    );
+    for dir in ["skills", "plugins"] {
+        let parent = f.home.join(".claude-personal").join(dir);
+        fs::create_dir_all(&parent).unwrap();
+        symlink(f.temp.path().join("missing"), parent.join("broken")).unwrap();
+    }
+    let out = f
+        .command()
+        .args(["doctor", "--fix", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["fixed_count"], 2);
+    for dir in ["skills", "plugins"] {
+        assert!(
+            fs::symlink_metadata(f.home.join(".claude-personal").join(dir).join("broken")).is_err()
+        );
+    }
+}
+
+#[test]
+fn unsupported_claude_disable_does_not_create_a_saved_definition() {
+    let f = Fixture::new();
+    f.file(
+        "home/.acm/config.toml",
+        r#"
+[[profiles]]
+id = "claude-custom"
+provider = "claude"
+display_name = "Claude Custom"
+short_code = "cc"
+tui_key = "C"
+home_dir = "~/.claude-custom"
+mcp_config = "~/.custom-mcp.json"
+"#,
+    );
+    let config = f.file(
+        "home/.custom-mcp.json",
+        r#"{"mcpServers":{"fixture":{"command":"echo"}}}"#,
+    );
+    let before = fs::read(&config).unwrap();
+    let out = f
+        .command()
+        .args(["--home", "mcp", "disable", "fixture", "-t", "claude-custom"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("Claude CLI cannot select"));
+    assert_eq!(fs::read(&config).unwrap(), before);
+    let home_entries: Vec<_> = fs::read_dir(&f.home)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(home_entries.len(), 2, "unexpected files: {home_entries:?}");
+}
+
+#[test]
+fn all_distributes_to_builtins_and_profiles() {
+    let f = Fixture::new();
+    let bin = f.providers();
+    f.file(
+        "home/.acm/config.toml",
+        r#"
+[[profiles]]
+id = "claude-personal"
+provider = "claude"
+display_name = "Claude Personal"
+short_code = "cp"
+tui_key = "P"
+home_dir = "~/.claude-personal"
+[[profiles]]
+id = "codex-team"
+provider = "codex"
+display_name = "Codex Team"
+short_code = "xt"
+tui_key = "T"
+home_dir = "~/.codex-team"
+"#,
+    );
+    let mut paths = vec![bin];
+    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+    let output = f
+        .command()
+        .env("PATH", std::env::join_paths(paths).unwrap())
+        .args([
+            "--home",
+            "--json",
+            "mcp",
+            "add",
+            "fixture",
+            "--command",
+            "echo",
+            "-t",
+            "all",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["results"].as_array().unwrap().len(), 7);
+    for path in [
+        ".claude.json",
+        ".claude-personal/.claude.json",
+        ".codex/config.toml",
+        ".codex-team/config.toml",
+        ".gemini/config/mcp_config.json",
+        ".grok/config.toml",
+        ".dsh/cordis.patch.yml",
+    ] {
+        assert!(f.home.join(path).is_file(), "missing {path}");
+    }
+}

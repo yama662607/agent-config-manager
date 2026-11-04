@@ -1,8 +1,8 @@
 //! Explicit, bounded observation of native plugin state. Observations never activate plugins.
 use super::operations::{redact_text, OperationFailure};
 use super::plugin::{
-    catalog_plugin_ids, installation_key, native_operation_lock, parse_plugin_dir, plugin_metadata,
-    update_metadata, validate_plugin_id, MARKETPLACE,
+    catalog_plugin_ids, installation_key, legacy_home_applies, native_operation_lock,
+    parse_plugin_dir, plugin_metadata, update_metadata, validate_plugin_id, MARKETPLACE,
 };
 use crate::paths::{
     expand_home, format_home_path, get_catalog_dir, get_catalog_plugin_dir, is_home_scope,
@@ -20,7 +20,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 pub fn provider_executable(target: TargetName) -> anyhow::Result<PathBuf> {
-    let variable = format!("ACM_{}_BIN", target.as_str().to_uppercase());
+    let variable = format!("ACM_{}_BIN", target.provider().as_str().to_uppercase());
     if let Some(path) = std::env::var_os(&variable) {
         if path.is_empty() {
             bail!("{variable} must name an executable");
@@ -32,7 +32,7 @@ pub fn provider_executable(target: TargetName) -> anyhow::Result<PathBuf> {
         let commands = commands
             .as_table()
             .context("provider_commands must be a table")?;
-        if let Some(path) = commands.get(target.as_str()) {
+        if let Some(path) = commands.get(target.provider().as_str()) {
             let path = path
                 .as_str()
                 .filter(|p| !p.is_empty())
@@ -83,6 +83,31 @@ fn capture(
     });
 }
 
+pub(crate) fn validate_provider_paths(target: TargetName, operation: &str) -> anyhow::Result<()> {
+    if let TargetName::Profile(instance) = target {
+        if instance.provider == TargetName::Claude {
+            if operation == "mcp" && instance.mcp_config != instance.home_dir.join(".claude.json") {
+                bail!(
+                    "profile {} has an MCP path that Claude CLI cannot select",
+                    instance.id
+                );
+            }
+            if operation == "plugin"
+                && instance
+                    .plugins_dir
+                    .as_ref()
+                    .is_some_and(|path| *path != instance.home_dir.join("plugins"))
+            {
+                bail!(
+                    "profile {} has a plugin path that Claude CLI cannot select",
+                    instance.id
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// No shell interpretation, stdin interaction, unlimited output, or implicit executable fallback.
 pub fn bounded_provider_command(
     target: TargetName,
@@ -113,6 +138,21 @@ pub fn bounded_provider_command(
         Err(error) => return Err(error.into()),
     };
     let mut command = Command::new(&executable);
+    if let Some(operation) = args.first() {
+        validate_provider_paths(target, operation)?;
+    }
+    let override_dir = match target {
+        TargetName::Profile(instance) => Some(instance.home_dir.clone()),
+        _ => crate::paths::provider_home_override(target),
+    };
+    if let Some(path) = override_dir {
+        let variable = match target.provider() {
+            TargetName::Claude => "CLAUDE_CONFIG_DIR",
+            TargetName::Codex => "CODEX_HOME",
+            _ => unreachable!(),
+        };
+        command.env(variable, path);
+    }
     command
         .args(args)
         .current_dir(root)
@@ -200,22 +240,23 @@ struct Listing {
 }
 
 fn parse_listing(target: TargetName, raw: &str) -> anyhow::Result<Listing> {
-    if target == TargetName::Antigravity && raw.trim() == "No imported plugins." {
+    if target.provider() == TargetName::Antigravity && raw.trim() == "No imported plugins." {
         return Ok(Listing {
             entries: Vec::new(),
         });
     }
     let value: Value = serde_json::from_str(raw)
         .context("Provider returned an unsupported plugin list representation")?;
-    let entries = match target {
+    let entries = match target.provider() {
         TargetName::Claude | TargetName::Grok => value.as_array(),
         TargetName::Codex => value.get("installed").and_then(Value::as_array),
         TargetName::Antigravity => value.get("imports").and_then(Value::as_array),
         TargetName::DeepSeek => value.as_array(),
+        TargetName::Profile(_) => unreachable!(),
     }
     .context("Provider plugin list has an unsupported schema")?;
     for entry in entries {
-        let name_key = match target {
+        let name_key = match target.provider() {
             TargetName::Claude => "id",
             TargetName::Codex => "pluginId",
             _ => "name",
@@ -228,7 +269,7 @@ fn parse_listing(target: TargetName, raw: &str) -> anyhow::Result<Listing> {
         {
             bail!("Provider plugin list contains an entry without a valid identity");
         }
-        match target {
+        match target.provider() {
             TargetName::Claude => {
                 if !matches!(
                     entry.get("scope").and_then(Value::as_str),
@@ -258,6 +299,7 @@ fn parse_listing(target: TargetName, raw: &str) -> anyhow::Result<Listing> {
                 }
             }
             TargetName::Antigravity | TargetName::DeepSeek => {}
+            TargetName::Profile(_) => unreachable!(),
         }
         if entry
             .get("enabled")
@@ -284,7 +326,7 @@ fn observe(root: &Path, id: &str, target: TargetName, listing: &Listing) -> Valu
     let mut matches = Vec::new();
     let mut ambiguous = false;
     for entry in &listing.entries {
-        let matches_identity = match target {
+        let matches_identity = match target.provider() {
             TargetName::Claude => {
                 if entry["id"] != selector {
                     continue;
@@ -335,6 +377,7 @@ fn observe(root: &Path, id: &str, target: TargetName, listing: &Listing) -> Valu
                 }
                 continue;
             }
+            TargetName::Profile(_) => unreachable!(),
         };
         if matches_identity {
             matches.push(entry);
@@ -383,13 +426,14 @@ pub(crate) fn marketplace_source_matches(
     )?;
     let value: Value = serde_json::from_str(&raw)
         .context("Cannot verify the existing marketplace source: unsupported JSON")?;
-    let entries = match target {
+    let entries = match target.provider() {
         TargetName::Codex => value.get("marketplaces").and_then(Value::as_array),
         TargetName::Claude | TargetName::Grok => value.as_array(),
         TargetName::Antigravity | TargetName::DeepSeek => None,
+        TargetName::Profile(_) => unreachable!(),
     }
     .context("Cannot verify the existing marketplace source: unsupported schema")?;
-    if matches!(target, TargetName::Claude | TargetName::Codex)
+    if matches!(target.provider(), TargetName::Claude | TargetName::Codex)
         && entries
             .iter()
             .filter(|entry| entry["name"] == MARKETPLACE)
@@ -400,7 +444,7 @@ pub(crate) fn marketplace_source_matches(
     }
     let mut matches = 0;
     for entry in entries {
-        let source = match target {
+        let source = match target.provider() {
             TargetName::Claude
                 if entry["name"] == MARKETPLACE && entry["source"] == "directory" =>
             {
@@ -490,7 +534,7 @@ pub fn verify_plugins(
                 .get("nativeInstallations")
                 .and_then(|v| v.get(&key))
                 .is_some()
-                || is_home_scope(root)
+                || legacy_home_applies(root, target)
                     && metadata
                         .get("installedFor")
                         .and_then(Value::as_array)
@@ -522,7 +566,7 @@ pub fn verify_plugins(
                         {
                             installs.remove(&key);
                         }
-                        if is_home_scope(root) {
+                        if legacy_home_applies(root, target) {
                             if let Some(legacy) =
                                 entry.get_mut("installedFor").and_then(Value::as_array_mut)
                             {

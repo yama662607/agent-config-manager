@@ -4,73 +4,113 @@ use std::fmt;
 
 pub const CATALOG_VERSION: &str = "1.0";
 
-/// Supported Agent target names
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+/// Identifies a native installation. Built-in variants retain their historical IDs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TargetName {
     Claude,
     Codex,
     Antigravity,
     Grok,
     DeepSeek,
+    Profile(&'static crate::targets::TargetInstance),
 }
 
 impl TargetName {
     pub const fn all() -> &'static [TargetName] {
         &[
-            TargetName::Claude,
-            TargetName::Codex,
-            TargetName::Antigravity,
-            TargetName::Grok,
-            TargetName::DeepSeek,
+            Self::Claude,
+            Self::Codex,
+            Self::Antigravity,
+            Self::Grok,
+            Self::DeepSeek,
         ]
     }
-
+    pub const fn provider(self) -> Self {
+        match self {
+            Self::Profile(instance) => instance.provider,
+            _ => self,
+        }
+    }
     pub const fn spec(&self) -> &'static crate::providers::ProviderSpec {
-        crate::providers::provider_spec(*self)
+        crate::providers::provider_spec(self.provider())
     }
-
-    pub const fn as_str(&self) -> &'static str {
-        self.spec().id
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Profile(instance) => &instance.id,
+            _ => self.spec().id,
+        }
     }
-
-    pub const fn display_name(&self) -> &'static str {
-        self.spec().display_name
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Profile(instance) => &instance.display_name,
+            _ => self.spec().display_name,
+        }
     }
-
-    pub const fn short_code(&self) -> &'static str {
-        self.spec().short_code
+    pub fn short_code(&self) -> &'static str {
+        match self {
+            Self::Profile(instance) => &instance.short_code,
+            _ => self.spec().short_code,
+        }
     }
-
-    pub const fn tui_key(&self) -> char {
-        self.spec().tui_key
+    pub fn tui_key(&self) -> char {
+        match self {
+            Self::Profile(instance) => instance.tui_key.unwrap_or('\0'),
+            _ => self.spec().tui_key,
+        }
     }
-
     pub fn from_tui_key(key: char) -> Option<TargetName> {
-        Self::all().iter().copied().find(|t| t.tui_key() == key)
+        Self::available().into_iter().find(|t| t.tui_key() == key)
+    }
+    pub fn available() -> Vec<Self> {
+        crate::targets::global_registry()
+            .map(|r| {
+                r.all()
+                    .iter()
+                    .map(|instance| {
+                        if instance.builtin {
+                            instance.provider
+                        } else {
+                            Self::Profile(instance)
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_else(|_| Self::all().to_vec())
     }
 }
-
+impl serde::Serialize for TargetName {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+impl<'de> serde::Deserialize<'de> for TargetName {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        value.parse().map_err(serde::de::Error::custom)
+    }
+}
 impl fmt::Display for TargetName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.as_str())
     }
 }
-
 impl std::str::FromStr for TargetName {
     type Err = String;
-
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let normalized = s.trim().to_lowercase();
-        for &target in Self::all() {
-            if target.spec().aliases.contains(&normalized.as_str()) {
-                return Ok(target);
-            }
+        if let Some(target) = Self::all()
+            .iter()
+            .copied()
+            .find(|t| t.spec().aliases.contains(&normalized.as_str()))
+        {
+            return Ok(target);
         }
-        Err(format!(
-            "Unknown target: '{}'. Valid: claude, codex, agy, grok",
-            normalized
-        ))
+        let registry = crate::targets::global_registry().map_err(|e| e.to_string())?;
+        registry
+            .resolve(&normalized)
+            .filter(|t| !t.builtin)
+            .map(Self::Profile)
+            .ok_or_else(|| format!("Unknown target: '{normalized}'"))
     }
 }
 

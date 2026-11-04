@@ -24,10 +24,10 @@ test *args="":
     cargo test --locked {{args}}
 
 test-unit *args="":
-    cargo test --locked --test types_test --test adapters_test --test validate_test {{args}}
+    cargo test --locked --test types_test --test targets_test --test adapters_test --test validate_test {{args}}
 
 test-integration *args="":
-    cargo test --locked --test cli_test --test migration_test --test skill_test --test skill_recovery_test --test skill_preview_test --test plugin_test --test plugin_verification_test --test plugin_source_identity_test --test operation_test --test tui_test {{args}}
+    cargo test --locked --test cli_test --test migration_test --test skill_test --test skill_recovery_test --test skill_preview_test --test plugin_test --test plugin_verification_test --test plugin_source_identity_test --test operation_test --test tui_test --test profile_tui_test {{args}}
 
 package-check:
     node scripts/check-package.mjs --source

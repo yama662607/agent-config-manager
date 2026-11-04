@@ -45,9 +45,31 @@ default_targets = ["claude", "codex"]
 # codex = "/path/to/codex"
 ```
 
-ネイティブCLIの優先順位は `ACM_CLAUDE_BIN` / `ACM_CODEX_BIN` / `ACM_ANTIGRAVITY_BIN` / `ACM_GROK_BIN` → `provider_commands` の該当項目 → PATH上の通常コマンド（Antigravityは `agy`）です。プラグイン操作とClaudeのホームMCP委譲に適用し、MCP定義自身の起動コマンドには影響しません。
+ネイティブCLIの優先順位は `ACM_CLAUDE_BIN` / `ACM_CODEX_BIN` / `ACM_ANTIGRAVITY_BIN` / `ACM_GROK_BIN` / `ACM_DEEPSEEK_BIN` → `provider_commands` の該当項目 → PATH上の通常コマンド（Antigravityは `agy`）です。プラグイン操作とClaudeのホームMCP委譲に適用し、MCP定義自身の起動コマンドには影響しません。
 
-カタログの優先順位は `ACM_CATALOG_DIR` → `catalog_dir` → `~/.acm` です。対象の設定がなければ4プロバイダーを選択します。壊れた設定はエラーとして報告します。
+カタログの優先順位は `ACM_CATALOG_DIR` → `catalog_dir` → `~/.acm` です。対象の設定がなければ5つの標準プロバイダーを選択します。壊れた設定はエラーとして報告します。
+
+Claude と Codex の別アカウントは、任意のプロファイルとして追加できます。
+
+```toml
+[[profiles]]
+id = "claude-personal"
+provider = "claude"
+display_name = "Claude Personal"
+short_code = "cp"
+tui_key = "P"
+home_dir = "~/.claude-personal"
+
+[[profiles]]
+id = "codex-team"
+provider = "codex"
+display_name = "Codex Team"
+short_code = "xt"
+tui_key = "T"
+home_dir = "~/.codex-team"
+```
+
+`--home -t claude-personal` で個別に選択でき、`default_targets` に ID を追加するか、`-t all` で全プロファイルを選択できます。標準の Claude・Codex はそれぞれ `CLAUDE_CONFIG_DIR`・`CODEX_HOME` を尊重します。パスは絶対パスまたは `~/` から指定し、`mcp_config`、`skills_dir`、Claude の `plugins_dir` で既定の場所を変更できます。Claude CLI で選択できない MCP・プラグインパスへのネイティブ操作はエラーになります。プロジェクトの MCP・スキルは同じプロバイダーのプロファイル間で共有されるため、1回だけ変更します。`doctor` はプロジェクトからの実行時も既定で登録プロファイルのホームのリンクを検査します。`--home doctor` はホームの MCP 設定も検査します。同じプロバイダーの実体またはリソースパスを共有する ID を複数選択するとエラーになります（シンボリックリンク経由を含む）。
 
 ## MCPサーバー
 

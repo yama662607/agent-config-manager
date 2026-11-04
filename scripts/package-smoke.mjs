@@ -15,6 +15,8 @@ try {
   const launcher = join(extracted, 'package/bin/acm.cjs');
   const home = join(temp, 'home'); mkdirSync(home);
   const env = { ...process.env, HOME: home, USERPROFILE: home, ACM_CATALOG_DIR: join(temp, 'catalog') };
+  delete env.CLAUDE_CONFIG_DIR;
+  delete env.CODEX_HOME;
   for (const args of [['--version'], ['--help'], ['--catalog', 'mcp', 'list', '--json']]) {
     const out = spawnSync(process.execPath, [launcher, ...args], { env, cwd: temp, encoding: 'utf8' });
     assert.equal(out.status, 0, out.stderr);

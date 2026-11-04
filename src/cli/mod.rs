@@ -19,6 +19,7 @@ pub struct ContextOptions {
     pub project: bool,
     pub json: bool,
     pub targets: Vec<TargetName>,
+    targets_explicit: bool,
     output_value: RefCell<Option<Value>>,
     outcomes: RefCell<Vec<Value>>,
 }
@@ -103,7 +104,28 @@ impl ContextOptions {
         if self.catalog {
             bail!("The TUI manages provider scopes; use --catalog list/add/import for catalog operations");
         }
-        crate::tui::app::run_tui_tab(&self.root()?, &self.targets, tab)
+        let config = read_acm_config()?;
+        let no_configured_defaults = config
+            .get("default_targets")
+            .and_then(toml::Value::as_array)
+            .is_none_or(Vec::is_empty);
+        let targets = if !self.targets_explicit && no_configured_defaults {
+            let registry = crate::targets::global_registry()?;
+            registry
+                .select(Some(&["all".into()]), &config)?
+                .into_iter()
+                .map(|instance| {
+                    if instance.builtin {
+                        instance.provider
+                    } else {
+                        TargetName::Profile(instance)
+                    }
+                })
+                .collect()
+        } else {
+            self.targets.clone()
+        };
+        crate::tui::app::run_tui_tab(&self.root()?, &targets, tab)
     }
 }
 
@@ -155,33 +177,47 @@ pub fn filtered(items: Vec<Value>, filters: &Filters, metadata: &Value) -> Vec<V
 }
 
 pub fn run_cli(cli: Cli) -> anyhow::Result<()> {
-    read_acm_config()?;
-    let targets = match cli.targets {
-        Some(values) => {
-            let mut targets = Vec::new();
-            for value in values {
-                if value == "all" {
-                    targets = TargetName::all().to_vec();
-                    continue;
-                }
-                let target = value.parse().map_err(anyhow::Error::msg)?;
-                if !targets.contains(&target) {
-                    targets.push(target);
-                }
-            }
-            if targets.is_empty() {
-                bail!("Select at least one target");
-            }
-            targets
-        }
-        None => default_targets()?,
+    let config = read_acm_config()?;
+    let registry = crate::targets::global_registry()?;
+    let auto_doctor_targets = cli.targets.is_none()
+        && matches!(
+            cli.command,
+            Some(Commands::Doctor(_)) | Some(Commands::Validate(_))
+        );
+    let selected = if auto_doctor_targets {
+        registry.all().iter().collect()
+    } else {
+        registry.select(cli.targets.as_deref(), &config)?
     };
+    let mut targets: Vec<TargetName> = selected
+        .into_iter()
+        .map(|instance| {
+            if instance.builtin {
+                instance.provider
+            } else {
+                TargetName::Profile(instance)
+            }
+        })
+        .collect();
+    // Project MCP/skill files belong to the provider, not to an account.
+    // Process a shared path once even when `all` includes several accounts.
+    if !cli.home
+        && !cli.catalog
+        && matches!(
+            cli.command,
+            Some(Commands::Mcp(_)) | Some(Commands::Skill(_))
+        )
+    {
+        let mut providers = std::collections::HashSet::new();
+        targets.retain(|target| providers.insert(target.provider()));
+    }
     let mut ctx = ContextOptions {
         home: cli.home,
         catalog: cli.catalog,
         project: cli.project,
         json: cli.json,
         targets,
+        targets_explicit: cli.targets.is_some(),
         output_value: RefCell::new(None),
         outcomes: RefCell::new(Vec::new()),
     };

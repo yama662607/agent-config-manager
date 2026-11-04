@@ -41,7 +41,14 @@ impl Scope {
             .context("Skill scope root does not exist")?;
         let mut destination = get_skill_path(&root, target, skill);
         if crate::paths::is_home_scope(&root) {
-            destination = root.join(destination.strip_prefix(crate::paths::home_dir())?);
+            if let Ok(relative) = destination.strip_prefix(crate::paths::home_dir()) {
+                destination = root.join(relative);
+            } else {
+                let skills = crate::paths::get_agent_skills_dir(&root, target);
+                let anchor = skills.parent().context("Skill directory has no parent")?;
+                let canonical_anchor = canonicalize_existing_ancestor(anchor)?;
+                destination = canonical_anchor.join(destination.strip_prefix(anchor)?);
+            }
         }
         Ok(Self {
             root,
@@ -158,13 +165,29 @@ fn reject_symlink_ancestors(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn canonicalize_existing_ancestor(path: &Path) -> anyhow::Result<PathBuf> {
+    let ancestor = path
+        .ancestors()
+        .find(|p| p.exists())
+        .context("No existing directory ancestor")?;
+    Ok(ancestor.canonicalize()?.join(path.strip_prefix(ancestor)?))
+}
+
 fn check_destination(scope: &Scope, restoring: bool) -> anyhow::Result<()> {
     // Only inspect provider ancestors beneath the canonical scope. HOME itself may be aliased.
+    let anchor = if scope.destination.starts_with(&scope.root) {
+        scope.root.clone()
+    } else if crate::paths::is_home_scope(&scope.root) {
+        let skills = crate::paths::get_agent_skills_dir(&scope.root, scope.target);
+        canonicalize_existing_ancestor(skills.parent().context("Skill directory has no parent")?)?
+    } else {
+        bail!("Skill destination is outside the selected scope");
+    };
     let relative = scope
         .destination
-        .strip_prefix(&scope.root)
+        .strip_prefix(&anchor)
         .context("Skill destination is outside the selected scope")?;
-    let mut path = scope.root.clone();
+    let mut path = anchor;
     for part in relative.components() {
         path.push(part);
         if path == scope.destination && !restoring {

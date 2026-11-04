@@ -46,6 +46,9 @@ pub fn run(ctx: &ContextOptions, args: PluginArgs) -> anyhow::Result<()> {
             let root = ctx.plugin_root()?;
             if keep_skills {
                 let plugin = get_plugin_status(&root, &id, &ctx.targets)?;
+                for &target in &plugin.targets {
+                    crate::core::plugin_verification::validate_provider_paths(target, "plugin")?;
+                }
                 let temp = tempfile::tempdir()?;
                 assemble_plugin(&id, &temp.path().join("plugin"))?;
                 for skill in plugin.skills {
@@ -64,6 +67,11 @@ pub fn run(ctx: &ContextOptions, args: PluginArgs) -> anyhow::Result<()> {
         PluginSubcommands::Convert { id, all, dry_run, assemble_only } => {
             let ids = if all { catalog_plugin_ids()? } else { vec![id.context("Specify a plugin id or --all")?] };
             let compatibility = ids.iter().map(|id| crate::core::plugin_verification::compatibility_report(id, &ctx.targets)).collect::<anyhow::Result<Vec<_>>>()?;
+            if !assemble_only && !ctx.catalog {
+                for &target in &ctx.targets {
+                    crate::core::plugin_verification::validate_provider_paths(target, "plugin")?;
+                }
+            }
             if dry_run { return ctx.output(json!({"dryRun": true, "plugins": ids, "marketplace": get_catalog_dir().join("marketplace"),"compatibility":compatibility})); }
             let marketplace = build_marketplace(&ids)?;
             if !assemble_only && !ctx.catalog { let root=ctx.plugin_root()?;ctx.for_targets("plugin.convert","marketplace",|target|register_marketplace(&root, &[target], &marketplace))?; }

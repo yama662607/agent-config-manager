@@ -37,11 +37,27 @@ pub struct DiscoveredPlugin {
 }
 
 pub fn provider_plugin_roots() -> Vec<(PathBuf, TargetName)> {
-    let home = home_dir();
     let mut roots = vec![(get_catalog_dir().join("plugins"), TargetName::Claude)];
-    for &target in TargetName::all() {
+    for target in TargetName::available() {
         for rel in target.spec().discovery_plugin_dirs {
-            roots.push((home.join(rel), target));
+            let path = if let TargetName::Profile(instance) = target {
+                let prefix = match target.provider() {
+                    TargetName::Claude => ".claude",
+                    TargetName::Codex => ".codex",
+                    _ => unreachable!(),
+                };
+                match Path::new(rel).strip_prefix(prefix) {
+                    Ok(suffix) if suffix == Path::new("plugins") => instance
+                        .plugins_dir
+                        .clone()
+                        .unwrap_or_else(|| instance.home_dir.join(suffix)),
+                    Ok(suffix) => instance.home_dir.join(suffix),
+                    Err(_) => continue,
+                }
+            } else {
+                crate::paths::provider_home_path(target, rel)
+            };
+            roots.push((path, target));
         }
     }
     roots

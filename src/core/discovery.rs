@@ -38,18 +38,13 @@ pub struct DiscoveredPlugin {
 
 pub fn provider_plugin_roots() -> Vec<(PathBuf, TargetName)> {
     let home = home_dir();
-    vec![
-        (get_catalog_dir().join("plugins"), TargetName::Claude),
-        (home.join(".claude/plugins"), TargetName::Claude),
-        (home.join(".codex/plugins/cache"), TargetName::Codex),
-        (home.join(".codex/.tmp/plugins/plugins"), TargetName::Codex),
-        (
-            home.join(".codex/.tmp/bundled-marketplaces"),
-            TargetName::Codex,
-        ),
-        (home.join(".gemini/config/plugins"), TargetName::Antigravity),
-        (home.join(".grok/plugins"), TargetName::Grok),
-    ]
+    let mut roots = vec![(get_catalog_dir().join("plugins"), TargetName::Claude)];
+    for &target in TargetName::all() {
+        for rel in target.spec().discovery_plugin_dirs {
+            roots.push((home.join(rel), target));
+        }
+    }
+    roots
 }
 
 fn app_name(path: &Path) -> Option<String> {

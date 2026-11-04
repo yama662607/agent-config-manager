@@ -2,7 +2,7 @@
 
 [English](README.md) · [Rust移行メモ](docs/rust-migration.md) · [差分確認・復元・検証の詳細](docs/native-workflows.md)
 
-`acm` は Claude Code・Codex・Antigravity・Grok の MCP サーバー、スキル、プラグインを管理するツールです。CLIと対話型TUIは同じRust実装を使います。プロバイダーの設定ファイルを直接扱い、カタログには再利用する定義とディレクトリ一式を保存します。
+`acm` は Claude Code・Codex・Antigravity・Grok・DeepSeek Harness の MCP サーバー、スキル、プラグインを管理するツールです。CLIと対話型TUIは同じRust実装を使います。プロバイダーの設定ファイルを直接扱い、カタログには再利用する定義とディレクトリ一式を保存します。
 
 ## インストール
 
@@ -33,7 +33,7 @@ Rustパッケージの公開まではnpmに旧版が残る場合があります�
 
 ホームディレクトリから実行する場合は `--home` を明示します。ネイティブプラグイン操作の既定はホームです。プラグインのプロジェクトインストールに対応するのはClaudeです。
 
-`--targets claude,codex`、`-t all` で対象を選択します。短縮名は `c`=Claude、`x`=Codex、`a`/`g`/`agy`=Antigravity、`k`=Grokです。`~/.acm/config.toml` で既定値を変更できます:
+`--targets claude,codex`、`-t all` で対象を選択します。短縮名は `c`=Claude、`x`=Codex、`a`/`g`/`agy`=Antigravity、`k`=Grok、`s`/`ds`/`dsh`/`deepseek`=DeepSeek Harnessです。`~/.acm/config.toml` で既定値を変更できます:
 
 ```toml
 catalog_dir = "~/Code/my-agent-catalog"

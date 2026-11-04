@@ -84,7 +84,7 @@ impl Fixture {
         let script = format!("#!{}\n{}", python.trim(), include_str!("provider.py"));
         let bin = self.temp.path().join("bin");
         fs::create_dir_all(&bin).unwrap();
-        for name in ["claude", "codex", "grok", "agy", "gh"] {
+        for name in ["claude", "codex", "grok", "agy", "gh", "dsh"] {
             let path = bin.join(name);
             fs::write(&path, &script).unwrap();
             fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();

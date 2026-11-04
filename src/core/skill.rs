@@ -58,7 +58,7 @@ pub fn get_skill_workspace_status<P: AsRef<Path>>(
 
     // 2. Scan each target directory
     for &target in targets {
-        if target == TargetName::Grok {
+        if target.spec().uses_config_skill_registry {
             let config = get_agent_mcp_config_path(root, target);
             for registered in crate::adapters::grok::skill_paths(&config)? {
                 let dir = crate::paths::expand_home(&registered);
@@ -194,7 +194,7 @@ pub fn preview_skill_add<P: AsRef<Path>>(
     let mode = placement.unwrap_or_else(|| default_placement_mode(root));
     let mut plans = Vec::new();
     for &target in targets {
-        if target == TargetName::Grok {
+        if target.spec().uses_config_skill_registry {
             let config = get_agent_mcp_config_path(root, target);
             let registered = crate::adapters::grok::is_skill_path_registered(
                 &config,
@@ -237,11 +237,11 @@ pub fn skill_add_with_options<P: AsRef<Path>>(
     crate::paths::warn_unsupported_scope(root, targets, "skills");
 
     for &target in targets {
-        if target == TargetName::Grok {
-            let grok_config = get_agent_mcp_config_path(root, TargetName::Grok);
+        if target.spec().uses_config_skill_registry {
+            let registry_config = get_agent_mcp_config_path(root, target);
             let catalog_skills = get_catalog_skills_dir();
-            register_skill_path(&grok_config, &catalog_skills.display().to_string())?;
-            set_skill_disabled(&grok_config, skill_id, false)?;
+            register_skill_path(&registry_config, &catalog_skills.display().to_string())?;
+            set_skill_disabled(&registry_config, skill_id, false)?;
         } else {
             copy_skill_dir_to_config_with_options(
                 root,
@@ -267,9 +267,9 @@ pub fn skill_remove<P: AsRef<Path>>(
     let root = project_root.as_ref();
 
     for &target in targets {
-        if target == TargetName::Grok {
-            let grok_config = get_agent_mcp_config_path(root, TargetName::Grok);
-            set_skill_disabled(&grok_config, skill_name, true)?;
+        if target.spec().uses_config_skill_registry {
+            let registry_config = get_agent_mcp_config_path(root, target);
+            set_skill_disabled(&registry_config, skill_name, true)?;
         } else {
             crate::core::skill_history::remove_skill_placement(root, target, skill_name)?;
         }
@@ -338,7 +338,9 @@ pub fn preview_skill_update<P: AsRef<Path>>(
                 .get(&target)
                 .copied()
                 .unwrap_or(SkillPlacementState::Missing);
-            let skip = if target == TargetName::Grok && state == SkillPlacementState::Registered {
+            let skip = if target.spec().uses_config_skill_registry
+                && state == SkillPlacementState::Registered
+            {
                 Some("Registered catalog path is already current")
             } else if placement.is_none() && matches!(state, SkillPlacementState::Linked) {
                 Some("Linked skill already references its source")
@@ -586,7 +588,7 @@ pub fn skill_rename<P: AsRef<Path>>(
         if let Ok(meta) = fs::symlink_metadata(&old) {
             placements.push((old, new, meta.file_type().is_symlink()));
         }
-        if target == TargetName::Grok {
+        if target.spec().uses_config_skill_registry {
             let path = get_agent_mcp_config_path(root, target);
             if crate::adapters::grok::is_skill_path_registered(
                 &path,

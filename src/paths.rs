@@ -101,14 +101,9 @@ pub fn discover_project(start: &Path) -> anyhow::Result<PathBuf> {
             break;
         }
         if candidate.join(".git").exists()
-            || [
-                ".mcp.json",
-                ".codex/config.toml",
-                ".grok/config.toml",
-                ".agents/mcp_config.json",
-            ]
-            .iter()
-            .any(|marker| candidate.join(marker).is_file())
+            || TargetName::all()
+                .iter()
+                .any(|target| candidate.join(target.spec().project_mcp_config).is_file())
         {
             return Ok(candidate.to_path_buf());
         }
@@ -118,8 +113,21 @@ pub fn discover_project(start: &Path) -> anyhow::Result<PathBuf> {
 }
 
 pub fn warn_unsupported_scope(root: &Path, targets: &[TargetName], kind: &str) {
-    if !is_home_scope(root) && targets.contains(&TargetName::Antigravity) {
-        eprintln!("Warning: the Antigravity CLI does not read project-scope {kind}; use --home. Project files may be used by other clients.");
+    if is_home_scope(root) {
+        return;
+    }
+    for &target in targets {
+        let supported = if kind.contains("MCP") {
+            target.spec().supports_project_mcp
+        } else {
+            target.spec().supports_project_skills
+        };
+        if !supported {
+            eprintln!(
+                "Warning: the {} CLI does not read project-scope {kind}; use --home. Project files may be used by other clients.",
+                target.display_name()
+            );
+        }
     }
 }
 
@@ -158,25 +166,17 @@ pub fn get_catalog_plugin_dir(id: &str) -> PathBuf {
     get_catalog_plugins_dir().join(id)
 }
 
-/// Get the agent plugins directory for Claude or Antigravity
+/// Get the agent plugins directory for a provider, if it has a single directory
 pub fn get_agent_plugins_dir<P: AsRef<Path>>(
     project_root: P,
     target: TargetName,
 ) -> Option<PathBuf> {
     let root = project_root.as_ref();
+    let spec = target.spec();
     if is_home_scope(root) {
-        let home = home_dir();
-        match target {
-            TargetName::Claude => Some(home.join(".claude").join("plugins")),
-            TargetName::Antigravity => Some(home.join(".gemini").join("config").join("plugins")),
-            _ => None,
-        }
+        spec.home_plugins_dir.map(|rel| home_dir().join(rel))
     } else {
-        match target {
-            TargetName::Claude => Some(root.join(".claude").join("plugins")),
-            TargetName::Antigravity => Some(root.join(".agents").join("plugins")),
-            _ => None,
-        }
+        spec.project_plugins_dir.map(|rel| root.join(rel))
     }
 }
 
@@ -194,21 +194,11 @@ pub fn is_home_scope<P: AsRef<Path>>(path: P) -> bool {
 /// Get the skill directory for a specific target in a project or globally
 pub fn get_agent_skills_dir<P: AsRef<Path>>(project_root: P, target: TargetName) -> PathBuf {
     let root = project_root.as_ref();
+    let spec = target.spec();
     if is_home_scope(root) {
-        let home = home_dir();
-        match target {
-            TargetName::Claude => home.join(".claude").join("skills"),
-            TargetName::Codex => home.join(".codex").join("skills"),
-            TargetName::Antigravity => home.join(".gemini").join("config").join("skills"),
-            TargetName::Grok => home.join(".grok").join("skills"),
-        }
+        home_dir().join(spec.home_skills_dir)
     } else {
-        match target {
-            TargetName::Claude => root.join(".claude").join("skills"),
-            TargetName::Codex => root.join(".codex").join("skills"),
-            TargetName::Antigravity => root.join(".agents").join("skills"),
-            TargetName::Grok => root.join(".grok").join("skills"),
-        }
+        root.join(spec.project_skills_dir)
     }
 }
 
@@ -224,20 +214,10 @@ pub fn get_skill_path<P: AsRef<Path>>(
 /// Get the MCP config file path for a target in a project or globally
 pub fn get_agent_mcp_config_path<P: AsRef<Path>>(project_root: P, target: TargetName) -> PathBuf {
     let root = project_root.as_ref();
+    let spec = target.spec();
     if is_home_scope(root) {
-        let home = home_dir();
-        match target {
-            TargetName::Claude => home.join(".claude.json"),
-            TargetName::Codex => home.join(".codex").join("config.toml"),
-            TargetName::Antigravity => home.join(".gemini").join("config").join("mcp_config.json"),
-            TargetName::Grok => home.join(".grok").join("config.toml"),
-        }
+        home_dir().join(spec.home_mcp_config)
     } else {
-        match target {
-            TargetName::Claude => root.join(".mcp.json"),
-            TargetName::Codex => root.join(".codex").join("config.toml"),
-            TargetName::Antigravity => root.join(".agents").join("mcp_config.json"),
-            TargetName::Grok => root.join(".grok").join("config.toml"),
-        }
+        root.join(spec.project_mcp_config)
     }
 }

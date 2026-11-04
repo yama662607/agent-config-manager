@@ -68,7 +68,10 @@ fn native_lifecycle_calls_providers_and_propagates_failures() {
     let source = source(&f);
     f.ok(&["plugin", "import", source.to_str().unwrap()]);
     let status = f.mock_ok(&["plugin", "install", "fixture-plugin", "-t", "all"]);
-    assert_eq!(status["targets"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        status["targets"].as_array().unwrap().len(),
+        agent_config_manager::types::TargetName::all().len()
+    );
     let calls = fs::read_to_string(f.home.join("calls.jsonl")).unwrap();
     assert!(calls.contains("\"codex\", \"plugin\", \"add\", \"fixture-plugin@acm-catalog\""));
     assert!(calls.contains("--trust"));

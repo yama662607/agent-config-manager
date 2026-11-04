@@ -1,6 +1,6 @@
 # Agent Configuration Guide
 
-`agent-config-manager` manages native MCP configurations, skills, and plugins across Claude Code, Codex, Antigravity, and Grok.
+`agent-config-manager` manages native MCP configurations, skills, and plugins across Claude Code, Codex, Antigravity, Grok, and DeepSeek Harness.
 
 ## Implementation and layout
 

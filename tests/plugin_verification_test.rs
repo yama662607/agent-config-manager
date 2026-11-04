@@ -52,7 +52,7 @@ if args==['plugin','list','--json']:
 print('{}')
 "#
     );
-    for target in ["claude", "codex", "antigravity", "grok"] {
+    for target in ["claude", "codex", "antigravity", "grok", "deepseek"] {
         let path = f.file(&format!("providers/{target}"), &script);
         fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
     }
@@ -61,7 +61,7 @@ print('{}')
 #[cfg(unix)]
 fn command(f: &Fixture, args: &[&str]) -> std::process::Command {
     let mut command = f.command();
-    for target in ["claude", "codex", "antigravity", "grok"] {
+    for target in ["claude", "codex", "antigravity", "grok", "deepseek"] {
         command.env(
             format!("ACM_{}_BIN", target.to_uppercase()),
             f.temp.path().join("providers").join(target),
@@ -112,6 +112,7 @@ fn live_shapes_distinguish_installation_enabled_and_reconcile() {
         json!([{"status":"installed","name":"probe","source":f.catalog.join("marketplace/plugins/probe"),"marketplace":null}]),
     );
     f.file("home/antigravity.listing", "No imported plugins.");
+    listing(&f, "deepseek", json!([]));
     let before = fs::read(f.catalog.join("plugins-metadata.toml")).unwrap();
     let report = output(
         &f,
@@ -124,6 +125,7 @@ fn live_shapes_distinguish_installation_enabled_and_reconcile() {
     assert_eq!(targets[2]["state"], "missing");
     assert_eq!(targets[3]["state"], "installed");
     assert!(targets[3]["enabled"].is_null());
+    assert_eq!(targets[4]["state"], "missing");
     assert_eq!(
         fs::read(f.catalog.join("plugins-metadata.toml")).unwrap(),
         before

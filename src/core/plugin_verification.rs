@@ -40,11 +40,7 @@ pub fn provider_executable(target: TargetName) -> anyhow::Result<PathBuf> {
             return Ok(expand_home(path));
         }
     }
-    Ok(PathBuf::from(if target == TargetName::Antigravity {
-        "agy"
-    } else {
-        target.as_str()
-    }))
+    Ok(PathBuf::from(target.spec().default_executable))
 }
 
 fn terminate(child: &mut Child) {
@@ -215,6 +211,7 @@ fn parse_listing(target: TargetName, raw: &str) -> anyhow::Result<Listing> {
         TargetName::Claude | TargetName::Grok => value.as_array(),
         TargetName::Codex => value.get("installed").and_then(Value::as_array),
         TargetName::Antigravity => value.get("imports").and_then(Value::as_array),
+        TargetName::DeepSeek => value.as_array(),
     }
     .context("Provider plugin list has an unsupported schema")?;
     for entry in entries {
@@ -260,7 +257,7 @@ fn parse_listing(target: TargetName, raw: &str) -> anyhow::Result<Listing> {
                     bail!("Grok plugin list contains an unknown installation status");
                 }
             }
-            TargetName::Antigravity => {}
+            TargetName::Antigravity | TargetName::DeepSeek => {}
         }
         if entry
             .get("enabled")
@@ -332,7 +329,7 @@ fn observe(root: &Path, id: &str, target: TargetName, listing: &Listing) -> Valu
                     continue;
                 }
             }
-            TargetName::Antigravity => {
+            TargetName::Antigravity | TargetName::DeepSeek => {
                 if entry["name"] == id {
                     ambiguous = true;
                 }
@@ -389,7 +386,7 @@ pub(crate) fn marketplace_source_matches(
     let entries = match target {
         TargetName::Codex => value.get("marketplaces").and_then(Value::as_array),
         TargetName::Claude | TargetName::Grok => value.as_array(),
-        TargetName::Antigravity => None,
+        TargetName::Antigravity | TargetName::DeepSeek => None,
     }
     .context("Cannot verify the existing marketplace source: unsupported schema")?;
     if matches!(target, TargetName::Claude | TargetName::Codex)
@@ -455,7 +452,7 @@ pub fn verify_plugins(
         if listings.contains_key(target.as_str()) {
             continue;
         }
-        let listing = if !is_home_scope(root) && target != TargetName::Claude {
+        let listing = if !is_home_scope(root) && !target.spec().supports_project_plugins {
             Err(anyhow::anyhow!(
                 "{target} native plugins use home scope; use --home"
             ))
@@ -605,7 +602,7 @@ pub fn compatibility_report(id: &str, targets: &[TargetName]) -> anyhow::Result<
         }
     }
     let reports: Vec<_> = targets.iter().map(|target| {
-        let version = match target { TargetName::Claude => "2.1.261", TargetName::Codex => "0.149.0", TargetName::Antigravity => "1.1.27", TargetName::Grok => "1.0.5" };
+        let version = target.spec().validated_version;
         let components: Vec<_> = capabilities.iter().map(|capability| {
             let (state, reason) = if *capability == "skills" {
                 ("supported", "A local skills-only plugin was installed, listed and removed with this native CLI in a network-denied isolated environment; skill execution was not tested")

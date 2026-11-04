@@ -12,34 +12,42 @@ pub enum TargetName {
     Codex,
     Antigravity,
     Grok,
+    DeepSeek,
 }
 
 impl TargetName {
-    pub fn all() -> &'static [TargetName] {
+    pub const fn all() -> &'static [TargetName] {
         &[
             TargetName::Claude,
             TargetName::Codex,
             TargetName::Antigravity,
             TargetName::Grok,
+            TargetName::DeepSeek,
         ]
     }
 
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            TargetName::Claude => "claude",
-            TargetName::Codex => "codex",
-            TargetName::Antigravity => "antigravity",
-            TargetName::Grok => "grok",
-        }
+    pub const fn spec(&self) -> &'static crate::providers::ProviderSpec {
+        crate::providers::provider_spec(*self)
     }
 
-    pub fn short_code(&self) -> &'static str {
-        match self {
-            TargetName::Claude => "cl",
-            TargetName::Codex => "cx",
-            TargetName::Antigravity => "ag",
-            TargetName::Grok => "gk",
-        }
+    pub const fn as_str(&self) -> &'static str {
+        self.spec().id
+    }
+
+    pub const fn display_name(&self) -> &'static str {
+        self.spec().display_name
+    }
+
+    pub const fn short_code(&self) -> &'static str {
+        self.spec().short_code
+    }
+
+    pub const fn tui_key(&self) -> char {
+        self.spec().tui_key
+    }
+
+    pub fn from_tui_key(key: char) -> Option<TargetName> {
+        Self::all().iter().copied().find(|t| t.tui_key() == key)
     }
 }
 
@@ -53,16 +61,16 @@ impl std::str::FromStr for TargetName {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_lowercase().as_str() {
-            "claude" | "claude-code" | "c" => Ok(TargetName::Claude),
-            "codex" | "x" => Ok(TargetName::Codex),
-            "antigravity" | "agy" | "a" | "g" => Ok(TargetName::Antigravity),
-            "grok" | "k" => Ok(TargetName::Grok),
-            other => Err(format!(
-                "Unknown target: '{}'. Valid: claude, codex, agy, grok",
-                other
-            )),
+        let normalized = s.trim().to_lowercase();
+        for &target in Self::all() {
+            if target.spec().aliases.contains(&normalized.as_str()) {
+                return Ok(target);
+            }
         }
+        Err(format!(
+            "Unknown target: '{}'. Valid: claude, codex, agy, grok",
+            normalized
+        ))
     }
 }
 

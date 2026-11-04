@@ -2,7 +2,7 @@
 
 [日本語](README_JA.md) · [Migration notes](docs/rust-migration.md) · [Preview, recovery, and verification](docs/native-workflows.md)
 
-`acm` manages MCP servers, skills, and plugins across Claude Code, Codex, Antigravity, and Grok. Its CLI and interactive TUI share one Rust implementation. Provider configuration remains the source of truth; the catalog holds reusable definitions and complete asset directories.
+`acm` manages MCP servers, skills, and plugins across Claude Code, Codex, Antigravity, Grok, and DeepSeek Harness. Its CLI and interactive TUI share one Rust implementation. Provider configuration remains the source of truth; the catalog holds reusable definitions and complete asset directories.
 
 ## Install
 
@@ -33,7 +33,7 @@ The npm registry may still serve an earlier release until the maintainer publish
 
 Running from the home directory requires explicit `--home`. Native plugin commands default to home; project plugin installation is supported by Claude only.
 
-Select targets with `--targets claude,codex` or `-t all`. Accepted aliases: `c` (Claude), `x` (Codex), `a`/`g`/`agy` (Antigravity), `k` (Grok). Configure defaults in `~/.acm/config.toml`:
+Select targets with `--targets claude,codex` or `-t all`. Accepted aliases: `c` (Claude), `x` (Codex), `a`/`g`/`agy` (Antigravity), `k` (Grok), `s`/`ds`/`dsh`/`deepseek` (DeepSeek Harness). Configure defaults in `~/.acm/config.toml`:
 
 ```toml
 catalog_dir = "~/Code/my-agent-catalog"
@@ -81,7 +81,7 @@ acm catalog mcp show example
 
 `--dry-run` previews MCP add/edit/remove/enable/disable/update/adopt without writing files or running provider commands. It shows target paths and redacted before/after definitions. Updates preserve disabled state and reject ambiguous catalog identities.
 
-Writes preserve unrelated native settings. Claude home MCP changes use `claude mcp` commands because `~/.claude.json` also contains runtime state. Disabled Claude/Antigravity definitions are retained in machine-local state and restored on enable. Codex/Grok use their native enabled flag.
+Writes preserve unrelated native settings. Claude home MCP changes use `claude mcp` commands because `~/.claude.json` also contains runtime state. Disabled Claude/Antigravity definitions are retained in machine-local state and restored on enable. Codex/Grok/DeepSeek use their native enabled flag.
 
 ## Skills
 

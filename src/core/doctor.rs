@@ -193,12 +193,18 @@ pub fn run_doctor<P: AsRef<Path>>(
                     CheckStatus::Pass,
                     Some(path.display().to_string()),
                 );
-                if target == TargetName::Antigravity && !is_home_scope(root) && path.exists() {
+                if !target.spec().supports_project_mcp && !is_home_scope(root) && path.exists() {
                     report.add(
                         "Scope",
-                        "Antigravity project MCP configuration is not read by the provider",
+                        format!(
+                            "{} project MCP configuration is not read by the provider",
+                            target.display_name()
+                        ),
                         CheckStatus::Warning,
-                        Some("Use --home for Antigravity MCP servers".into()),
+                        Some(format!(
+                            "Use --home for {} MCP servers",
+                            target.display_name()
+                        )),
                     );
                 }
                 for (name, server) in servers {

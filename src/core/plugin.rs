@@ -438,14 +438,14 @@ pub fn provider_command(
 }
 
 fn validate_scope(root: &Path, targets: &[TargetName]) -> anyhow::Result<()> {
-    if !is_home_scope(root) && targets.iter().any(|t| *t != TargetName::Claude) {
-        bail!("Native plugins for Codex, Antigravity and Grok use home scope; use --home, or distribute individual skills/MCPs to a project");
+    if !is_home_scope(root) && targets.iter().any(|t| !t.spec().supports_project_plugins) {
+        bail!("Native plugins for Codex, Antigravity, Grok and DeepSeek use home scope; use --home, or distribute individual skills/MCPs to a project");
     }
     Ok(())
 }
 
 pub(crate) fn installation_key(root: &Path, target: TargetName) -> String {
-    if target != TargetName::Claude || is_home_scope(root) {
+    if !target.spec().supports_project_plugins || is_home_scope(root) {
         format!("{target}:home")
     } else {
         format!("{target}:{}", root.display())
@@ -465,10 +465,7 @@ pub fn register_marketplace(
     marketplace: &Path,
 ) -> anyhow::Result<()> {
     for &target in targets {
-        if matches!(
-            target,
-            TargetName::Claude | TargetName::Codex | TargetName::Grok
-        ) {
+        if target.spec().uses_plugin_marketplace {
             let args = vec![
                 "plugin".into(),
                 "marketplace".into(),
@@ -549,6 +546,13 @@ fn plugin_install_unlocked(
                     marketplace.join("plugins").join(id).display().to_string(),
                     "--trust".into(),
                 ],
+                TargetName::DeepSeek => vec![
+                    "plugin".into(),
+                    "--profile".into(),
+                    "desktop".into(),
+                    "add".into(),
+                    marketplace.join("plugins").join(id).display().to_string(),
+                ],
             };
             if let Err(error) = provider_command(target, root, &args) {
                 if target == TargetName::Grok && error.to_string().contains("already installed") {
@@ -587,7 +591,7 @@ fn plugin_install_unlocked(
                 Ok(())
             })
             .context("Provider installed the plugin but ACM could not record the installation")?;
-            if matches!(target, TargetName::Antigravity | TargetName::Grok) {
+            if target.spec().requires_explicit_plugin_enable {
                 let args = vec!["plugin".into(), "enable".into(), id.into()];
                 provider_command(target, root, &args).context(
                     "Plugin was installed, but native activation failed; retry installation",
@@ -658,7 +662,14 @@ pub fn plugin_remove(root: &Path, id: &str, targets: &[TargetName]) -> anyhow::R
                     id.into(),
                     "--confirm".into(),
                 ],
-                _ => vec!["plugin".into(), "uninstall".into(), id.into()],
+                TargetName::Antigravity => vec!["plugin".into(), "uninstall".into(), id.into()],
+                TargetName::DeepSeek => vec![
+                    "plugin".into(),
+                    "--profile".into(),
+                    "desktop".into(),
+                    "remove".into(),
+                    id.into(),
+                ],
             };
             provider_command(target, root, &args)?;
             update_metadata(id, |entry| {

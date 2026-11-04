@@ -1,7 +1,7 @@
 use crate::core::doctor::CheckStatus;
 use crate::paths::{get_agent_mcp_config_path, get_skill_path};
 use crate::tui::app::{ActiveTab, App};
-use crate::types::{PluginPlacementState, SkillPlacementState};
+use crate::types::{PluginPlacementState, SkillPlacementState, TargetName};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -729,8 +729,15 @@ fn render_doctor_tab(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_footer(f: &mut Frame, app: &App, area: Rect) {
-    let default_msg = "[Space] Toggle All  [c/x/a/g] Target Toggle  [H] Switch Scope  [e] Edit  [u] Update  [d] Delete  [/] Search  [q] Quit";
-    let msg = app.status_message.as_deref().unwrap_or(default_msg);
+    let target_keys = TargetName::all()
+        .iter()
+        .map(|t| t.tui_key().to_string())
+        .collect::<Vec<_>>()
+        .join("/");
+    let default_msg = format!(
+        "[Space] Toggle All  [{target_keys}] Target Toggle  [H] Switch Scope  [e] Edit  [u] Update  [d] Delete  [/] Search  [q] Quit"
+    );
+    let msg = app.status_message.as_deref().unwrap_or(&default_msg);
     let footer_text = Paragraph::new(msg)
         .style(Style::default().fg(Color::White).bg(Color::DarkGray))
         .alignment(Alignment::Left)

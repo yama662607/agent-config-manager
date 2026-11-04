@@ -466,7 +466,7 @@ fn preview_source(
             }
         });
         for &target in &ctx.targets {
-            let registration = if target == TargetName::Grok {
+            let registration = if target.spec().uses_config_skill_registry {
                 let config = get_agent_mcp_config_path(&root, target);
                 let directory = if register {
                     get_catalog_skills_dir()
@@ -484,7 +484,7 @@ fn preview_source(
             } else {
                 None
             };
-            if target == TargetName::Grok && register {
+            if target.spec().uses_config_skill_registry && register {
                 let mut plan = registration.unwrap();
                 plan["target"] = json!(target);
                 plan["skill"] = json!(id);
@@ -597,7 +597,8 @@ fn preview(ctx: &ContextOptions, command: &SkillSubcommands) -> anyhow::Result<(
                 let root=ctx.root()?;
                 for &target in &ctx.targets {
                     let path=get_skill_path(&root,target,id);
-                    changes.push(json!({"target":target,"path":if target==TargetName::Grok {get_agent_mcp_config_path(&root,target)} else {path.clone()},"action":if target==TargetName::Grok {"disable"} else if fs::symlink_metadata(&path).is_ok_and(|m|m.file_type().is_symlink()) {"unlink"} else {"remove"},"exists":path.exists()}));
+                    let uses_registry = target.spec().uses_config_skill_registry;
+                    changes.push(json!({"target":target,"path":if uses_registry {get_agent_mcp_config_path(&root,target)} else {path.clone()},"action":if uses_registry {"disable"} else if fs::symlink_metadata(&path).is_ok_and(|m|m.file_type().is_symlink()) {"unlink"} else {"remove"},"exists":path.exists()}));
                 }
             }
             ctx.output(json!({"ok":true,"dryRun":true,"operation":"skill.remove","resource":id,"changes":changes}))
@@ -660,7 +661,7 @@ fn deploy_directory(
         crate::core::placement::copy_skill_dir_to_config_with_options(
             &root, target, id, source, mode, force,
         )?;
-        if target == TargetName::Grok {
+        if target.spec().uses_config_skill_registry {
             let config = get_agent_mcp_config_path(&root, target);
             crate::adapters::grok::register_skill_path(
                 &config,

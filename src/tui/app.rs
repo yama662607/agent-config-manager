@@ -526,8 +526,13 @@ impl App {
                     }
                     [target] => self.prepare_mcp_editor(*target),
                     _ => {
+                        let key_hints = TargetName::all()
+                            .iter()
+                            .map(|t| t.tui_key().to_string())
+                            .collect::<Vec<_>>()
+                            .join("/");
                         self.status_message = Some(format!(
-                            "Edit MCP target: {}. Press c/x/a/g to choose; Esc cancels",
+                            "Edit MCP target: {}. Press {key_hints} to choose; Esc cancels",
                             targets
                                 .iter()
                                 .map(ToString::to_string)
@@ -549,21 +554,13 @@ impl App {
                 let dir = get_catalog_plugin_dir(&plugin.id);
                 let mut manifests = Vec::new();
                 for target in &self.targets {
-                    manifests.push(match target {
-                        TargetName::Claude => ".claude-plugin/plugin.json",
-                        TargetName::Codex => ".codex-plugin/plugin.json",
-                        TargetName::Antigravity => ".gemini-plugin/plugin.json",
-                        TargetName::Grok => ".grok-plugin/plugin.json",
-                    });
+                    manifests.extend_from_slice(target.spec().editor_manifest_candidates);
                 }
-                manifests.extend([
-                    "plugin.json",
-                    ".claude-plugin/plugin.json",
-                    ".codex-plugin/plugin.json",
-                    ".gemini-plugin/plugin.json",
-                    ".grok-plugin/plugin.json",
-                    "package.json",
-                ]);
+                manifests.push("plugin.json");
+                for target in TargetName::all() {
+                    manifests.extend_from_slice(target.spec().editor_manifest_candidates);
+                }
+                manifests.push("package.json");
                 self.pending_editor_file = manifests
                     .into_iter()
                     .map(|relative| dir.join(relative))
@@ -770,10 +767,7 @@ impl App {
 
         if !self.pending_edit_targets.is_empty() {
             let target = match key.code {
-                KeyCode::Char('c') => Some(TargetName::Claude),
-                KeyCode::Char('x') => Some(TargetName::Codex),
-                KeyCode::Char('a') => Some(TargetName::Antigravity),
-                KeyCode::Char('g') => Some(TargetName::Grok),
+                KeyCode::Char(c) => TargetName::from_tui_key(c),
                 KeyCode::Esc => {
                     self.pending_edit_targets.clear();
                     self.status_message = Some("Editing cancelled; no changes made".into());
@@ -890,10 +884,9 @@ impl App {
                 self.preview_scroll = self.preview_scroll.saturating_sub(5);
             }
             KeyCode::Char(' ') => self.toggle_selected(&self.targets.clone(), false),
-            KeyCode::Char('c') => self.toggle_single_target(TargetName::Claude),
-            KeyCode::Char('x') => self.toggle_single_target(TargetName::Codex),
-            KeyCode::Char('a') => self.toggle_single_target(TargetName::Antigravity),
-            KeyCode::Char('g') => self.toggle_single_target(TargetName::Grok),
+            KeyCode::Char(c) if TargetName::from_tui_key(c).is_some() => {
+                self.toggle_single_target(TargetName::from_tui_key(c).unwrap())
+            }
             KeyCode::Char('e') => self.edit_selected(),
             KeyCode::Char('u') => self.update_selected(),
             KeyCode::Char('f') if self.active_tab == ActiveTab::Doctor => self.repair(),

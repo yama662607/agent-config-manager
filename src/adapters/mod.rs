@@ -1,6 +1,7 @@
 pub mod antigravity;
 pub mod claude;
 pub mod codex;
+pub mod deepseek;
 pub mod grok;
 
 use crate::paths::{get_state_dir, home_dir};
@@ -19,10 +20,7 @@ pub struct ServerInfo {
 }
 
 pub fn server_block(target: TargetName) -> &'static str {
-    match target {
-        TargetName::Claude | TargetName::Antigravity => "mcpServers",
-        _ => "mcp_servers",
-    }
+    target.spec().mcp_server_block
 }
 
 pub fn sanitize_server_key(name: &str) -> String {
@@ -80,6 +78,9 @@ pub fn recipe_from_native(value: &Value) -> anyhow::Result<McpRecipe> {
         .or_else(|| value.get("httpUrl"))
     {
         raw["url"] = url.clone();
+    }
+    if raw.get("transport").and_then(Value::as_str) == Some("streamable-http") {
+        raw["transport"] = json!("http");
     }
     let mut recipe: McpRecipe =
         serde_json::from_value(raw).context("Invalid MCP server definition")?;
@@ -159,14 +160,15 @@ pub fn native_definition(
     ] {
         object.remove(key);
     }
+    let spec = target.spec();
     let mut fields = serde_json::to_value(recipe)?.as_object().unwrap().clone();
     fields.remove("transport");
-    if target == TargetName::Antigravity {
+    if spec.mcp_url_field != "url" {
         if let Some(url) = fields.remove("url") {
-            fields.insert("serverUrl".into(), url);
+            fields.insert(spec.mcp_url_field.into(), url);
         }
     }
-    if target == TargetName::Claude {
+    if spec.mcp_writes_type_field {
         fields.insert(
             "type".into(),
             json!(match recipe.transport {
@@ -177,7 +179,7 @@ pub fn native_definition(
         );
     }
     object.extend(fields);
-    if matches!(target, TargetName::Codex | TargetName::Grok) {
+    if spec.mcp_supports_inline_enabled {
         object.insert("enabled".into(), json!(true));
     }
     Ok(server)
@@ -209,6 +211,9 @@ fn servers(value: &Value, target: TargetName) -> anyhow::Result<Map<String, Valu
 }
 
 pub fn raw_servers(target: TargetName, path: &Path) -> anyhow::Result<Map<String, Value>> {
+    if target == TargetName::DeepSeek {
+        return deepseek::raw_servers(path);
+    }
     servers(&read_value(path)?, target)
 }
 
@@ -234,6 +239,9 @@ pub fn get_mcp_servers<P: AsRef<Path>>(
     config_path: P,
 ) -> anyhow::Result<HashMap<String, ServerInfo>> {
     let path = config_path.as_ref();
+    if target == TargetName::DeepSeek {
+        return deepseek::get_mcp_servers(path);
+    }
     let configured = raw_servers(target, path)?;
     let mut result = HashMap::new();
     for (name, server) in &configured {
@@ -248,7 +256,7 @@ pub fn get_mcp_servers<P: AsRef<Path>>(
             },
         );
     }
-    if matches!(target, TargetName::Claude | TargetName::Antigravity) {
+    if !target.spec().mcp_supports_inline_enabled {
         for (name, value) in read_value(&disabled_path(path))?.as_object().unwrap() {
             if !configured.contains_key(name) {
                 result.insert(
@@ -264,14 +272,18 @@ pub fn get_mcp_servers<P: AsRef<Path>>(
     Ok(result)
 }
 
-fn is_claude_user(target: TargetName, path: &Path) -> bool {
-    target == TargetName::Claude
-        && (path == home_dir().join(".claude.json")
-            || path
-                .canonicalize()
-                .ok()
-                .zip(home_dir().join(".claude.json").canonicalize().ok())
-                .is_some_and(|(a, b)| a == b))
+fn delegates_user_mcp_to_cli(target: TargetName, path: &Path) -> bool {
+    let spec = target.spec();
+    if !spec.mcp_delegates_user_scope_to_cli {
+        return false;
+    }
+    let home_config = home_dir().join(spec.home_mcp_config);
+    path == home_config
+        || path
+            .canonicalize()
+            .ok()
+            .zip(home_config.canonicalize().ok())
+            .is_some_and(|(a, b)| a == b)
 }
 
 fn claude_command(args: &[String]) -> anyhow::Result<()> {
@@ -286,7 +298,10 @@ fn claude_command(args: &[String]) -> anyhow::Result<()> {
 }
 
 fn put_server(target: TargetName, path: &Path, key: &str, server: &Value) -> anyhow::Result<()> {
-    if is_claude_user(target, path) {
+    if target == TargetName::DeepSeek {
+        return deepseek::put_server(path, key, server);
+    }
+    if delegates_user_mcp_to_cli(target, path) {
         let previous = raw_servers(target, path)?.get(key).cloned();
         if previous.as_ref() == Some(server) {
             return Ok(());
@@ -344,7 +359,10 @@ fn put_server(target: TargetName, path: &Path, key: &str, server: &Value) -> any
 }
 
 fn delete_server(target: TargetName, path: &Path, key: &str) -> anyhow::Result<()> {
-    if is_claude_user(target, path) {
+    if target == TargetName::DeepSeek {
+        return deepseek::delete_server(path, key);
+    }
+    if delegates_user_mcp_to_cli(target, path) {
         if raw_servers(target, path)?.contains_key(key) {
             claude_command(&[
                 "mcp".into(),
@@ -470,7 +488,7 @@ pub fn replace_mcp_recipe(
     let configured = raw_servers(target, path)?;
     let saved_path = disabled_path(path);
     if !expected.enabled
-        && matches!(target, TargetName::Claude | TargetName::Antigravity)
+        && !target.spec().mcp_supports_inline_enabled
         && !configured.contains_key(key)
     {
         let mut saved = read_value(&saved_path)?;
@@ -513,7 +531,10 @@ pub fn set_mcp_enabled<P: AsRef<Path>>(
     enabled: bool,
 ) -> anyhow::Result<()> {
     let path = config_path.as_ref();
-    if matches!(target, TargetName::Codex | TargetName::Grok) {
+    if target == TargetName::DeepSeek {
+        return deepseek::set_server_enabled(path, name, enabled);
+    }
+    if target.spec().mcp_supports_inline_enabled {
         let _operation = FileLock::acquire(&operation_lock(path))?;
         return update_value(path, |value| {
             let servers = object_at(value, server_block(target))?;

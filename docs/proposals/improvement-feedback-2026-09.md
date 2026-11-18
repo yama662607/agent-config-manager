@@ -1,3 +1,5 @@
+> Historical proposal. The Rust migration is implemented; see [current migration notes](../rust-migration.md) for the active architecture and checks.
+
 # ACM (Agent Config Manager) 改善提案書 & 実務フィードバック (2026-09)
 
 本ドキュメントは、実務において AI エージェントが `acm` を用いてスキルの新規作成・検証・リネーム・複数プロバイダ（Claude Code / Codex / Antigravity / Grok）への配布を実施した際に得られた **具体的なペインポイント（摩擦）と機能改善提案** をまとめたものです。
@@ -128,7 +130,7 @@ acm doctor --json
 
 ## 4. 担当エージェントへの引き継ぎメモ
 
-- **リポジトリ**: `/Users/daisukeyamashiki/Code/Projects/agent-config-manager`
+- **リポジトリ**: `/Users/username/Code/Projects/agent-config-manager`
 - **技術スタック**: TypeScript (Node.js >= 20, ES Modules, `tsc`)
 - **テスト方針**: `just check` / `just test`（Node.js built-in test runner + tsx）
 - **主要な変更箇所（見込み）**:

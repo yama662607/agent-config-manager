@@ -1,3 +1,5 @@
+> Historical proposal. The Rust migration is implemented; see [current migration notes](../rust-migration.md) for the active architecture and checks.
+
 # ACM (Agent Config Manager) 技術スタック一新 & 次世代 TUI 刷新計画書
 
 ## 1. エグゼクティブサマリー

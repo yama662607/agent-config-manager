@@ -1,0 +1,87 @@
+name: Build native release
+on:
+  pull_request:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            platform: darwin-arm64
+            target: aarch64-apple-darwin
+          - os: macos-15-intel
+            platform: darwin-x64
+            target: x86_64-apple-darwin
+          - os: ubuntu-24.04
+            platform: linux-x64
+            target: x86_64-unknown-linux-musl
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
+            target: aarch64-unknown-linux-musl
+          - os: windows-latest
+            platform: win32-x64
+            target: x86_64-pc-windows-msvc
+          - os: windows-11-arm
+            platform: win32-arm64
+            target: aarch64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install static Linux linker
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Build binary
+        run: node scripts/build-native.mjs --target ${{ matrix.target }}
+      - name: Stage native executable
+        shell: bash
+        run: |
+          executable=acm
+          if [[ "$RUNNER_OS" == "Windows" ]]; then executable=acm.exe; fi
+          node scripts/prepare-native.mjs '${{ matrix.platform }}' 'target/${{ matrix.target }}/release/'"$executable"
+      - run: node scripts/check-package.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.platform }}
+          path: native/
+          if-no-files-found: error
+  package:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: native
+          merge-multiple: true
+      - name: Restore executable permissions
+        run: find native -type f -name acm -exec chmod +x {} +
+      - name: Verify release version
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node -e 'if (process.env.RELEASE_TAG !== "v" + require("./package.json").version) process.exit(1)'
+      - run: node scripts/package-release.mjs
+      - run: node scripts/package-smoke.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-packages
+          path: release/
+          if-no-files-found: error
+      # Publishing is an explicit maintainer operation after reviewing artifacts.
+      # This workflow never uploads to npm/crates.io or creates a public release.

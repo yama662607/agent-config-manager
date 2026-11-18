@@ -1,35 +1,33 @@
 {
   "name": "@yama662607/agent-config-manager",
-  "version": "0.9.0",
-  "description": "Cross-agent configuration manager for MCP servers and skills. Directly edits native config files—no manifest, no sync step.",
+  "version": "1.3.0",
+  "description": "Native Rust CLI and TUI for managing MCP servers, skills, and plugins across AI agents.",
   "type": "module",
   "publishConfig": {
     "access": "public"
   },
   "bin": {
-    "agent-config-manager": "dist/cli.js",
-    "acm": "dist/cli.js"
+    "agent-config-manager": "bin/acm.cjs",
+    "acm": "bin/acm.cjs"
   },
   "files": [
-    "dist",
+    "bin/acm.cjs",
+    "native",
     "README.md",
     "README_JA.md",
-    "LICENSE",
-    "docs"
+    "LICENSE"
   ],
   "engines": {
     "node": ">=20.0.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && chmod +x dist/cli.js",
-    "clean": "rm -rf dist",
-    "dev": "tsx src/cli.ts",
-    "prepack": "npm run check:public && npm run clean && npm run build",
-    "check": "npm run clean && npm run build",
-    "test": "NODE_ENV=test tsx --test test/**/*.test.ts",
-    "test:unit": "NODE_ENV=test tsx --test test/unit/*.test.ts",
-    "test:integration": "NODE_ENV=test tsx --test test/integration/*.test.ts",
-    "test:smoke": "node dist/cli.js --version && node dist/cli.js catalog mcp list",
+    "build": "node scripts/build-native.mjs",
+    "check": "cargo fmt --all --check && cargo clippy --all-targets --locked -- -D warnings",
+    "test": "cargo test --locked",
+    "dev": "cargo run --bin acm --",
+    "prepare:native": "node scripts/prepare-native.mjs",
+    "prepack": "node scripts/check-package.mjs",
+    "test:smoke": "node scripts/package-smoke.mjs",
     "check:public": "bash scripts/check-public-safe.sh"
   },
   "keywords": [
@@ -57,15 +55,5 @@
   "bugs": {
     "url": "https://github.com/yama662607/agent-config-manager/issues"
   },
-  "homepage": "https://github.com/yama662607/agent-config-manager#readme",
-  "dependencies": {
-    "enquirer": "^2.4.1",
-    "smol-toml": "^1.6.1",
-    "yaml": "^2.8.1"
-  },
-  "devDependencies": {
-    "@types/node": "^24.5.2",
-    "tsx": "^4.21.0",
-    "typescript": "^5.9.2"
-  }
+  "homepage": "https://github.com/yama662607/agent-config-manager#readme"
 }

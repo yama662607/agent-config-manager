@@ -19,3 +19,7 @@ npm-*.exp
 .claude/
 .data/
 .grok/
+
+# Generated native distributions
+native/
+release/

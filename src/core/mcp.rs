@@ -1,15 +1,65 @@
 use crate::adapters::{
     add_mcp_to_config, get_mcp_servers, infer_package, remove_mcp_from_config, sanitize_server_key,
-    set_mcp_enabled, validate_recipe,
+    set_mcp_enabled, validate_recipe, ServerInfo,
 };
 use crate::catalog::store::{add_mcp, get_mcp, list_mcps};
-use crate::paths::{get_agent_mcp_config_path, warn_unsupported_scope};
+use crate::paths::{
+    dsh_mcp_config_paths, get_agent_mcp_config_path, is_home_scope, resolve_target_profile,
+    warn_unsupported_scope,
+};
 use crate::types::{
-    McpCatalogEntry, McpRecipe, McpStatus, McpWorkspaceStatus, TargetName, TransportType,
+    McpCatalogEntry, McpRecipe, McpStatus, McpWorkspaceStatus, ProviderKind, TargetName,
+    TransportType,
 };
 use anyhow::{bail, Context};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+pub fn target_mcp_paths(root: &Path, target: &TargetName) -> anyhow::Result<Vec<PathBuf>> {
+    if target.provider_kind() == ProviderKind::Dsh {
+        if !is_home_scope(root) {
+            return Ok(Vec::new());
+        }
+        let profile = resolve_target_profile(target)?;
+        let paths: Vec<PathBuf> = dsh_mcp_config_paths(&profile)
+            .into_iter()
+            .map(|(_, path)| path)
+            .collect();
+        if paths.is_empty() && (!profile.dsh_profiles.is_empty() || profile.config_dir.exists()) {
+            bail!(
+                "No dsh profiles found under {}",
+                profile.config_dir.join("profiles").display()
+            );
+        }
+        return Ok(paths);
+    }
+    Ok(vec![get_agent_mcp_config_path(root, target)])
+}
+
+pub fn get_target_mcp_servers(
+    root: &Path,
+    target: &TargetName,
+) -> anyhow::Result<HashMap<String, ServerInfo>> {
+    if target.provider_kind() == ProviderKind::Dsh {
+        if !is_home_scope(root) {
+            return Ok(HashMap::new());
+        }
+        let profile = resolve_target_profile(target)?;
+        let mut merged: HashMap<String, ServerInfo> = HashMap::new();
+        for (_, path) in dsh_mcp_config_paths(&profile) {
+            for (name, info) in get_mcp_servers(target.clone(), &path)? {
+                merged
+                    .entry(name)
+                    .and_modify(|existing| {
+                        existing.enabled |= info.enabled;
+                    })
+                    .or_insert(info);
+            }
+        }
+        return Ok(merged);
+    }
+    get_mcp_servers(target.clone(), get_agent_mcp_config_path(root, target))
+}
 
 pub fn match_entry<'a>(
     entries: &'a [McpCatalogEntry],
@@ -126,8 +176,8 @@ pub fn get_mcp_workspace_status<P: AsRef<Path>>(
     let root = project_root.as_ref();
     let catalog = list_mcps()?;
     let mut server_map: HashMap<String, McpStatus> = HashMap::new();
-    for &target in targets {
-        for (name, info) in get_mcp_servers(target, get_agent_mcp_config_path(root, target))? {
+    for target in targets {
+        for (name, info) in get_target_mcp_servers(root, target)? {
             let recipe = info.recipe.unwrap_or_default();
             let found = match_entry(&catalog, &name, &recipe);
             let state = if !info.enabled {
@@ -154,9 +204,9 @@ pub fn get_mcp_workspace_status<P: AsRef<Path>>(
                 plugin: None,
             });
             entry.enabled |= info.enabled;
-            entry.targets.push(target);
-            entry.state.insert(target, state.into());
-            entry.deployed.insert(target, recipe);
+            entry.targets.push(target.clone());
+            entry.state.insert(target.clone(), state.into());
+            entry.deployed.insert(target.clone(), recipe);
         }
     }
     for plugin in crate::core::plugin::get_plugin_workspace_status(root, targets)?.plugins {
@@ -191,12 +241,12 @@ pub fn get_mcp_workspace_status<P: AsRef<Path>>(
                         state: plugin
                             .targets
                             .iter()
-                            .map(|target| (*target, "plugin".into()))
+                            .map(|target| (target.clone(), "plugin".into()))
                             .collect(),
                         deployed: plugin
                             .targets
                             .iter()
-                            .map(|target| (*target, recipe.clone()))
+                            .map(|target| (target.clone(), recipe.clone()))
                             .collect(),
                     },
                 );
@@ -205,10 +255,10 @@ pub fn get_mcp_workspace_status<P: AsRef<Path>>(
     }
     let mut servers: Vec<_> = server_map.into_values().collect();
     for server in &mut servers {
-        for &target in targets {
+        for target in targets {
             server
                 .state
-                .entry(target)
+                .entry(target.clone())
                 .or_insert_with(|| "missing".into());
         }
     }
@@ -269,11 +319,15 @@ pub fn mcp_add<P: AsRef<Path>>(
     let root = project_root.as_ref();
     warn_unsupported_scope(root, targets, "MCP configuration");
     // Parse every destination before applying any changes.
-    for &target in targets {
-        get_mcp_servers(target, get_agent_mcp_config_path(root, target))?;
+    let mut destinations = Vec::new();
+    for target in targets {
+        for path in target_mcp_paths(root, target)? {
+            get_mcp_servers(target.clone(), &path)?;
+            destinations.push((target.clone(), path));
+        }
     }
-    for &target in targets {
-        add_mcp_to_config(target, get_agent_mcp_config_path(root, target), id, &recipe)?;
+    for (target, path) in destinations {
+        add_mcp_to_config(target, path, id, &recipe)?;
     }
     Ok(())
 }
@@ -284,13 +338,14 @@ pub fn mcp_remove<P: AsRef<Path>>(
     targets: &[TargetName],
 ) -> anyhow::Result<()> {
     let catalog = list_mcps()?;
-    for &target in targets {
-        let path = get_agent_mcp_config_path(root.as_ref(), target);
-        let servers = get_mcp_servers(target, &path)?;
-        let Some((key, _)) = resolve_native_server(&servers, &catalog, name)? else {
-            continue;
-        };
-        remove_mcp_from_config(target, path, key)?;
+    for target in targets {
+        for path in target_mcp_paths(root.as_ref(), target)? {
+            let servers = get_mcp_servers(target.clone(), &path)?;
+            let Some((key, _)) = resolve_native_server(&servers, &catalog, name)? else {
+                continue;
+            };
+            remove_mcp_from_config(target.clone(), path, key)?;
+        }
     }
     Ok(())
 }
@@ -302,19 +357,20 @@ pub fn mcp_enable<P: AsRef<Path>>(
 ) -> anyhow::Result<()> {
     let entries = list_mcps()?;
     let mut changed = false;
-    for &target in targets {
-        let path = get_agent_mcp_config_path(root.as_ref(), target);
-        let servers = get_mcp_servers(target, &path)?;
-        let key = resolve_native_server(&servers, &entries, name)?.map(|(key, _)| key);
-        if let Some(key) = key {
-            set_mcp_enabled(target, &path, key, true)?;
-            changed = true;
-        } else if let Some(entry) = entries
-            .iter()
-            .find(|e| e.id == name || sanitize_server_key(&e.id) == name)
-        {
-            add_mcp_to_config(target, &path, name, &entry.recipe)?;
-            changed = true;
+    for target in targets {
+        for path in target_mcp_paths(root.as_ref(), target)? {
+            let servers = get_mcp_servers(target.clone(), &path)?;
+            let key = resolve_native_server(&servers, &entries, name)?.map(|(key, _)| key);
+            if let Some(key) = key {
+                set_mcp_enabled(target.clone(), &path, key, true)?;
+                changed = true;
+            } else if let Some(entry) = entries
+                .iter()
+                .find(|e| e.id == name || sanitize_server_key(&e.id) == name)
+            {
+                add_mcp_to_config(target.clone(), &path, name, &entry.recipe)?;
+                changed = true;
+            }
         }
     }
     if !changed {
@@ -330,13 +386,14 @@ pub fn mcp_disable<P: AsRef<Path>>(
 ) -> anyhow::Result<()> {
     let entries = list_mcps()?;
     let mut found = false;
-    for &target in targets {
-        let path = get_agent_mcp_config_path(root.as_ref(), target);
-        let servers = get_mcp_servers(target, &path)?;
-        let key = resolve_native_server(&servers, &entries, name)?.map(|(key, _)| key);
-        if let Some(key) = key {
-            set_mcp_enabled(target, &path, key, false)?;
-            found = true;
+    for target in targets {
+        for path in target_mcp_paths(root.as_ref(), target)? {
+            let servers = get_mcp_servers(target.clone(), &path)?;
+            let key = resolve_native_server(&servers, &entries, name)?.map(|(key, _)| key);
+            if let Some(key) = key {
+                set_mcp_enabled(target.clone(), &path, key, false)?;
+                found = true;
+            }
         }
     }
     if !found {
@@ -372,27 +429,31 @@ pub fn mcp_update(
         // Known invalid recipes and stale snapshots must fail before the first write.
         validate_recipe(&entry.recipe)
             .with_context(|| format!("Invalid catalog MCP: {}", entry.id))?;
-        for &target in targets {
+        for target in targets {
             if server
                 .deployed
-                .get(&target)
+                .get(target)
                 .is_some_and(|recipe| !recipes_match(recipe, &entry.recipe))
             {
-                let path = get_agent_mcp_config_path(root, target);
-                let native = get_mcp_servers(target, &path)?;
-                let (key, observed) = resolve_native_server(&native, &entries, &server.name)?
-                    .context("MCP changed during update")?;
-                if observed.recipe.as_ref() != server.deployed.get(&target) {
-                    bail!("MCP conflict: {} changed during update", server.name);
+                for path in target_mcp_paths(root, target)? {
+                    let native = get_mcp_servers(target.clone(), &path)?;
+                    let Some((key, observed)) =
+                        resolve_native_server(&native, &entries, &server.name)?
+                    else {
+                        continue;
+                    };
+                    if observed.recipe.as_ref() != server.deployed.get(target) {
+                        bail!("MCP conflict: {} changed during update", server.name);
+                    }
+                    candidates.push((
+                        target.clone(),
+                        path,
+                        key.clone(),
+                        observed.clone(),
+                        entry.recipe.clone(),
+                        server.name.clone(),
+                    ));
                 }
-                candidates.push((
-                    target,
-                    path,
-                    key.clone(),
-                    observed.clone(),
-                    entry.recipe.clone(),
-                    server.name.clone(),
-                ));
             }
         }
     }
@@ -404,7 +465,7 @@ pub fn mcp_update(
     let mut retry_targets = std::collections::BTreeSet::new();
     let mut retry_resources = std::collections::BTreeSet::new();
     for (target, path, key, observed, recipe, name) in candidates {
-        match crate::adapters::replace_mcp_recipe(target, &path, &key, &observed, &recipe) {
+        match crate::adapters::replace_mcp_recipe(target.clone(), &path, &key, &observed, &recipe) {
             Ok(()) => {
                 updated.push(format!("Updated {target}: {name}"));
                 results
@@ -432,7 +493,7 @@ pub fn mcp_adopt(
     let entries = list_mcps()?;
     let mut adopted = Vec::new();
     let mut found = name.is_none();
-    for (key, info) in get_mcp_servers(target, get_agent_mcp_config_path(root, target))? {
+    for (key, info) in get_target_mcp_servers(root, &target)? {
         let recipe = info.recipe.context("No recipe to adopt")?;
         let entry = match_entry(&entries, &key, &recipe);
         if name.is_some_and(|n| n != key && entry.map(|e| e.id.as_str()) != Some(n)) {

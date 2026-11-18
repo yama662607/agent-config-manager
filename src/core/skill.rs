@@ -9,7 +9,9 @@ use crate::paths::{
     get_agent_mcp_config_path, get_agent_skills_dir, get_catalog_skill_dir, get_catalog_skills_dir,
     get_skill_path, home_dir,
 };
-use crate::types::{SkillPlacementState, SkillStatus, SkillWorkspaceStatus, TargetName};
+use crate::types::{
+    ProviderKind, SkillPlacementState, SkillStatus, SkillWorkspaceStatus, TargetName,
+};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -57,8 +59,8 @@ pub fn get_skill_workspace_status<P: AsRef<Path>>(
     }
 
     // 2. Scan each target directory
-    for &target in targets {
-        if target == TargetName::Grok {
+    for target in targets {
+        if target.provider_kind() == ProviderKind::Grok {
             let config = get_agent_mcp_config_path(root, target);
             for registered in crate::adapters::grok::skill_paths(&config)? {
                 let dir = crate::paths::expand_home(&registered);
@@ -85,12 +87,12 @@ pub fn get_skill_workspace_status<P: AsRef<Path>>(
                         });
                     if !disabled {
                         status.enabled = true;
-                        if !status.targets.contains(&target) {
-                            status.targets.push(target);
+                        if !status.targets.contains(target) {
+                            status.targets.push(target.clone());
                         }
                         status
                             .placement
-                            .insert(target, SkillPlacementState::Registered);
+                            .insert(target.clone(), SkillPlacementState::Registered);
                     }
                 }
             }
@@ -115,7 +117,7 @@ pub fn get_skill_workspace_status<P: AsRef<Path>>(
                     };
 
                     let placement =
-                        inspect_skill_placement(root, target, &name, cat_dir.as_deref());
+                        inspect_skill_placement(root, target.clone(), &name, cat_dir.as_deref());
 
                     let status = skill_map
                         .entry(name.clone())
@@ -135,11 +137,11 @@ pub fn get_skill_workspace_status<P: AsRef<Path>>(
                         && placement.state != SkillPlacementState::BrokenLink
                     {
                         status.enabled = true;
-                        if !status.targets.contains(&target) {
-                            status.targets.push(target);
+                        if !status.targets.contains(target) {
+                            status.targets.push(target.clone());
                         }
                     }
-                    status.placement.insert(target, placement.state);
+                    status.placement.insert(target.clone(), placement.state);
                 }
             }
         }
@@ -148,7 +150,7 @@ pub fn get_skill_workspace_status<P: AsRef<Path>>(
         for status in skill_map.values_mut() {
             status
                 .placement
-                .entry(target)
+                .entry(target.clone())
                 .or_insert(SkillPlacementState::Missing);
         }
     }
@@ -193,8 +195,8 @@ pub fn preview_skill_add<P: AsRef<Path>>(
     }
     let mode = placement.unwrap_or_else(|| default_placement_mode(root));
     let mut plans = Vec::new();
-    for &target in targets {
-        if target == TargetName::Grok {
+    for target in targets {
+        if target.provider_kind() == ProviderKind::Grok {
             let config = get_agent_mcp_config_path(root, target);
             let registered = crate::adapters::grok::is_skill_path_registered(
                 &config,
@@ -204,7 +206,12 @@ pub fn preview_skill_add<P: AsRef<Path>>(
             plans.push(serde_json::json!({"skill": skill_id, "target": target, "path": config, "action": if registered && !disabled { "unchanged" } else { "register" }, "blocked": false}));
         } else {
             plans.push(crate::core::skill_history::preview_skill_placement(
-                root, target, skill_id, &source, mode, force,
+                root,
+                target.clone(),
+                skill_id,
+                &source,
+                mode,
+                force,
             )?);
         }
     }
@@ -236,16 +243,16 @@ pub fn skill_add_with_options<P: AsRef<Path>>(
     let mode = placement.unwrap_or_else(|| default_placement_mode(root));
     crate::paths::warn_unsupported_scope(root, targets, "skills");
 
-    for &target in targets {
-        if target == TargetName::Grok {
-            let grok_config = get_agent_mcp_config_path(root, TargetName::Grok);
+    for target in targets {
+        if target.provider_kind() == ProviderKind::Grok {
+            let grok_config = get_agent_mcp_config_path(root, target);
             let catalog_skills = get_catalog_skills_dir();
             register_skill_path(&grok_config, &catalog_skills.display().to_string())?;
             set_skill_disabled(&grok_config, skill_id, false)?;
         } else {
             copy_skill_dir_to_config_with_options(
                 root,
-                target,
+                target.clone(),
                 skill_id,
                 &source_dir,
                 mode,
@@ -266,12 +273,12 @@ pub fn skill_remove<P: AsRef<Path>>(
     validate_skill_name(skill_name)?;
     let root = project_root.as_ref();
 
-    for &target in targets {
-        if target == TargetName::Grok {
-            let grok_config = get_agent_mcp_config_path(root, TargetName::Grok);
+    for target in targets {
+        if target.provider_kind() == ProviderKind::Grok {
+            let grok_config = get_agent_mcp_config_path(root, target);
             set_skill_disabled(&grok_config, skill_name, true)?;
         } else {
-            crate::core::skill_history::remove_skill_placement(root, target, skill_name)?;
+            crate::core::skill_history::remove_skill_placement(root, target.clone(), skill_name)?;
         }
     }
 
@@ -332,13 +339,15 @@ pub fn preview_skill_update<P: AsRef<Path>>(
         {
             continue;
         }
-        for &target in targets {
+        for target in targets {
             let state = skill
                 .placement
-                .get(&target)
+                .get(target)
                 .copied()
                 .unwrap_or(SkillPlacementState::Missing);
-            let skip = if target == TargetName::Grok && state == SkillPlacementState::Registered {
+            let skip = if target.provider_kind() == ProviderKind::Grok
+                && state == SkillPlacementState::Registered
+            {
                 Some("Registered catalog path is already current")
             } else if placement.is_none() && matches!(state, SkillPlacementState::Linked) {
                 Some("Linked skill already references its source")
@@ -368,7 +377,13 @@ pub fn preview_skill_update<P: AsRef<Path>>(
                     default_placement_mode(root)
                 }
             });
-            let preview = preview_skill_add(root, &skill.name, &[target], Some(mode), force)?;
+            let preview = preview_skill_add(
+                root,
+                &skill.name,
+                std::slice::from_ref(target),
+                Some(mode),
+                force,
+            )?;
             let mut plan = preview["targets"][0].clone();
             plan["mode"] = serde_json::json!(if mode == SkillPlacementMode::Copy {
                 "copy"
@@ -410,7 +425,9 @@ pub fn skill_update_with_placement<P: AsRef<Path>>(
             } else {
                 SkillPlacementMode::Link
             };
-            if let Err(error) = skill_add_with_options(root, name, &[target], Some(mode), force) {
+            if let Err(error) =
+                skill_add_with_options(root, name, std::slice::from_ref(&target), Some(mode), force)
+            {
                 anyhow::bail!(
                     "Skill update failed for {target}/{name}: {error:#}. Completed updates: {}",
                     result
@@ -577,7 +594,7 @@ pub fn skill_rename<P: AsRef<Path>>(
     read_value(&meta_path)?;
     let mut placements = Vec::new();
     let mut grok = Vec::new();
-    for &target in targets {
+    for target in targets {
         let old = get_skill_path(root, target, old_name);
         let new = get_skill_path(root, target, new_name);
         if fs::symlink_metadata(&new).is_ok() {
@@ -586,7 +603,7 @@ pub fn skill_rename<P: AsRef<Path>>(
         if let Ok(meta) = fs::symlink_metadata(&old) {
             placements.push((old, new, meta.file_type().is_symlink()));
         }
-        if target == TargetName::Grok {
+        if target.provider_kind() == ProviderKind::Grok {
             let path = get_agent_mcp_config_path(root, target);
             if crate::adapters::grok::is_skill_path_registered(
                 &path,

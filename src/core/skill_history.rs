@@ -39,7 +39,7 @@ impl Scope {
         let root = root
             .canonicalize()
             .context("Skill scope root does not exist")?;
-        let mut destination = get_skill_path(&root, target, skill);
+        let mut destination = get_skill_path(&root, &target, skill);
         if crate::paths::is_home_scope(&root) {
             destination = root.join(destination.strip_prefix(crate::paths::home_dir())?);
         }
@@ -374,7 +374,7 @@ pub fn preview_skill_placement(
     let previous = baseline(&scope)?;
     let conflict = conflict(current.as_ref(), previous.as_ref(), &desired);
     Ok(
-        json!({"skill": skill, "target": target, "path": scope.destination,
+        json!({"skill": skill, "target": scope.target, "path": scope.destination,
         "action": if placement == SkillPlacementMode::Link { "link" } else if current.as_ref() == Some(&desired) { "unchanged" } else { "copy" },
         "changes": changes(current.as_ref(), Some(&desired)), "conflict": conflict,
         "blocked": conflict.is_some() && !force, "forced": force && conflict.is_some(),
@@ -413,10 +413,10 @@ impl SkillRenameState {
     ) -> anyhow::Result<Self> {
         let scopes: Vec<_> = targets
             .iter()
-            .map(|&target| {
+            .map(|target| {
                 Ok((
-                    Scope::new(root, target, old_id)?,
-                    Scope::new(root, target, new_id)?,
+                    Scope::new(root, target.clone(), old_id)?,
+                    Scope::new(root, target.clone(), new_id)?,
                 ))
             })
             .collect::<anyhow::Result<_>>()?;
@@ -662,7 +662,7 @@ pub fn deploy_skill(
     check_placement_type(current.as_ref(), true)?;
     if let Some(reason) = conflict(current.as_ref(), previous.as_ref(), &desired) {
         if !force {
-            bail!("Skill {skill} for {target}: {reason}");
+            bail!("Skill {skill} for {}: {reason}", scope.target);
         }
     }
     if placement == SkillPlacementMode::Copy && current.as_ref() == Some(&desired) {
@@ -734,8 +734,8 @@ pub fn list_skill_backups(
     targets: &[TargetName],
 ) -> anyhow::Result<Value> {
     let mut backups = Vec::new();
-    for &target in targets {
-        let scope = Scope::new(root, target, skill)?;
+    for target in targets {
+        let scope = Scope::new(root, target.clone(), skill)?;
         let path = scope.directory()?.join("backups");
         let entries = match fs::read_dir(path) {
             Ok(entries) => entries,
@@ -754,7 +754,7 @@ pub fn list_skill_backups(
             }
             let backup = read_backup(&scope, &id)?;
             backups.push(
-                json!({"id": id, "skill": skill, "target": target, "root": scope.root,
+                json!({"id": id, "skill": skill, "target": scope.target, "root": scope.root,
                 "createdAt": backup.created_at, "operation": backup.operation,
                 "changes": changes(backup.before.as_ref(), backup.after.as_ref())}),
             );
@@ -790,7 +790,7 @@ pub fn restore_skill_backup(
     check_placement_type(current.as_ref(), false)?;
     let previous = baseline(&scope)?;
     let conflict = current != backup.after;
-    let mut report = json!({"skill": skill, "target": target, "backupId": id, "path": scope.destination,
+    let mut report = json!({"skill": skill, "target": scope.target, "backupId": id, "path": scope.destination,
         "action": "restore", "dryRun": dry_run, "changes": changes(current.as_ref(), backup.before.as_ref()),
         "conflict": if conflict { Some("Destination changed since this backup was created; use --force to preserve and replace it") } else { None }, "blocked": conflict && !force});
     if dry_run {

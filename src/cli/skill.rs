@@ -5,7 +5,7 @@ use crate::core::placement::SkillPlacementMode;
 use crate::core::skill::*;
 use crate::core::skill_source::*;
 use crate::storage::{object_at, update_value};
-use crate::types::IssueSeverity;
+use crate::types::{IssueSeverity, ProviderKind};
 use std::fs;
 use std::path::Path;
 
@@ -107,7 +107,7 @@ pub fn run(ctx: &ContextOptions, args: SkillArgs) -> anyhow::Result<()> {
                 let file = ctx
                     .targets
                     .iter()
-                    .map(|&t| get_skill_path(&root, t, &id).join("SKILL.md"))
+                    .map(|t| get_skill_path(&root, t, &id).join("SKILL.md"))
                     .find(|p| p.is_file())
                     .unwrap_or_else(|| get_catalog_skill_dir(&id).join("SKILL.md"));
                 ctx.output(json!({"skill": status, "content": fs::read_to_string(file)?}))
@@ -465,8 +465,9 @@ fn preview_source(
                 SkillPlacementMode::Copy
             }
         });
-        for &target in &ctx.targets {
-            let registration = if target == TargetName::Grok {
+        for target in &ctx.targets {
+            let is_grok = target.provider_kind() == ProviderKind::Grok;
+            let registration = if is_grok {
                 let config = get_agent_mcp_config_path(&root, target);
                 let directory = if register {
                     get_catalog_skills_dir()
@@ -484,7 +485,7 @@ fn preview_source(
             } else {
                 None
             };
-            if target == TargetName::Grok && register {
+            if is_grok && register {
                 let mut plan = registration.unwrap();
                 plan["target"] = json!(target);
                 plan["skill"] = json!(id);
@@ -492,7 +493,7 @@ fn preview_source(
             } else {
                 let mut plan = crate::core::skill_history::preview_skill_placement(
                     &root,
-                    target,
+                    target.clone(),
                     id,
                     source,
                     placement_mode,
@@ -585,7 +586,7 @@ fn preview(ctx: &ContextOptions, command: &SkillSubcommands) -> anyhow::Result<(
         }
         SkillSubcommands::Restore {id,backup_id,force} => {
             if ctx.catalog || ctx.targets.len()!=1 {bail!("Restore requires a provider scope and exactly one --target");}
-            ctx.output(restore_skill_backup(&ctx.root()?,id,backup_id,ctx.targets[0],*force,true)?)
+            ctx.output(restore_skill_backup(&ctx.root()?,id,backup_id,ctx.targets[0].clone(),*force,true)?)
         }
         SkillSubcommands::Remove {id} | SkillSubcommands::Disable {id} => {
             if ctx.catalog && matches!(command,SkillSubcommands::Disable{..}) {bail!("Select a provider scope to disable skills");}
@@ -595,9 +596,10 @@ fn preview(ctx: &ContextOptions, command: &SkillSubcommands) -> anyhow::Result<(
                 changes.push(json!({"target":"catalog","path":get_catalog_skill_dir(id),"action":"remove","metadataPath":get_skills_metadata_path()}));
             } else {
                 let root=ctx.root()?;
-                for &target in &ctx.targets {
+                for target in &ctx.targets {
                     let path=get_skill_path(&root,target,id);
-                    changes.push(json!({"target":target,"path":if target==TargetName::Grok {get_agent_mcp_config_path(&root,target)} else {path.clone()},"action":if target==TargetName::Grok {"disable"} else if fs::symlink_metadata(&path).is_ok_and(|m|m.file_type().is_symlink()) {"unlink"} else {"remove"},"exists":path.exists()}));
+                    let is_grok = target.provider_kind() == ProviderKind::Grok;
+                    changes.push(json!({"target":target,"path":if is_grok {get_agent_mcp_config_path(&root,target)} else {path.clone()},"action":if is_grok {"disable"} else if fs::symlink_metadata(&path).is_ok_and(|m|m.file_type().is_symlink()) {"unlink"} else {"remove"},"exists":path.exists()}));
                 }
             }
             ctx.output(json!({"ok":true,"dryRun":true,"operation":"skill.remove","resource":id,"changes":changes}))
@@ -634,7 +636,7 @@ fn preview(ctx: &ContextOptions, command: &SkillSubcommands) -> anyhow::Result<(
             crate::core::validate::validate_skill_name(new_name)?;
             expect_catalog_skill(old_name)?;
             let mut changes=vec![json!({"target":"catalog","from":get_catalog_skill_dir(old_name),"to":get_catalog_skill_dir(new_name),"blocked":fs::symlink_metadata(get_catalog_skill_dir(new_name)).is_ok(),"newSource":source})];
-            if !ctx.catalog {let root=ctx.root()?;for &target in &ctx.targets {let destination=get_skill_path(&root,target,new_name);changes.push(json!({"target":target,"from":get_skill_path(&root,target,old_name),"to":destination,"blocked":fs::symlink_metadata(destination).is_ok()}));}}
+            if !ctx.catalog {let root=ctx.root()?;for target in &ctx.targets {let destination=get_skill_path(&root,target,new_name);changes.push(json!({"target":target,"from":get_skill_path(&root,target,old_name),"to":destination,"blocked":fs::symlink_metadata(destination).is_ok()}));}}
             ctx.output(json!({"ok":true,"dryRun":true,"operation":"skill.rename","blocked":changes.iter().any(|value|value["blocked"]==true),"changes":changes}))
         }
         SkillSubcommands::Add {id,..} => {expect_catalog_skill(id)?;ctx.output(json!({"ok":true,"dryRun":true,"operation":"skill.add","resource":id,"path":get_skills_metadata_path()}))}
@@ -651,20 +653,25 @@ fn deploy_directory(
 ) -> anyhow::Result<()> {
     crate::core::validate::validate_skill_name(id)?;
     let root = ctx.root()?;
-    for &target in &ctx.targets {
+    for target in &ctx.targets {
         if !force && fs::symlink_metadata(get_skill_path(&root, target, id)).is_ok() {
             bail!("Skill {id} already exists for {target}; use --force to replace it");
         }
     }
     ctx.for_targets("skill.deploy", id, |target| {
         crate::core::placement::copy_skill_dir_to_config_with_options(
-            &root, target, id, source, mode, force,
+            &root,
+            target.clone(),
+            id,
+            source,
+            mode,
+            force,
         )?;
-        if target == TargetName::Grok {
-            let config = get_agent_mcp_config_path(&root, target);
+        if target.provider_kind() == ProviderKind::Grok {
+            let config = get_agent_mcp_config_path(&root, &target);
             crate::adapters::grok::register_skill_path(
                 &config,
-                &get_agent_skills_dir(&root, target).display().to_string(),
+                &get_agent_skills_dir(&root, &target).display().to_string(),
             )?;
             crate::adapters::grok::set_skill_disabled(&config, id, false)?;
         }

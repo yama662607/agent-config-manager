@@ -1,4 +1,4 @@
-use crate::adapters::{get_mcp_servers, ServerInfo};
+use crate::adapters::ServerInfo;
 use crate::core::doctor::{run_doctor, CheckStatus, DiagnosticReport};
 use crate::core::mcp::{get_mcp_workspace_status, mcp_disable, mcp_enable};
 use crate::core::plugin::{get_plugin_workspace_status, plugin_install, plugin_remove};
@@ -335,8 +335,8 @@ impl App {
     ) {
         let mut results = Vec::new();
         let mut failed = Vec::new();
-        for &target in targets {
-            match operation(target) {
+        for target in targets {
+            match operation(target.clone()) {
                 Ok(detail) => results.push(format!("{target}: {detail}")),
                 Err(error) => {
                     results.push(format!("{target}: failed ({error:#})"));
@@ -434,9 +434,14 @@ impl App {
                         return Ok("not configured; unchanged".into());
                     }
                     if state == "missing" {
-                        crate::core::mcp::mcp_add(&root, &mcp.name, &[target], Some(&mcp.recipe))?;
+                        crate::core::mcp::mcp_add(
+                            &root,
+                            &mcp.name,
+                            std::slice::from_ref(&target),
+                            Some(&mcp.recipe),
+                        )?;
                     } else {
-                        let (key, _) = mcp_native_identity(&root, &mcp, target)?;
+                        let (key, _) = mcp_native_identity(&root, &mcp, target.clone())?;
                         if disable {
                             mcp_disable(&root, &key, &[target])?;
                         } else {
@@ -480,7 +485,7 @@ impl App {
         std::iter::once(catalog)
             .chain(
                 self.targets.iter().map(|target| {
-                    get_skill_path(&self.project_root, *target, name).join("SKILL.md")
+                    get_skill_path(&self.project_root, target, name).join("SKILL.md")
                 }),
             )
             .find(|path| path.is_file())
@@ -517,14 +522,14 @@ impl App {
                     .targets
                     .iter()
                     .filter(|target| mcp.targets.contains(target))
-                    .copied()
+                    .cloned()
                     .collect();
                 match targets.as_slice() {
                     [] => {
                         self.status_message =
                             Some("No configured target contains this MCP; no changes made".into())
                     }
-                    [target] => self.prepare_mcp_editor(*target),
+                    [target] => self.prepare_mcp_editor(target.clone()),
                     _ => {
                         self.status_message = Some(format!(
                             "Edit MCP target: {}. Press c/x/a/g to choose; Esc cancels",
@@ -549,11 +554,12 @@ impl App {
                 let dir = get_catalog_plugin_dir(&plugin.id);
                 let mut manifests = Vec::new();
                 for target in &self.targets {
-                    manifests.push(match target {
-                        TargetName::Claude => ".claude-plugin/plugin.json",
-                        TargetName::Codex => ".codex-plugin/plugin.json",
-                        TargetName::Antigravity => ".gemini-plugin/plugin.json",
-                        TargetName::Grok => ".grok-plugin/plugin.json",
+                    manifests.push(match target.provider_kind() {
+                        crate::types::ProviderKind::Claude => ".claude-plugin/plugin.json",
+                        crate::types::ProviderKind::Codex => ".codex-plugin/plugin.json",
+                        crate::types::ProviderKind::Antigravity => ".gemini-plugin/plugin.json",
+                        crate::types::ProviderKind::Grok => ".grok-plugin/plugin.json",
+                        crate::types::ProviderKind::Dsh => "package.json",
                     });
                 }
                 manifests.extend([
@@ -583,7 +589,7 @@ impl App {
                 .get(self.selected_mcp_index)
                 .cloned()
                 .context("No MCP selected")?;
-            let (key, original) = mcp_native_identity(&self.project_root, mcp, target)?;
+            let (key, original) = mcp_native_identity(&self.project_root, mcp, target.clone())?;
             let mut file = tempfile::Builder::new()
                 .prefix("acm-mcp-")
                 .suffix(".json")
@@ -596,7 +602,7 @@ impl App {
             file.flush()?;
             Ok(McpEditor {
                 file,
-                target,
+                target: target.clone(),
                 key,
                 original,
             })
@@ -604,7 +610,10 @@ impl App {
         match result {
             Ok(editor) => {
                 self.pending_editor_file = Some(editor.file.path().to_path_buf());
-                self.status_message = Some(format!("Editing MCP recipe for {target}; validated changes will be applied through the provider adapter"));
+                self.status_message = Some(format!(
+                    "Editing MCP recipe for {}; validated changes will be applied through the provider adapter",
+                    editor.target
+                ));
                 self.pending_mcp_editor = Some(editor);
             }
             Err(error) => {
@@ -929,7 +938,8 @@ impl McpEditor {
         if self.original.recipe.as_ref() == Some(&recipe) {
             return Ok(format!("MCP {} on {} unchanged", self.key, self.target));
         }
-        let path = get_agent_mcp_config_path(root, self.target);
+        let path = get_agent_mcp_config_path(root, &self.target);
+        let target_label = self.target.clone();
         crate::adapters::replace_mcp_recipe(
             self.target,
             &path,
@@ -937,7 +947,7 @@ impl McpEditor {
             &self.original,
             &recipe,
         )?;
-        Ok(format!("Updated MCP {} on {}", self.key, self.target))
+        Ok(format!("Updated MCP {} on {}", self.key, target_label))
     }
 }
 
@@ -947,7 +957,7 @@ fn mcp_native_identity(
     target: TargetName,
 ) -> anyhow::Result<(String, ServerInfo)> {
     let entries = crate::catalog::store::list_mcps()?;
-    let servers = get_mcp_servers(target, get_agent_mcp_config_path(root, target))?;
+    let servers = crate::core::mcp::get_target_mcp_servers(root, &target)?;
     let mut matches = servers.into_iter().filter(|(name, info)| {
         let canonical = info
             .recipe

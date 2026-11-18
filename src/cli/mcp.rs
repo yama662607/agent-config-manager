@@ -132,27 +132,36 @@ pub fn run(ctx: &ContextOptions, args: McpArgs) -> anyhow::Result<()> {
                 let root = ctx.root()?;
                 let mut planned = Vec::new();
                 let catalog = list_mcps()?;
-                for &target in &ctx.targets {
-                    let path = get_agent_mcp_config_path(&root, target);
-                    let servers = crate::adapters::get_mcp_servers(target, &path)?;
-                    if let Some((key, server)) = resolve_native_server(&servers, &catalog, &id)? {
-                        planned.push((
-                            target,
-                            path,
-                            key.clone(),
-                            recipe(&id, &args, server.recipe.clone())?,
-                            server.clone(),
-                        ));
+                for target in &ctx.targets {
+                    for path in crate::core::mcp::target_mcp_paths(&root, target)? {
+                        let servers = crate::adapters::get_mcp_servers(target.clone(), &path)?;
+                        if let Some((key, server)) = resolve_native_server(&servers, &catalog, &id)?
+                        {
+                            planned.push((
+                                target.clone(),
+                                path,
+                                key.clone(),
+                                recipe(&id, &args, server.recipe.clone())?,
+                                server.clone(),
+                            ));
+                        }
                     }
                 }
                 if planned.is_empty() {
                     bail!("MCP {id} is not configured in this scope");
                 }
                 ctx.for_targets("mcp.edit", &id, |target| {
-                    if let Some((_, path, key, value, expected)) =
-                        planned.iter().find(|(t, ..)| *t == target)
-                    {
-                        crate::adapters::replace_mcp_recipe(target, path, key, expected, value)?;
+                    let matching: Vec<_> = planned.iter().filter(|(t, ..)| t == &target).collect();
+                    if !matching.is_empty() {
+                        for (_, path, key, value, expected) in matching {
+                            crate::adapters::replace_mcp_recipe(
+                                target.clone(),
+                                path,
+                                key,
+                                expected,
+                                value,
+                            )?;
+                        }
                         return Ok(json!({"changed":true}));
                     }
                     Ok(json!({"changed":false,"reason":"not configured"}))
@@ -204,7 +213,7 @@ pub fn run(ctx: &ContextOptions, args: McpArgs) -> anyhow::Result<()> {
             let results =
                 ctx.for_targets("mcp.update", id.as_deref().unwrap_or("*"), |target| {
                     if id.as_ref().is_some_and(|id| {
-                        get_mcp_workspace_status(&root, &[target])
+                        get_mcp_workspace_status(&root, std::slice::from_ref(&target))
                             .is_ok_and(|s| !s.servers.iter().any(|s| &s.name == id))
                     }) {
                         return Ok(Vec::new());
@@ -218,7 +227,11 @@ pub fn run(ctx: &ContextOptions, args: McpArgs) -> anyhow::Result<()> {
             if ctx.targets.len() != 1 {
                 bail!("Choose one source provider with --target for mcp adopt");
             }
-            ctx.output(mcp_adopt(&ctx.root()?, id.as_deref(), ctx.targets[0])?)
+            ctx.output(mcp_adopt(
+                &ctx.root()?,
+                id.as_deref(),
+                ctx.targets[0].clone(),
+            )?)
         }
         McpSubcommands::Init => ctx.tui(crate::tui::app::ActiveTab::Mcp),
     }
@@ -289,103 +302,107 @@ fn preview(ctx: &ContextOptions, command: &McpSubcommands) -> anyhow::Result<()>
         }
         let catalog = list_mcps()?;
         let mut matched = false;
-        for &target in &ctx.targets {
-            let path = get_agent_mcp_config_path(&root, target);
-            let servers = crate::adapters::get_mcp_servers(target, &path)?;
-            let specific = match command {
-                McpSubcommands::Add(args) => Some(args.id.as_str()),
-                McpSubcommands::Edit { id, .. }
-                | McpSubcommands::Remove { id }
-                | McpSubcommands::Enable { id }
-                | McpSubcommands::Disable { id } => Some(id.as_str()),
-                McpSubcommands::Update { id } | McpSubcommands::Adopt { id } => id.as_deref(),
-                _ => None,
-            };
-            let ids: Vec<_> = specific.map(|id| vec![id.to_owned()]).unwrap_or_else(|| {
-                let mut ids: Vec<_> = servers.keys().cloned().collect();
-                ids.sort();
-                ids
-            });
-            for id in ids {
-                let add_key = if let McpSubcommands::Add(args) = command {
-                    let value = recipe(
-                        &args.id,
-                        &args.recipe,
-                        get_mcp(&args.id)?.map(|entry| entry.recipe),
-                    )?;
-                    Some(crate::adapters::preview_mcp_add(
-                        target, &path, &args.id, &value,
-                    )?)
-                } else {
-                    None
+        for target in &ctx.targets {
+            for path in crate::core::mcp::target_mcp_paths(&root, target)? {
+                let servers = crate::adapters::get_mcp_servers(target.clone(), &path)?;
+                let specific = match command {
+                    McpSubcommands::Add(args) => Some(args.id.as_str()),
+                    McpSubcommands::Edit { id, .. }
+                    | McpSubcommands::Remove { id }
+                    | McpSubcommands::Enable { id }
+                    | McpSubcommands::Disable { id } => Some(id.as_str()),
+                    McpSubcommands::Update { id } | McpSubcommands::Adopt { id } => id.as_deref(),
+                    _ => None,
                 };
-                let resolved = if let Some(key) = &add_key {
-                    servers.get_key_value(key)
-                } else {
-                    resolve_native_server(&servers, &catalog, &id)?
-                };
-                let current = resolved.map(|(_, server)| server);
-                let old = current.and_then(|entry| entry.recipe.clone());
-                let catalog_entry = old
-                    .as_ref()
-                    .and_then(|recipe| match_entry(&catalog, &id, recipe))
-                    .or_else(|| catalog.iter().find(|entry| entry.id == id));
-                let before = current
-                    .map(|entry| json!({"enabled":entry.enabled,"recipe":entry.recipe}))
-                    .unwrap_or(Value::Null);
-                let enabled = current.is_some_and(|entry| entry.enabled);
-                let after = match command {
-                    McpSubcommands::Add(args) => {
-                        json!({"enabled":true,"recipe":recipe(&args.id,&args.recipe,get_mcp(&args.id)?.map(|entry|entry.recipe))?})
-                    }
-                    McpSubcommands::Edit { recipe: args, .. } => {
-                        if current.is_none() {
-                            continue;
+                let ids: Vec<_> = specific.map(|id| vec![id.to_owned()]).unwrap_or_else(|| {
+                    let mut ids: Vec<_> = servers.keys().cloned().collect();
+                    ids.sort();
+                    ids
+                });
+                for id in ids {
+                    let add_key = if let McpSubcommands::Add(args) = command {
+                        let value = recipe(
+                            &args.id,
+                            &args.recipe,
+                            get_mcp(&args.id)?.map(|entry| entry.recipe),
+                        )?;
+                        Some(crate::adapters::preview_mcp_add(
+                            target.clone(),
+                            &path,
+                            &args.id,
+                            &value,
+                        )?)
+                    } else {
+                        None
+                    };
+                    let resolved = if let Some(key) = &add_key {
+                        servers.get_key_value(key)
+                    } else {
+                        resolve_native_server(&servers, &catalog, &id)?
+                    };
+                    let current = resolved.map(|(_, server)| server);
+                    let old = current.and_then(|entry| entry.recipe.clone());
+                    let catalog_entry = old
+                        .as_ref()
+                        .and_then(|recipe| match_entry(&catalog, &id, recipe))
+                        .or_else(|| catalog.iter().find(|entry| entry.id == id));
+                    let before = current
+                        .map(|entry| json!({"enabled":entry.enabled,"recipe":entry.recipe}))
+                        .unwrap_or(Value::Null);
+                    let enabled = current.is_some_and(|entry| entry.enabled);
+                    let after = match command {
+                        McpSubcommands::Add(args) => {
+                            json!({"enabled":true,"recipe":recipe(&args.id,&args.recipe,get_mcp(&args.id)?.map(|entry|entry.recipe))?})
                         }
-                        json!({"enabled":enabled,"recipe":recipe(&id,args,old.clone())?})
-                    }
-                    McpSubcommands::Remove { .. } => Value::Null,
-                    McpSubcommands::Enable { .. } => {
-                        json!({"enabled":true,"recipe":old.clone().or_else(||catalog_entry.map(|entry|entry.recipe.clone())).context("No saved or catalog MCP definition")?})
-                    }
-                    McpSubcommands::Disable { .. } => {
-                        if current.is_none() {
-                            bail!("MCP server not configured: {id} for {target}");
-                        }
-                        json!({"enabled":false,"recipe":old})
-                    }
-                    McpSubcommands::Update { .. } => {
-                        if current.is_none() {
-                            continue;
-                        }
-                        let Some(entry) = catalog_entry else {
-                            if specific.is_some() {
-                                bail!("MCP {id} is not in the catalog");
+                        McpSubcommands::Edit { recipe: args, .. } => {
+                            if current.is_none() {
+                                continue;
                             }
+                            json!({"enabled":enabled,"recipe":recipe(&id,args,old.clone())?})
+                        }
+                        McpSubcommands::Remove { .. } => Value::Null,
+                        McpSubcommands::Enable { .. } => {
+                            json!({"enabled":true,"recipe":old.clone().or_else(||catalog_entry.map(|entry|entry.recipe.clone())).context("No saved or catalog MCP definition")?})
+                        }
+                        McpSubcommands::Disable { .. } => {
+                            if current.is_none() {
+                                bail!("MCP server not configured: {id} for {target}");
+                            }
+                            json!({"enabled":false,"recipe":old})
+                        }
+                        McpSubcommands::Update { .. } => {
+                            if current.is_none() {
+                                continue;
+                            }
+                            let Some(entry) = catalog_entry else {
+                                if specific.is_some() {
+                                    bail!("MCP {id} is not in the catalog");
+                                }
+                                continue;
+                            };
+                            crate::adapters::validate_recipe(&entry.recipe)
+                                .with_context(|| format!("Invalid catalog MCP: {}", entry.id))?;
+                            json!({"enabled":enabled,"recipe":entry.recipe})
+                        }
+                        McpSubcommands::Adopt { .. } => {
+                            let Some(old) = old else {
+                                continue;
+                            };
+                            add_change(
+                                json!("catalog"),
+                                get_catalog_path(),
+                                catalog_entry.map(|entry| entry.id.as_str()).unwrap_or(&id),
+                                serde_json::to_value(catalog_entry.map(|entry| &entry.recipe))?,
+                                serde_json::to_value(old)?,
+                            );
+                            matched = true;
                             continue;
-                        };
-                        crate::adapters::validate_recipe(&entry.recipe)
-                            .with_context(|| format!("Invalid catalog MCP: {}", entry.id))?;
-                        json!({"enabled":enabled,"recipe":entry.recipe})
-                    }
-                    McpSubcommands::Adopt { .. } => {
-                        let Some(old) = old else {
-                            continue;
-                        };
-                        add_change(
-                            json!("catalog"),
-                            get_catalog_path(),
-                            catalog_entry.map(|entry| entry.id.as_str()).unwrap_or(&id),
-                            serde_json::to_value(catalog_entry.map(|entry| &entry.recipe))?,
-                            serde_json::to_value(old)?,
-                        );
-                        matched = true;
-                        continue;
-                    }
-                    _ => unreachable!(),
-                };
-                matched = true;
-                add_change(json!(target), path.clone(), &id, before, after);
+                        }
+                        _ => unreachable!(),
+                    };
+                    matched = true;
+                    add_change(json!(target), path.clone(), &id, before, after);
+                }
             }
         }
         if !matched

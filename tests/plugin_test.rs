@@ -65,10 +65,11 @@ fn complete_import_conversion_and_snapshot() {
 fn native_lifecycle_calls_providers_and_propagates_failures() {
     let f = Fixture::new();
     f.providers();
+    f.file("home/.dsh/profiles/web/cordis.yml", "[]\n");
     let source = source(&f);
     f.ok(&["plugin", "import", source.to_str().unwrap()]);
     let status = f.mock_ok(&["plugin", "install", "fixture-plugin", "-t", "all"]);
-    assert_eq!(status["targets"].as_array().unwrap().len(), 4);
+    assert_eq!(status["targets"].as_array().unwrap().len(), 5);
     let calls = fs::read_to_string(f.home.join("calls.jsonl")).unwrap();
     assert!(calls.contains("\"codex\", \"plugin\", \"add\", \"fixture-plugin@acm-catalog\""));
     assert!(calls.contains("--trust"));

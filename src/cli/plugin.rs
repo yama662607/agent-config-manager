@@ -75,7 +75,7 @@ pub fn run(ctx: &ContextOptions, args: PluginArgs) -> anyhow::Result<()> {
             ctx.output(crate::core::operations::collect_resources("plugin.update",&ids,|id|Ok(serde_json::to_value(plugin_update_options(&root,id,if ctx.catalog {&[]} else {&ctx.targets},force,dry_run)?)?))?)
         }
         PluginSubcommands::Discover { import, root } => {
-            let roots = if root.is_empty() { let mut roots = provider_plugin_roots(); roots.extend(desktop_roots()); roots } else { root.into_iter().map(|p| (p, ctx.targets[0])).collect() };
+            let roots = if root.is_empty() { let mut roots = provider_plugin_roots(); roots.extend(desktop_roots()); roots } else { root.into_iter().map(|p| (p, ctx.targets[0].clone())).collect() };
             let found = discover_plugins(&roots, 8)?;
             if import {
                 for plugin in &found {

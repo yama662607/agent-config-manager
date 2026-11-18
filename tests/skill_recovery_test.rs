@@ -70,7 +70,7 @@ fn snapshot() -> BTreeMap<PathBuf, String> {
         .collect()
 }
 fn backup_id(root: &Path, id: &str, target: TargetName) -> String {
-    list_skill_backups(root, id, &[target]).unwrap()["backups"][0]["id"]
+    list_skill_backups(root, id, std::slice::from_ref(&target)).unwrap()["backups"][0]["id"]
         .as_str()
         .unwrap()
         .into()
@@ -84,14 +84,27 @@ fn updates_protect_edits_and_restore_is_reversible() {
     let root = root();
     let target = TargetName::Codex;
     let source = catalog("recover", "version one");
-    let destination = get_skill_path(&root, target, "recover");
+    let destination = get_skill_path(&root, target.clone(), "recover");
     fs::write(source.join("old-asset"), "kept in backup").unwrap();
-    skill_add(&root, "recover", &[target], Some(SkillPlacementMode::Copy)).unwrap();
+    skill_add(
+        &root,
+        "recover",
+        std::slice::from_ref(&target),
+        Some(SkillPlacementMode::Copy),
+    )
+    .unwrap();
     fs::write(source.join("SKILL.md"), "version two").unwrap();
     fs::remove_file(source.join("old-asset")).unwrap();
     fs::write(source.join("new-asset"), "upstream asset").unwrap();
     let before = snapshot();
-    let preview = preview_skill_update(&root, Some("recover"), &[target], false, None).unwrap();
+    let preview = preview_skill_update(
+        &root,
+        Some("recover"),
+        std::slice::from_ref(&target),
+        false,
+        None,
+    )
+    .unwrap();
     assert_eq!(
         before,
         snapshot(),
@@ -106,12 +119,12 @@ fn updates_protect_edits_and_restore_is_reversible() {
         serde_json::json!(["old-asset"])
     );
     assert_eq!(
-        skill_update(&root, Some("recover"), &[target], false)
+        skill_update(&root, Some("recover"), std::slice::from_ref(&target), false)
             .unwrap()
             .updated_count,
         1
     );
-    let original = backup_id(&root, "recover", target);
+    let original = backup_id(&root, "recover", target.clone());
     let saved_directory = root.join("temporarily-saved-copy");
     fs::rename(&destination, &saved_directory).unwrap();
     fs::write(
@@ -119,12 +132,14 @@ fn updates_protect_edits_and_restore_is_reversible() {
         "a regular file is never a restore destination",
     )
     .unwrap();
-    assert!(restore_skill_backup(&root, "recover", &original, target, true, true).is_err());
-    assert!(restore_skill_backup(&root, "recover", &original, target, true, false).is_err());
+    assert!(restore_skill_backup(&root, "recover", &original, target.clone(), true, true).is_err());
+    assert!(
+        restore_skill_backup(&root, "recover", &original, target.clone(), true, false).is_err()
+    );
     assert!(preview_skill_add(
         &root,
         "recover",
-        &[target],
+        std::slice::from_ref(&target),
         Some(SkillPlacementMode::Copy),
         true
     )
@@ -132,45 +147,62 @@ fn updates_protect_edits_and_restore_is_reversible() {
     fs::remove_file(&destination).unwrap();
     fs::rename(saved_directory, &destination).unwrap();
     fs::write(destination.join("SKILL.md"), "private local edit").unwrap();
-    let failure = skill_update(&root, Some("recover"), &[target], false).unwrap_err();
+    let failure =
+        skill_update(&root, Some("recover"), std::slice::from_ref(&target), false).unwrap_err();
     assert!(failure.to_string().contains("Local edits"));
     assert_eq!(
         fs::read_to_string(destination.join("SKILL.md")).unwrap(),
         "private local edit"
     );
-    skill_update(&root, Some("recover"), &[target], true).unwrap();
-    let edited = backup_id(&root, "recover", target);
-    let restored = restore_skill_backup(&root, "recover", &edited, target, false, false).unwrap();
+    skill_update(&root, Some("recover"), std::slice::from_ref(&target), true).unwrap();
+    let edited = backup_id(&root, "recover", target.clone());
+    let restored =
+        restore_skill_backup(&root, "recover", &edited, target.clone(), false, false).unwrap();
     assert_eq!(
         fs::read_to_string(destination.join("SKILL.md")).unwrap(),
         "private local edit"
     );
     // Restoring locally edited content does not bless it as a deployment baseline.
-    assert!(skill_update(&root, Some("recover"), &[target], false).is_err());
+    assert!(skill_update(&root, Some("recover"), std::slice::from_ref(&target), false).is_err());
     let undo = restored["undoBackupId"].as_str().unwrap();
-    restore_skill_backup(&root, "recover", undo, target, false, false).unwrap();
+    restore_skill_backup(&root, "recover", undo, target.clone(), false, false).unwrap();
     assert_eq!(
         fs::read_to_string(destination.join("SKILL.md")).unwrap(),
         "version two"
     );
     fs::write(destination.join("new-asset"), "newer edit").unwrap();
     let before = snapshot();
-    let preview = restore_skill_backup(&root, "recover", &original, target, false, true).unwrap();
+    let preview =
+        restore_skill_backup(&root, "recover", &original, target.clone(), false, true).unwrap();
     assert_eq!(preview["blocked"], true);
     assert_eq!(before, snapshot());
-    assert!(restore_skill_backup(&root, "recover", &original, target, false, false).is_err());
+    assert!(
+        restore_skill_backup(&root, "recover", &original, target.clone(), false, false).is_err()
+    );
     assert!(
         restore_skill_backup(&root, "recover", &original, TargetName::Claude, true, false).is_err()
     );
-    assert!(restore_skill_backup(&root, "other", &original, target, true, false).is_err());
+    assert!(restore_skill_backup(&root, "other", &original, target.clone(), true, false).is_err());
     let elsewhere = tempfile::tempdir().unwrap();
-    assert!(
-        restore_skill_backup(elsewhere.path(), "recover", &original, target, true, false).is_err()
-    );
-    assert!(
-        restore_skill_backup(&root, "recover", "../baseline.json", target, true, false).is_err()
-    );
-    restore_skill_backup(&root, "recover", &original, target, true, false).unwrap();
+    assert!(restore_skill_backup(
+        elsewhere.path(),
+        "recover",
+        &original,
+        target.clone(),
+        true,
+        false
+    )
+    .is_err());
+    assert!(restore_skill_backup(
+        &root,
+        "recover",
+        "../baseline.json",
+        target.clone(),
+        true,
+        false
+    )
+    .is_err());
+    restore_skill_backup(&root, "recover", &original, target.clone(), true, false).unwrap();
     assert!(destination.join("old-asset").is_file());
     assert!(!destination.join("new-asset").exists());
 }
@@ -183,14 +215,14 @@ fn unknown_copies_and_explicit_modes_cannot_bypass_protection() {
     let root = root();
     let target = TargetName::Codex;
     let source = catalog("legacy", "catalog copy");
-    let destination = get_skill_path(&root, target, "legacy");
+    let destination = get_skill_path(&root, target.clone(), "legacy");
     copy_dir_recursive(&source, &destination).unwrap();
     fs::write(destination.join("SKILL.md"), "unknown legacy edits").unwrap();
     let before = snapshot();
     let plan = preview_skill_add(
         &root,
         "legacy",
-        &[target],
+        std::slice::from_ref(&target),
         Some(SkillPlacementMode::Link),
         false,
     )
@@ -201,42 +233,57 @@ fn unknown_copies_and_explicit_modes_cannot_bypass_protection() {
         .contains("no deployment baseline"));
     assert_eq!(snapshot(), before);
     for mode in [SkillPlacementMode::Copy, SkillPlacementMode::Link] {
-        assert!(
-            skill_update_with_placement(&root, Some("legacy"), &[target], false, Some(mode))
-                .is_err()
-        );
-        assert!(skill_add(&root, "legacy", &[target], Some(mode)).is_err());
+        assert!(skill_update_with_placement(
+            &root,
+            Some("legacy"),
+            std::slice::from_ref(&target),
+            false,
+            Some(mode)
+        )
+        .is_err());
+        assert!(skill_add(&root, "legacy", std::slice::from_ref(&target), Some(mode)).is_err());
     }
     skill_update_with_placement(
         &root,
         Some("legacy"),
-        &[target],
+        std::slice::from_ref(&target),
         true,
         Some(SkillPlacementMode::Copy),
     )
     .unwrap();
     assert_eq!(
-        list_skill_backups(&root, "legacy", &[target]).unwrap()["backups"]
+        list_skill_backups(&root, "legacy", std::slice::from_ref(&target)).unwrap()["backups"]
             .as_array()
             .unwrap()
             .len(),
         1
     );
     fs::write(source.join("SKILL.md"), "next upstream copy").unwrap();
-    skill_update(&root, Some("legacy"), &[target], false).unwrap();
+    skill_update(&root, Some("legacy"), std::slice::from_ref(&target), false).unwrap();
     // An identical legacy copy can establish a baseline without replacing or backing it up.
     let source = catalog("matching", "same");
-    copy_dir_recursive(source, get_skill_path(&root, target, "matching")).unwrap();
-    skill_update(&root, Some("matching"), &[target], false).unwrap();
+    copy_dir_recursive(source, get_skill_path(&root, target.clone(), "matching")).unwrap();
+    skill_update(
+        &root,
+        Some("matching"),
+        std::slice::from_ref(&target),
+        false,
+    )
+    .unwrap();
     fs::write(
         get_catalog_skill_dir("matching").join("SKILL.md"),
         "updated upstream",
     )
     .unwrap();
     assert_eq!(
-        skill_update(&root, Some("matching"), &[target], false)
-            .unwrap()
-            .updated_count,
+        skill_update(
+            &root,
+            Some("matching"),
+            std::slice::from_ref(&target),
+            false
+        )
+        .unwrap()
+        .updated_count,
         1
     );
 }
@@ -276,7 +323,7 @@ fn concurrent_updates_recheck_baselines_and_preserve_single_previous_copy() {
     skill_add(
         &root,
         "concurrent",
-        &[target],
+        std::slice::from_ref(&target),
         Some(SkillPlacementMode::Copy),
     )
     .unwrap();
@@ -286,6 +333,7 @@ fn concurrent_updates_recheck_baselines_and_preserve_single_previous_copy() {
         .map(|_| {
             let root = root.clone();
             let barrier = barrier.clone();
+            let target = target.clone();
             std::thread::spawn(move || {
                 barrier.wait();
                 skill_update(&root, Some("concurrent"), &[target], false)
@@ -296,14 +344,15 @@ fn concurrent_updates_recheck_baselines_and_preserve_single_previous_copy() {
         worker.join().unwrap().unwrap();
     }
     assert_eq!(
-        list_skill_backups(&root, "concurrent", &[target]).unwrap()["backups"]
+        list_skill_backups(&root, "concurrent", std::slice::from_ref(&target)).unwrap()["backups"]
             .as_array()
             .unwrap()
             .len(),
         1
     );
     assert_eq!(
-        fs::read_to_string(get_skill_path(&root, target, "concurrent").join("SKILL.md")).unwrap(),
+        fs::read_to_string(get_skill_path(&root, target.clone(), "concurrent").join("SKILL.md"))
+            .unwrap(),
         "updated"
     );
 }
@@ -325,16 +374,22 @@ fn recovery_preserves_hidden_assets_permissions_and_links_without_following_them
     fs::set_permissions(source.join("readonly"), fs::Permissions::from_mode(0o511)).unwrap();
     fs::write(source.join("run.sh"), "#!/bin/sh\n").unwrap();
     fs::set_permissions(source.join("run.sh"), fs::Permissions::from_mode(0o751)).unwrap();
-    skill_add(&root, "payload", &[target], Some(SkillPlacementMode::Copy)).unwrap();
-    let destination = get_skill_path(&root, target, "payload");
+    skill_add(
+        &root,
+        "payload",
+        std::slice::from_ref(&target),
+        Some(SkillPlacementMode::Copy),
+    )
+    .unwrap();
+    let destination = get_skill_path(&root, target.clone(), "payload");
     fs::write(destination.join(".private"), "local secret asset").unwrap();
     fs::write(destination.join(".DS_Store"), "local binary data").unwrap();
     let external = root.join("external");
     fs::write(&external, "must remain intact").unwrap();
     symlink(&external, destination.join("reference")).unwrap();
     fs::write(source.join("SKILL.md"), "new").unwrap();
-    skill_update(&root, Some("payload"), &[target], true).unwrap();
-    let id = backup_id(&root, "payload", target);
+    skill_update(&root, Some("payload"), std::slice::from_ref(&target), true).unwrap();
+    let id = backup_id(&root, "payload", target.clone());
     assert_eq!(
         fs::read_dir(destination.parent().unwrap()).unwrap().count(),
         1,
@@ -349,7 +404,7 @@ fn recovery_preserves_hidden_assets_permissions_and_links_without_following_them
             );
         }
     }
-    restore_skill_backup(&root, "payload", &id, target, false, false).unwrap();
+    restore_skill_backup(&root, "payload", &id, target.clone(), false, false).unwrap();
     assert_eq!(
         fs::read_to_string(destination.join(".private")).unwrap(),
         "local secret asset"
@@ -396,7 +451,7 @@ fn recovery_preserves_hidden_assets_permissions_and_links_without_following_them
     fs::create_dir(&external_dir).unwrap();
     fs::write(external_dir.join("SKILL.md"), "unrelated payload").unwrap();
     symlink(&external_dir, &destination).unwrap();
-    assert!(restore_skill_backup(&root, "payload", &id, target, true, false).is_err());
+    assert!(restore_skill_backup(&root, "payload", &id, target.clone(), true, false).is_err());
     assert_eq!(
         fs::read_to_string(external_dir.join("SKILL.md")).unwrap(),
         "unrelated payload"
@@ -416,27 +471,33 @@ fn previews_do_not_initialize_machine_state_and_missing_restore_can_be_undone() 
     preview_skill_add(
         &root,
         "fresh",
-        &[target],
+        std::slice::from_ref(&target),
         Some(SkillPlacementMode::Copy),
         false,
     )
     .unwrap();
-    list_skill_backups(&root, "fresh", &[target]).unwrap();
+    list_skill_backups(&root, "fresh", std::slice::from_ref(&target)).unwrap();
     assert_eq!(before, snapshot());
     assert!(!get_state_dir().join("skill-state").exists());
-    skill_add(&root, "fresh", &[target], Some(SkillPlacementMode::Copy)).unwrap();
+    skill_add(
+        &root,
+        "fresh",
+        std::slice::from_ref(&target),
+        Some(SkillPlacementMode::Copy),
+    )
+    .unwrap();
     fs::write(source.join("SKILL.md"), "two").unwrap();
-    skill_update(&root, Some("fresh"), &[target], false).unwrap();
-    let id = backup_id(&root, "fresh", target);
-    let destination = get_skill_path(&root, target, "fresh");
+    skill_update(&root, Some("fresh"), std::slice::from_ref(&target), false).unwrap();
+    let id = backup_id(&root, "fresh", target.clone());
+    let destination = get_skill_path(&root, target.clone(), "fresh");
     fs::remove_dir_all(&destination).unwrap();
-    let restored = restore_skill_backup(&root, "fresh", &id, target, true, false).unwrap();
+    let restored = restore_skill_backup(&root, "fresh", &id, target.clone(), true, false).unwrap();
     assert!(destination.is_dir());
     restore_skill_backup(
         &root,
         "fresh",
         restored["undoBackupId"].as_str().unwrap(),
-        target,
+        target.clone(),
         false,
         false,
     )
@@ -452,32 +513,45 @@ fn renaming_preserves_deployment_baselines_and_scoped_recovery() {
     let root = root();
     let target = TargetName::Codex;
     let source = catalog("alpha", "original alpha");
-    skill_add(&root, "alpha", &[target], Some(SkillPlacementMode::Copy)).unwrap();
+    skill_add(
+        &root,
+        "alpha",
+        std::slice::from_ref(&target),
+        Some(SkillPlacementMode::Copy),
+    )
+    .unwrap();
     fs::write(source.join("SKILL.md"), "second alpha").unwrap();
-    skill_update(&root, Some("alpha"), &[target], false).unwrap();
-    let id = backup_id(&root, "alpha", target);
-    skill_rename(&root, "alpha", "beta", None::<&PathBuf>, &[target]).unwrap();
-    assert_eq!(backup_id(&root, "beta", target), id);
+    skill_update(&root, Some("alpha"), std::slice::from_ref(&target), false).unwrap();
+    let id = backup_id(&root, "alpha", target.clone());
+    skill_rename(
+        &root,
+        "alpha",
+        "beta",
+        None::<&PathBuf>,
+        std::slice::from_ref(&target),
+    )
+    .unwrap();
+    assert_eq!(backup_id(&root, "beta", target.clone()), id);
     assert!(
-        list_skill_backups(&root, "alpha", &[target]).unwrap()["backups"]
+        list_skill_backups(&root, "alpha", std::slice::from_ref(&target)).unwrap()["backups"]
             .as_array()
             .unwrap()
             .is_empty()
     );
     fs::write(get_catalog_skill_dir("beta").join("SKILL.md"), "third beta").unwrap();
     assert_eq!(
-        skill_update(&root, Some("beta"), &[target], false)
+        skill_update(&root, Some("beta"), std::slice::from_ref(&target), false)
             .unwrap()
             .updated_count,
         1
     );
-    restore_skill_backup(&root, "beta", &id, target, true, false).unwrap();
+    restore_skill_backup(&root, "beta", &id, target.clone(), true, false).unwrap();
     assert!(
-        fs::read_to_string(get_skill_path(&root, target, "beta").join("SKILL.md"))
+        fs::read_to_string(get_skill_path(&root, target.clone(), "beta").join("SKILL.md"))
             .unwrap()
             .contains("original alpha")
     );
-    assert!(!get_skill_path(&root, target, "alpha").exists());
+    assert!(!get_skill_path(&root, target.clone(), "alpha").exists());
 }
 
 #[test]
@@ -489,7 +563,7 @@ fn placements_reject_nested_sources_before_mutation_or_recursive_copy() {
     use agent_config_manager::core::skill_history::preview_skill_placement;
     let root = root();
     let target = TargetName::Codex;
-    let destination = get_skill_path(&root, target, "nested");
+    let destination = get_skill_path(&root, target.clone(), "nested");
     fs::create_dir_all(destination.join("child")).unwrap();
     fs::write(destination.join("SKILL.md"), "parent").unwrap();
     fs::write(destination.join("child/SKILL.md"), "child").unwrap();
@@ -497,9 +571,17 @@ fn placements_reject_nested_sources_before_mutation_or_recursive_copy() {
     let before = snapshot();
     for source in [&destination, &destination.join("child"), &root] {
         for mode in [SkillPlacementMode::Link, SkillPlacementMode::Copy] {
-            assert!(preview_skill_placement(&root, target, "nested", source, mode, true).is_err());
+            assert!(
+                preview_skill_placement(&root, target.clone(), "nested", source, mode, true)
+                    .is_err()
+            );
             assert!(copy_skill_dir_to_config_with_options(
-                &root, target, "nested", source, mode, true
+                &root,
+                target.clone(),
+                "nested",
+                source,
+                mode,
+                true
             )
             .is_err());
         }

@@ -1,15 +1,15 @@
 //! Explicit, bounded observation of native plugin state. Observations never activate plugins.
 use super::operations::{redact_text, OperationFailure};
 use super::plugin::{
-    catalog_plugin_ids, installation_key, native_operation_lock, parse_plugin_dir, plugin_metadata,
-    update_metadata, validate_plugin_id, MARKETPLACE,
+    catalog_plugin_ids, dsh_package_name, installation_key, native_operation_lock,
+    parse_plugin_dir, plugin_metadata, update_metadata, validate_plugin_id, MARKETPLACE,
 };
 use crate::paths::{
-    expand_home, format_home_path, get_catalog_dir, get_catalog_plugin_dir, is_home_scope,
-    read_acm_config,
+    discover_dsh_profiles, expand_home, format_home_path, get_catalog_dir, get_catalog_plugin_dir,
+    home_dir, is_home_scope, read_acm_config, resolve_target_profile,
 };
-use crate::storage::object_at;
-use crate::types::TargetName;
+use crate::storage::{object_at, read_value};
+use crate::types::{ProviderKind, TargetName};
 use anyhow::{bail, Context};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -19,31 +19,60 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+fn env_var_name_for_target(name: &str) -> String {
+    let clean: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    format!("ACM_{clean}_BIN")
+}
+
 pub fn provider_executable(target: TargetName) -> anyhow::Result<PathBuf> {
-    let variable = format!("ACM_{}_BIN", target.as_str().to_uppercase());
-    if let Some(path) = std::env::var_os(&variable) {
-        if path.is_empty() {
-            bail!("{variable} must name an executable");
+    let profile = resolve_target_profile(&target).ok();
+    let provider = profile
+        .as_ref()
+        .map(|p| p.provider)
+        .unwrap_or_else(|| target.provider_kind());
+
+    for variable in [
+        env_var_name_for_target(target.as_str()),
+        env_var_name_for_target(provider.as_str()),
+    ] {
+        if let Some(path) = std::env::var_os(&variable) {
+            if path.is_empty() {
+                bail!("{variable} must name an executable");
+            }
+            return Ok(expand_home(&path.to_string_lossy()));
         }
-        return Ok(expand_home(&path.to_string_lossy()));
+    }
+    if let Some(cmd) = profile.as_ref().and_then(|p| p.command.as_deref()) {
+        return Ok(expand_home(cmd));
     }
     let config = read_acm_config()?;
     if let Some(commands) = config.get("provider_commands") {
         let commands = commands
             .as_table()
             .context("provider_commands must be a table")?;
-        if let Some(path) = commands.get(target.as_str()) {
-            let path = path
-                .as_str()
-                .filter(|p| !p.is_empty())
-                .context("provider_commands values must be nonempty executable paths")?;
-            return Ok(expand_home(path));
+        for key in [target.as_str(), provider.as_str()] {
+            if let Some(path) = commands.get(key) {
+                let path = path
+                    .as_str()
+                    .filter(|p| !p.is_empty())
+                    .context("provider_commands values must be nonempty executable paths")?;
+                return Ok(expand_home(path));
+            }
         }
     }
-    Ok(PathBuf::from(if target == TargetName::Antigravity {
+    Ok(PathBuf::from(if provider == ProviderKind::Antigravity {
         "agy"
     } else {
-        target.as_str()
+        provider.as_str()
     }))
 }
 
@@ -93,7 +122,7 @@ pub fn bounded_provider_command(
     root: &Path,
     args: &[String],
 ) -> anyhow::Result<String> {
-    let executable = provider_executable(target)?;
+    let executable = provider_executable(target.clone())?;
     let default_timeout = if args
         .iter()
         .map(String::as_str)
@@ -123,6 +152,33 @@ pub fn bounded_provider_command(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if let Ok(profile) = resolve_target_profile(&target) {
+        let home = home_dir();
+        match profile.provider {
+            ProviderKind::Claude => {
+                if profile.config_dir != home.join(".claude") {
+                    command.env("CLAUDE_CONFIG_DIR", &profile.config_dir);
+                } else if profile.explicit_config_dir {
+                    command.env_remove("CLAUDE_CONFIG_DIR");
+                }
+            }
+            ProviderKind::Codex => {
+                if profile.config_dir != home.join(".codex") {
+                    command.env("CODEX_HOME", &profile.config_dir);
+                } else if profile.explicit_config_dir {
+                    command.env_remove("CODEX_HOME");
+                }
+            }
+            ProviderKind::Dsh => {
+                if profile.config_dir != home.join(".dsh") {
+                    command.env("DSH_HOME", &profile.config_dir);
+                } else if profile.explicit_config_dir {
+                    command.env_remove("DSH_HOME");
+                }
+            }
+            ProviderKind::Antigravity | ProviderKind::Grok => {}
+        }
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -203,24 +259,48 @@ struct Listing {
     entries: Vec<Value>,
 }
 
-fn parse_listing(target: TargetName, raw: &str) -> anyhow::Result<Listing> {
-    if target == TargetName::Antigravity && raw.trim() == "No imported plugins." {
+fn dsh_listing(target: &TargetName) -> anyhow::Result<Listing> {
+    let profile = resolve_target_profile(target)?;
+    let dsh_profiles = discover_dsh_profiles(&profile);
+    let mut entries = Vec::new();
+    let mut seen = BTreeSet::new();
+    for (_, dir) in dsh_profiles {
+        let pkg_path = dir.join("package.json");
+        if !pkg_path.is_file() {
+            continue;
+        }
+        let val = read_value(&pkg_path)?;
+        if let Some(deps) = val.get("dependencies").and_then(Value::as_object) {
+            for dep in deps.keys() {
+                if seen.insert(dep.clone()) {
+                    entries.push(json!({"name": dep, "enabled": true}));
+                }
+            }
+        }
+    }
+    Ok(Listing { entries })
+}
+
+fn parse_listing(target: &TargetName, raw: &str) -> anyhow::Result<Listing> {
+    let provider = target.provider_kind();
+    if provider == ProviderKind::Antigravity && raw.trim() == "No imported plugins." {
         return Ok(Listing {
             entries: Vec::new(),
         });
     }
     let value: Value = serde_json::from_str(raw)
         .context("Provider returned an unsupported plugin list representation")?;
-    let entries = match target {
-        TargetName::Claude | TargetName::Grok => value.as_array(),
-        TargetName::Codex => value.get("installed").and_then(Value::as_array),
-        TargetName::Antigravity => value.get("imports").and_then(Value::as_array),
+    let entries = match provider {
+        ProviderKind::Claude | ProviderKind::Grok => value.as_array(),
+        ProviderKind::Codex => value.get("installed").and_then(Value::as_array),
+        ProviderKind::Antigravity => value.get("imports").and_then(Value::as_array),
+        ProviderKind::Dsh => None,
     }
     .context("Provider plugin list has an unsupported schema")?;
     for entry in entries {
-        let name_key = match target {
-            TargetName::Claude => "id",
-            TargetName::Codex => "pluginId",
+        let name_key = match provider {
+            ProviderKind::Claude => "id",
+            ProviderKind::Codex => "pluginId",
             _ => "name",
         };
         if entry
@@ -231,8 +311,8 @@ fn parse_listing(target: TargetName, raw: &str) -> anyhow::Result<Listing> {
         {
             bail!("Provider plugin list contains an entry without a valid identity");
         }
-        match target {
-            TargetName::Claude => {
+        match provider {
+            ProviderKind::Claude => {
                 if !matches!(
                     entry.get("scope").and_then(Value::as_str),
                     Some("user" | "project" | "local" | "managed")
@@ -245,7 +325,7 @@ fn parse_listing(target: TargetName, raw: &str) -> anyhow::Result<Listing> {
                     bail!("Claude project installation has no projectPath");
                 }
             }
-            TargetName::Codex => {
+            ProviderKind::Codex => {
                 if entry
                     .get("marketplaceName")
                     .and_then(Value::as_str)
@@ -255,12 +335,12 @@ fn parse_listing(target: TargetName, raw: &str) -> anyhow::Result<Listing> {
                     bail!("Codex installed entry does not confirm marketplace and installation");
                 }
             }
-            TargetName::Grok => {
+            ProviderKind::Grok => {
                 if entry.get("status").and_then(Value::as_str) != Some("installed") {
                     bail!("Grok plugin list contains an unknown installation status");
                 }
             }
-            TargetName::Antigravity => {}
+            ProviderKind::Antigravity | ProviderKind::Dsh => {}
         }
         if entry
             .get("enabled")
@@ -281,14 +361,20 @@ fn same_path(left: &Path, right: &Path) -> bool {
     }
 }
 
-fn observe(root: &Path, id: &str, target: TargetName, listing: &Listing) -> Value {
+fn observe(root: &Path, id: &str, target: &TargetName, listing: &Listing) -> Value {
+    let provider = target.provider_kind();
     let selector = format!("{id}@{MARKETPLACE}");
     let expected_source = get_catalog_dir().join("marketplace/plugins").join(id);
+    let dsh_pkg = if provider == ProviderKind::Dsh {
+        Some(dsh_package_name(&get_catalog_plugin_dir(id), id))
+    } else {
+        None
+    };
     let mut matches = Vec::new();
     let mut ambiguous = false;
     for entry in &listing.entries {
-        let matches_identity = match target {
-            TargetName::Claude => {
+        let matches_identity = match provider {
+            ProviderKind::Claude => {
                 if entry["id"] != selector {
                     continue;
                 }
@@ -307,7 +393,7 @@ fn observe(root: &Path, id: &str, target: TargetName, listing: &Listing) -> Valu
                 }
                 true
             }
-            TargetName::Codex => {
+            ProviderKind::Codex => {
                 if entry["pluginId"] != selector {
                     continue;
                 }
@@ -319,7 +405,7 @@ fn observe(root: &Path, id: &str, target: TargetName, listing: &Listing) -> Valu
                 }
                 true
             }
-            TargetName::Grok => {
+            ProviderKind::Grok => {
                 if entry["name"] != id {
                     continue;
                 }
@@ -332,12 +418,16 @@ fn observe(root: &Path, id: &str, target: TargetName, listing: &Listing) -> Valu
                     continue;
                 }
             }
-            TargetName::Antigravity => {
+            ProviderKind::Antigravity => {
                 if entry["name"] == id {
                     ambiguous = true;
                 }
                 continue;
             }
+            ProviderKind::Dsh => entry
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|n| Some(n) == dsh_pkg.as_deref() || n == id),
         };
         if matches_identity {
             matches.push(entry);
@@ -361,12 +451,16 @@ pub(crate) fn observe_provider_plugin(
     target: TargetName,
 ) -> anyhow::Result<Value> {
     validate_plugin_id(id)?;
+    if target.provider_kind() == ProviderKind::Dsh {
+        let listing = dsh_listing(&target)?;
+        return Ok(observe(root, id, &target, &listing));
+    }
     let raw = bounded_provider_command(
-        target,
+        target.clone(),
         root,
         &["plugin".into(), "list".into(), "--json".into()],
     )?;
-    Ok(observe(root, id, target, &parse_listing(target, &raw)?))
+    Ok(observe(root, id, &target, &parse_listing(&target, &raw)?))
 }
 
 pub(crate) fn marketplace_source_matches(
@@ -374,6 +468,7 @@ pub(crate) fn marketplace_source_matches(
     target: TargetName,
     expected: &Path,
 ) -> anyhow::Result<bool> {
+    let provider = target.provider_kind();
     let raw = bounded_provider_command(
         target,
         root,
@@ -386,13 +481,13 @@ pub(crate) fn marketplace_source_matches(
     )?;
     let value: Value = serde_json::from_str(&raw)
         .context("Cannot verify the existing marketplace source: unsupported JSON")?;
-    let entries = match target {
-        TargetName::Codex => value.get("marketplaces").and_then(Value::as_array),
-        TargetName::Claude | TargetName::Grok => value.as_array(),
-        TargetName::Antigravity => None,
+    let entries = match provider {
+        ProviderKind::Codex => value.get("marketplaces").and_then(Value::as_array),
+        ProviderKind::Claude | ProviderKind::Grok => value.as_array(),
+        ProviderKind::Antigravity | ProviderKind::Dsh => None,
     }
     .context("Cannot verify the existing marketplace source: unsupported schema")?;
-    if matches!(target, TargetName::Claude | TargetName::Codex)
+    if matches!(provider, ProviderKind::Claude | ProviderKind::Codex)
         && entries
             .iter()
             .filter(|entry| entry["name"] == MARKETPLACE)
@@ -403,13 +498,13 @@ pub(crate) fn marketplace_source_matches(
     }
     let mut matches = 0;
     for entry in entries {
-        let source = match target {
-            TargetName::Claude
+        let source = match provider {
+            ProviderKind::Claude
                 if entry["name"] == MARKETPLACE && entry["source"] == "directory" =>
             {
                 entry.get("path").and_then(Value::as_str)
             }
-            TargetName::Codex
+            ProviderKind::Codex
                 if entry["name"] == MARKETPLACE
                     && entry["marketplaceSource"]["sourceType"] == "local" =>
             {
@@ -417,7 +512,7 @@ pub(crate) fn marketplace_source_matches(
                     .get("source")
                     .and_then(Value::as_str)
             }
-            TargetName::Grok if entry["kind"] == "local" => {
+            ProviderKind::Grok if entry["kind"] == "local" => {
                 entry["source"].get("path").and_then(Value::as_str)
             }
             _ => None,
@@ -451,24 +546,26 @@ pub fn verify_plugins(
         }
     }
     let mut listings = BTreeMap::new();
-    for &target in targets {
+    for target in targets {
         if listings.contains_key(target.as_str()) {
             continue;
         }
-        let listing = if !is_home_scope(root) && target != TargetName::Claude {
+        let listing = if !is_home_scope(root) && target.provider_kind() != ProviderKind::Claude {
             Err(anyhow::anyhow!(
                 "{target} native plugins use home scope; use --home"
             ))
+        } else if target.provider_kind() == ProviderKind::Dsh {
+            dsh_listing(target)
         } else {
             bounded_provider_command(
-                target,
+                target.clone(),
                 root,
                 &["plugin".into(), "list".into(), "--json".into()],
             )
             .and_then(|raw| parse_listing(target, &raw))
         };
         listings.insert(
-            target.as_str(),
+            target.as_str().to_owned(),
             listing.map_err(|error| redact_text(&error.to_string())),
         );
     }
@@ -479,7 +576,7 @@ pub fn verify_plugins(
         .map(|(target, result)| match result {
             Ok(_) => json!({"target":target,"state":"queried"}),
             Err(reason) => {
-                retry.insert(*target);
+                retry.insert(target.clone());
                 json!({"target":target,"state":"unknown","reason":reason})
             }
         })
@@ -487,7 +584,7 @@ pub fn verify_plugins(
     for id in ids {
         let metadata = plugin_metadata(&id)?;
         let mut observations = Vec::new();
-        for &target in targets {
+        for target in targets {
             let key = installation_key(root, target);
             let recorded = metadata
                 .get("nativeInstallations")
@@ -514,7 +611,7 @@ pub fn verify_plugins(
                 .unwrap_or(Value::Null);
             observation["reconciled"] = json!(false);
             if observation["state"] == "unknown" {
-                retry.insert(target.as_str());
+                retry.insert(target.as_str().to_owned());
             } else if reconcile && (recorded || observation["installed"] == true) {
                 let mutation = update_metadata(&id, |entry| {
                     if observation["installed"] == false {
@@ -564,7 +661,7 @@ pub fn verify_plugins(
                     Ok(()) => observation["reconciled"] = json!(true),
                     Err(error) => {
                         observation["reconcileError"] = json!(redact_text(&error.to_string()));
-                        retry.insert(target.as_str());
+                        retry.insert(target.as_str().to_owned());
                     }
                 }
             }
@@ -605,7 +702,13 @@ pub fn compatibility_report(id: &str, targets: &[TargetName]) -> anyhow::Result<
         }
     }
     let reports: Vec<_> = targets.iter().map(|target| {
-        let version = match target { TargetName::Claude => "2.1.261", TargetName::Codex => "0.149.0", TargetName::Antigravity => "1.1.27", TargetName::Grok => "1.0.5" };
+        let version = match target.provider_kind() {
+            ProviderKind::Claude => "2.1.261",
+            ProviderKind::Codex => "0.149.0",
+            ProviderKind::Antigravity => "1.1.27",
+            ProviderKind::Grok => "1.0.5",
+            ProviderKind::Dsh => "1.0.0",
+        };
         let components: Vec<_> = capabilities.iter().map(|capability| {
             let (state, reason) = if *capability == "skills" {
                 ("supported", "A local skills-only plugin was installed, listed and removed with this native CLI in a network-denied isolated environment; skill execution was not tested")

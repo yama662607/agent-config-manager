@@ -2,7 +2,7 @@
 
 [日本語](README_JA.md) · [Migration notes](docs/rust-migration.md) · [Preview, recovery, and verification](docs/native-workflows.md)
 
-`acm` manages MCP servers, skills, and plugins across Claude Code, Codex, Antigravity, and Grok. Its CLI and interactive TUI share one Rust implementation. Provider configuration remains the source of truth; the catalog holds reusable definitions and complete asset directories.
+`acm` manages MCP servers, skills, and plugins across Claude Code, Codex, Antigravity, Grok, and `dsh` (DeepSeek Harness), as well as multiple configured profiles (such as `claude-personal`, `claude-team`, and `codex-team`). Its CLI and interactive TUI share one Rust implementation. Provider configuration remains the source of truth; the catalog holds reusable definitions and complete asset directories.
 
 ## Install
 
@@ -33,22 +33,38 @@ The npm registry may still serve an earlier release until the maintainer publish
 
 Running from the home directory requires explicit `--home`. Native plugin commands default to home; project plugin installation is supported by Claude only.
 
-Select targets with `--targets claude,codex` or `-t all`. Accepted aliases: `c` (Claude), `x` (Codex), `a`/`g`/`agy` (Antigravity), `k` (Grok). Configure defaults in `~/.acm/config.toml`:
+Select targets with `--targets claude,codex` or `-t all`. Accepted aliases: `c` (Claude), `x` (Codex), `a`/`g`/`agy` (Antigravity), `k` (Grok), `d` (`dsh`). Built-in targets respect `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, and `DSH_HOME` when set. Configure defaults and custom profiles in `~/.acm/config.toml`:
 
 ```toml
 catalog_dir = "~/Code/my-agent-catalog"
-default_targets = ["claude", "codex"]
+default_targets = ["claude", "codex", "codex-team", "antigravity", "grok", "dsh"]
 # Optional: restrict desktop plugin discovery to selected directories.
 # discovery_roots = ["~/Applications", "~/Library/Application Support/Claude"]
 
 # Optional explicit native CLI executable, without changing PATH.
 # [provider_commands]
 # codex = "/path/to/codex"
+
+# Optional multi-profile targets (e.g., personal vs team accounts, or specific dsh profiles).
+# [targets.claude-personal]
+# provider = "claude"
+# config_dir = "~/.claude-personal"
+# aliases = ["cp"]
+#
+# [targets.codex-team]
+# provider = "codex"
+# config_dir = "~/.codex-team"
+# aliases = ["cxt"]
+#
+# [targets.dsh-web]
+# provider = "dsh"
+# config_dir = "~/.dsh"
+# profile = "web"
 ```
 
-Native provider commands resolve from `ACM_CLAUDE_BIN`, `ACM_CODEX_BIN`, `ACM_ANTIGRAVITY_BIN`, or `ACM_GROK_BIN`, then the corresponding `provider_commands` entry, then the normal command on PATH (`agy` for Antigravity). Overrides affect native plugin operations and Claude home MCP delegation; they do not select the command run by an MCP recipe.
+Native provider commands resolve from `ACM_<TARGET>_BIN` / `ACM_<PROVIDER>_BIN`, then the profile's `command`, then `provider_commands`, then the normal command on PATH (`agy` for Antigravity). Overrides affect native plugin operations and Claude home MCP delegation; they do not select the command run by an MCP recipe.
 
-Catalog location precedence is `ACM_CATALOG_DIR`, `catalog_dir`, then `~/.acm`. Without `default_targets`, all four targets are selected. Invalid configuration produces an error. See [state and catalog storage](docs/state-directory-and-catalog.md) and [provider surfaces](docs/provider-config-surfaces.md).
+Catalog location precedence is `ACM_CATALOG_DIR`, `catalog_dir`, then `~/.acm`. Without `default_targets`, all built-in and configured targets are selected. Invalid configuration produces an error. See [state and catalog storage](docs/state-directory-and-catalog.md) and [provider surfaces](docs/provider-config-surfaces.md).
 
 ## MCP servers
 

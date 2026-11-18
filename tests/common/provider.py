@@ -22,7 +22,9 @@ if name == 'gh':
         sys.exit(1)
     sys.exit(0)
 if name == 'claude' and args[0] == 'mcp':
-    path = home / '.claude.json'
+    cfg_dir = os.environ.get('CLAUDE_CONFIG_DIR')
+    path = (pathlib.Path(cfg_dir) / '.claude.json') if cfg_dir else (home / '.claude.json')
+    path.parent.mkdir(parents=True, exist_ok=True)
     config = json.loads(path.read_text()) if path.exists() else {'runtimeState': {'keep': True}}
     servers = config.setdefault('mcpServers', {})
     if args[1] == 'add-json':

@@ -248,7 +248,7 @@ fn render_skills_tab(f: &mut Frame, app: &mut App, area: Rect) {
                 SkillPlacementState::Unlinked => "Unlinked",
                 SkillPlacementState::Registered => "Registered in Config",
             };
-            let target_path = get_skill_path(&app.project_root, *target, &selected_skill.name);
+            let target_path = get_skill_path(&app.project_root, target, &selected_skill.name);
             lines.push(Line::from(format!(
                 "  {:<12} {:<30} ({})",
                 format!("{}:", target),
@@ -636,7 +636,7 @@ fn render_mcp_tab(f: &mut Frame, app: &mut App, area: Rect) {
             } else {
                 "Not Configured"
             };
-            let config_path = get_agent_mcp_config_path(&app.project_root, *target);
+            let config_path = get_agent_mcp_config_path(&app.project_root, target);
             lines.push(Line::from(format!(
                 "  {:<12} {:<25} ({})",
                 format!("{}:", target),

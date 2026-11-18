@@ -19,6 +19,8 @@ fn test_target_name_parsing() {
     assert_eq!(TargetName::from_str("g").unwrap(), TargetName::Antigravity);
     assert_eq!(TargetName::from_str("grok").unwrap(), TargetName::Grok);
     assert_eq!(TargetName::from_str("k").unwrap(), TargetName::Grok);
+    assert_eq!(TargetName::from_str("dsh").unwrap(), TargetName::Dsh);
+    assert_eq!(TargetName::from_str("d").unwrap(), TargetName::Dsh);
 }
 
 #[test]

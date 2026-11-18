@@ -2,13 +2,13 @@ use crate::adapters::recipe_from_native;
 use crate::catalog::metadata::update_skill_metadata;
 use crate::core::placement::{copy_dir_recursive, create_dir_link, replace_directory};
 use crate::paths::{
-    expand_home, format_home_path, get_catalog_dir, get_catalog_plugin_dir,
-    get_catalog_plugins_dir, get_catalog_skill_dir, is_home_scope,
+    discover_dsh_profiles, expand_home, format_home_path, get_catalog_dir, get_catalog_plugin_dir,
+    get_catalog_plugins_dir, get_catalog_skill_dir, is_home_scope, resolve_target_profile,
 };
 use crate::storage::{atomic_write, object_at, read_value, update_value, validate_id, write_value};
 use crate::types::{
     McpRecipe, PluginPlacementState, PluginStatus, PluginUpdateResult, PluginWorkspaceStatus,
-    TargetName,
+    ProviderKind, TargetName,
 };
 use anyhow::{bail, Context};
 use serde_json::{json, Value};
@@ -438,14 +438,18 @@ pub fn provider_command(
 }
 
 fn validate_scope(root: &Path, targets: &[TargetName]) -> anyhow::Result<()> {
-    if !is_home_scope(root) && targets.iter().any(|t| *t != TargetName::Claude) {
-        bail!("Native plugins for Codex, Antigravity and Grok use home scope; use --home, or distribute individual skills/MCPs to a project");
+    if !is_home_scope(root)
+        && targets
+            .iter()
+            .any(|t| t.provider_kind() != ProviderKind::Claude)
+    {
+        bail!("Native plugins for Codex, Antigravity, Grok, and dsh use home scope; use --home, or distribute individual skills/MCPs to a project");
     }
     Ok(())
 }
 
-pub(crate) fn installation_key(root: &Path, target: TargetName) -> String {
-    if target != TargetName::Claude || is_home_scope(root) {
+pub(crate) fn installation_key(root: &Path, target: &TargetName) -> String {
+    if target.provider_kind() != ProviderKind::Claude || is_home_scope(root) {
         format!("{target}:home")
     } else {
         format!("{target}:{}", root.display())
@@ -464,10 +468,10 @@ pub fn register_marketplace(
     targets: &[TargetName],
     marketplace: &Path,
 ) -> anyhow::Result<()> {
-    for &target in targets {
+    for target in targets {
         if matches!(
-            target,
-            TargetName::Claude | TargetName::Codex | TargetName::Grok
+            target.provider_kind(),
+            ProviderKind::Claude | ProviderKind::Codex | ProviderKind::Grok
         ) {
             let args = vec![
                 "plugin".into(),
@@ -475,7 +479,7 @@ pub fn register_marketplace(
                 "add".into(),
                 marketplace.display().to_string(),
             ];
-            if let Err(error) = provider_command(target, root, &args) {
+            if let Err(error) = provider_command(target.clone(), root, &args) {
                 let message = error.to_string().to_lowercase();
                 if ![
                     "already configured",
@@ -491,7 +495,7 @@ pub fn register_marketplace(
                 }
                 if !super::plugin_verification::marketplace_source_matches(
                     root,
-                    target,
+                    target.clone(),
                     marketplace,
                 )? {
                     bail!("Existing {target} marketplace refers to a different or unverified source; explicitly remove or reconfigure that marketplace before retrying. No plugin was installed from the old source");
@@ -511,6 +515,20 @@ pub fn plugin_install(
     plugin_install_unlocked(root, id, targets)
 }
 
+pub(crate) fn dsh_package_name(plugin_dir: &Path, fallback: &str) -> String {
+    let pkg = plugin_dir.join("package.json");
+    if pkg.is_file() {
+        if let Ok(val) = read_value(&pkg) {
+            if let Some(name) = val.get("name").and_then(Value::as_str) {
+                if !name.trim().is_empty() {
+                    return name.trim().to_string();
+                }
+            }
+        }
+    }
+    fallback.to_string()
+}
+
 fn plugin_install_unlocked(
     root: &Path,
     id: &str,
@@ -520,46 +538,84 @@ fn plugin_install_unlocked(
     let marketplace = build_marketplace(&[id.to_owned()])?;
     let digest = digest_plugin(&get_catalog_plugin_dir(id))?;
     let mut report = super::operations::OperationReport::new("plugin.install", id);
-    for &target in targets {
+    for target in targets {
         let result = (|| {
-            register_marketplace(root, &[target], &marketplace)?;
-            let selector = format!("{id}@{MARKETPLACE}");
-            let args = match target {
-                TargetName::Claude => vec![
-                    "plugin".into(),
-                    "install".into(),
-                    selector,
-                    "--scope".into(),
-                    if is_home_scope(root) {
-                        "user"
-                    } else {
-                        "project"
-                    }
-                    .into(),
-                ],
-                TargetName::Codex => vec!["plugin".into(), "add".into(), selector],
-                TargetName::Antigravity => vec![
-                    "plugin".into(),
-                    "install".into(),
-                    marketplace.join("plugins").join(id).display().to_string(),
-                ],
-                TargetName::Grok => vec![
-                    "plugin".into(),
-                    "install".into(),
-                    marketplace.join("plugins").join(id).display().to_string(),
-                    "--trust".into(),
-                ],
-            };
-            if let Err(error) = provider_command(target, root, &args) {
-                if target == TargetName::Grok && error.to_string().contains("already installed") {
-                    let observed =
-                        super::plugin_verification::observe_provider_plugin(root, id, target)?;
-                    if observed["installed"] != true {
-                        bail!("Grok reports an existing plugin, but its source could not be matched to this ACM deployment; existing installation was retained");
-                    }
-                    provider_command(target, root, &["plugin".into(), "update".into(), id.into()])?;
+            let provider = target.provider_kind();
+            if provider == ProviderKind::Dsh {
+                let profile = resolve_target_profile(target)?;
+                let dsh_profiles = discover_dsh_profiles(&profile);
+                if dsh_profiles.is_empty() {
+                    bail!(
+                        "No dsh profiles found under {}",
+                        profile.config_dir.join("profiles").display()
+                    );
+                }
+                let assembled = marketplace.join("plugins").join(id);
+                let pkg_spec = if assembled.join("package.json").is_file() {
+                    assembled.display().to_string()
                 } else {
-                    return Err(error);
+                    dsh_package_name(&get_catalog_plugin_dir(id), id)
+                };
+                for (profile_name, _) in &dsh_profiles {
+                    let args = vec![
+                        "plugin".into(),
+                        "--profile".into(),
+                        profile_name.clone(),
+                        "add".into(),
+                        pkg_spec.clone(),
+                    ];
+                    provider_command(target.clone(), root, &args)?;
+                }
+            } else {
+                register_marketplace(root, std::slice::from_ref(target), &marketplace)?;
+                let selector = format!("{id}@{MARKETPLACE}");
+                let args = match provider {
+                    ProviderKind::Claude => vec![
+                        "plugin".into(),
+                        "install".into(),
+                        selector,
+                        "--scope".into(),
+                        if is_home_scope(root) {
+                            "user"
+                        } else {
+                            "project"
+                        }
+                        .into(),
+                    ],
+                    ProviderKind::Codex => vec!["plugin".into(), "add".into(), selector],
+                    ProviderKind::Antigravity => vec![
+                        "plugin".into(),
+                        "install".into(),
+                        marketplace.join("plugins").join(id).display().to_string(),
+                    ],
+                    ProviderKind::Grok => vec![
+                        "plugin".into(),
+                        "install".into(),
+                        marketplace.join("plugins").join(id).display().to_string(),
+                        "--trust".into(),
+                    ],
+                    ProviderKind::Dsh => unreachable!(),
+                };
+                if let Err(error) = provider_command(target.clone(), root, &args) {
+                    if provider == ProviderKind::Grok
+                        && error.to_string().contains("already installed")
+                    {
+                        let observed = super::plugin_verification::observe_provider_plugin(
+                            root,
+                            id,
+                            target.clone(),
+                        )?;
+                        if observed["installed"] != true {
+                            bail!("Grok reports an existing plugin, but its source could not be matched to this ACM deployment; existing installation was retained");
+                        }
+                        provider_command(
+                            target.clone(),
+                            root,
+                            &["plugin".into(), "update".into(), id.into()],
+                        )?;
+                    } else {
+                        return Err(error);
+                    }
                 }
             }
             update_metadata(id, |entry| {
@@ -587,9 +643,9 @@ fn plugin_install_unlocked(
                 Ok(())
             })
             .context("Provider installed the plugin but ACM could not record the installation")?;
-            if matches!(target, TargetName::Antigravity | TargetName::Grok) {
+            if matches!(provider, ProviderKind::Antigravity | ProviderKind::Grok) {
                 let args = vec!["plugin".into(), "enable".into(), id.into()];
-                provider_command(target, root, &args).context(
+                provider_command(target.clone(), root, &args).context(
                     "Plugin was installed, but native activation failed; retry installation",
                 )?;
             }
@@ -607,7 +663,7 @@ fn plugin_install_unlocked(
             })?;
             Ok(json!({"id":id,"installed":true}))
         })();
-        report.push(target, result);
+        report.push(target.clone(), result);
     }
     report.finish()?;
     get_plugin_status(root, id, targets)
@@ -619,7 +675,7 @@ pub fn plugin_remove(root: &Path, id: &str, targets: &[TargetName]) -> anyhow::R
     let _lock = native_operation_lock(id)?;
     let metadata = plugin_metadata(id)?;
     let mut report = super::operations::OperationReport::new("plugin.remove", id);
-    for &target in targets {
+    for target in targets {
         let result = (|| {
             let key = installation_key(root, target);
             let recorded = metadata
@@ -634,33 +690,50 @@ pub fn plugin_remove(root: &Path, id: &str, targets: &[TargetName]) -> anyhow::R
             if !recorded && !legacy {
                 return Ok(json!({"id":id,"installed":false,"skipped":true}));
             }
-            let args = match target {
-                TargetName::Claude => vec![
-                    "plugin".into(),
-                    "uninstall".into(),
-                    format!("{id}@{MARKETPLACE}"),
-                    "--scope".into(),
-                    if is_home_scope(root) {
-                        "user"
-                    } else {
-                        "project"
-                    }
-                    .into(),
-                ],
-                TargetName::Codex => vec![
-                    "plugin".into(),
-                    "remove".into(),
-                    format!("{id}@{MARKETPLACE}"),
-                ],
-                TargetName::Grok => vec![
-                    "plugin".into(),
-                    "uninstall".into(),
-                    id.into(),
-                    "--confirm".into(),
-                ],
-                _ => vec!["plugin".into(), "uninstall".into(), id.into()],
-            };
-            provider_command(target, root, &args)?;
+            let provider = target.provider_kind();
+            if provider == ProviderKind::Dsh {
+                let profile = resolve_target_profile(target)?;
+                let dsh_profiles = discover_dsh_profiles(&profile);
+                let pkg_name = dsh_package_name(&get_catalog_plugin_dir(id), id);
+                for (profile_name, _) in &dsh_profiles {
+                    let args = vec![
+                        "plugin".into(),
+                        "--profile".into(),
+                        profile_name.clone(),
+                        "remove".into(),
+                        pkg_name.clone(),
+                    ];
+                    provider_command(target.clone(), root, &args)?;
+                }
+            } else {
+                let args = match provider {
+                    ProviderKind::Claude => vec![
+                        "plugin".into(),
+                        "uninstall".into(),
+                        format!("{id}@{MARKETPLACE}"),
+                        "--scope".into(),
+                        if is_home_scope(root) {
+                            "user"
+                        } else {
+                            "project"
+                        }
+                        .into(),
+                    ],
+                    ProviderKind::Codex => vec![
+                        "plugin".into(),
+                        "remove".into(),
+                        format!("{id}@{MARKETPLACE}"),
+                    ],
+                    ProviderKind::Grok => vec![
+                        "plugin".into(),
+                        "uninstall".into(),
+                        id.into(),
+                        "--confirm".into(),
+                    ],
+                    _ => vec!["plugin".into(), "uninstall".into(), id.into()],
+                };
+                provider_command(target.clone(), root, &args)?;
+            }
             update_metadata(id, |entry| {
                 object_at(entry, "nativeInstallations")?.remove(&key);
                 if is_home_scope(root) {
@@ -677,7 +750,7 @@ pub fn plugin_remove(root: &Path, id: &str, targets: &[TargetName]) -> anyhow::R
             )?;
             Ok(json!({"id":id,"installed":false}))
         })();
-        report.push(target, result);
+        report.push(target.clone(), result);
     }
     report.finish()?;
     Ok(())
@@ -734,7 +807,7 @@ fn plugin_status(
     let mut placement = HashMap::new();
     let mut installed = Vec::new();
     let mut enabled = false;
-    for &target in targets {
+    for target in targets {
         let key = installation_key(root, target);
         let native = metadata
             .get("nativeInstallations")
@@ -748,7 +821,7 @@ fn plugin_status(
         let state = if info.is_none() {
             PluginPlacementState::Broken
         } else if native || legacy {
-            installed.push(target);
+            installed.push(target.clone());
             if metadata
                 .get("nativeInstallations")
                 .and_then(|v| v.get(&key))
@@ -775,7 +848,7 @@ fn plugin_status(
         } else {
             PluginPlacementState::Missing
         };
-        placement.insert(target, state);
+        placement.insert(target.clone(), state);
     }
     let mut skills = info.as_ref().map(|i| i.skills.clone()).unwrap_or_default();
     if let Some(legacy) = metadata.get("skills").and_then(Value::as_array) {
@@ -989,7 +1062,7 @@ pub fn plugin_update_options(
     let pending: Vec<_> = status
         .targets
         .into_iter()
-        .filter(|&target| {
+        .filter(|target| {
             let installation = metadata
                 .get("nativeInstallations")
                 .and_then(|v| v.get(installation_key(root, target)));

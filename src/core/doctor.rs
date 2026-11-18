@@ -1,4 +1,4 @@
-use crate::adapters::{get_mcp_servers, validate_recipe};
+use crate::adapters::validate_recipe;
 use crate::catalog::store::load_catalog;
 use crate::paths::*;
 use crate::types::TargetName;
@@ -177,9 +177,9 @@ pub fn run_doctor<P: AsRef<Path>>(
     for path in [get_catalog_skills_dir(), get_catalog_plugins_dir()] {
         links(&mut report, &path, fix, true)?;
     }
-    for &target in targets {
+    for target in targets {
         let path = get_agent_mcp_config_path(root, target);
-        match get_mcp_servers(target, &path) {
+        match crate::core::mcp::get_target_mcp_servers(root, target) {
             Err(e) => report.add(
                 "Configuration",
                 format!("Invalid {target} configuration"),
@@ -193,7 +193,10 @@ pub fn run_doctor<P: AsRef<Path>>(
                     CheckStatus::Pass,
                     Some(path.display().to_string()),
                 );
-                if target == TargetName::Antigravity && !is_home_scope(root) && path.exists() {
+                if target.provider_kind() == crate::types::ProviderKind::Antigravity
+                    && !is_home_scope(root)
+                    && path.exists()
+                {
                     report.add(
                         "Scope",
                         "Antigravity project MCP configuration is not read by the provider",

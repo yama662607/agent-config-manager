@@ -2,7 +2,7 @@
 
 [English](README.md) · [Rust移行メモ](docs/rust-migration.md) · [差分確認・復元・検証の詳細](docs/native-workflows.md)
 
-`acm` は Claude Code・Codex・Antigravity・Grok の MCP サーバー、スキル、プラグインを管理するツールです。CLIと対話型TUIは同じRust実装を使います。プロバイダーの設定ファイルを直接扱い、カタログには再利用する定義とディレクトリ一式を保存します。
+`acm` は Claude Code・Codex・Antigravity・Grok・`dsh` (DeepSeek Harness)、および複数プロファイル（`claude-personal` / `claude-team` / `codex-team` 等）の MCP サーバー、スキル、プラグインを管理するツールです。CLIと対話型TUIは同じRust実装を使います。プロバイダーの設定ファイルを直接扱い、カタログには再利用する定義とディレクトリ一式を保存します。
 
 ## インストール
 
@@ -33,21 +33,37 @@ Rustパッケージの公開まではnpmに旧版が残る場合があります�
 
 ホームディレクトリから実行する場合は `--home` を明示します。ネイティブプラグイン操作の既定はホームです。プラグインのプロジェクトインストールに対応するのはClaudeです。
 
-`--targets claude,codex`、`-t all` で対象を選択します。短縮名は `c`=Claude、`x`=Codex、`a`/`g`/`agy`=Antigravity、`k`=Grokです。`~/.acm/config.toml` で既定値を変更できます:
+`--targets claude,codex`、`-t all` で対象を選択します。短縮名は `c`=Claude、`x`=Codex、`a`/`g`/`agy`=Antigravity、`k`=Grok、`d`=`dsh` です。組み込みターゲットは `CLAUDE_CONFIG_DIR` / `CODEX_HOME` / `DSH_HOME` 環境変数を尊重します。`~/.acm/config.toml` で既定値やカスタムプロファイルを定義できます:
 
 ```toml
 catalog_dir = "~/Code/my-agent-catalog"
-default_targets = ["claude", "codex"]
+default_targets = ["claude", "codex", "codex-team", "antigravity", "grok", "dsh"]
 # discovery_roots = ["~/Applications", "~/Library/Application Support/Claude"]
 
 # PATHを変えずにネイティブCLIを明示する場合
 # [provider_commands]
 # codex = "/path/to/codex"
+
+# 複数プロファイル（個人用/チーム用や dsh の特定プロファイル）の定義例
+# [targets.claude-personal]
+# provider = "claude"
+# config_dir = "~/.claude-personal"
+# aliases = ["cp"]
+#
+# [targets.codex-team]
+# provider = "codex"
+# config_dir = "~/.codex-team"
+# aliases = ["cxt"]
+#
+# [targets.dsh-web]
+# provider = "dsh"
+# config_dir = "~/.dsh"
+# profile = "web"
 ```
 
-ネイティブCLIの優先順位は `ACM_CLAUDE_BIN` / `ACM_CODEX_BIN` / `ACM_ANTIGRAVITY_BIN` / `ACM_GROK_BIN` → `provider_commands` の該当項目 → PATH上の通常コマンド（Antigravityは `agy`）です。プラグイン操作とClaudeのホームMCP委譲に適用し、MCP定義自身の起動コマンドには影響しません。
+ネイティブCLIの優先順位は `ACM_<TARGET>_BIN` / `ACM_<PROVIDER>_BIN` → プロファイルの `command` → `provider_commands` の該当項目 → PATH上の通常コマンド（Antigravityは `agy`）です。プラグイン操作とClaudeのホームMCP委譲に適用し、MCP定義自身の起動コマンドには影響しません。
 
-カタログの優先順位は `ACM_CATALOG_DIR` → `catalog_dir` → `~/.acm` です。対象の設定がなければ4プロバイダーを選択します。壊れた設定はエラーとして報告します。
+カタログの優先順位は `ACM_CATALOG_DIR` → `catalog_dir` → `~/.acm` です。対象の設定がなければ組み込み＋定義済みターゲットを選択します。壊れた設定はエラーとして報告します。
 
 ## MCPサーバー
 

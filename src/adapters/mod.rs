@@ -1,11 +1,12 @@
 pub mod antigravity;
 pub mod claude;
 pub mod codex;
+pub mod dsh;
 pub mod grok;
 
-use crate::paths::{get_state_dir, home_dir};
+use crate::paths::{get_agent_mcp_config_path, get_state_dir, home_dir};
 use crate::storage::{object_at, read_value, update_value, write_value, FileLock};
-use crate::types::{McpRecipe, TargetName, TransportType};
+use crate::types::{McpRecipe, ProviderKind, TargetName, TransportType};
 use anyhow::{bail, Context};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
@@ -19,8 +20,8 @@ pub struct ServerInfo {
 }
 
 pub fn server_block(target: TargetName) -> &'static str {
-    match target {
-        TargetName::Claude | TargetName::Antigravity => "mcpServers",
+    match target.provider_kind() {
+        ProviderKind::Claude | ProviderKind::Antigravity => "mcpServers",
         _ => "mcp_servers",
     }
 }
@@ -161,12 +162,12 @@ pub fn native_definition(
     }
     let mut fields = serde_json::to_value(recipe)?.as_object().unwrap().clone();
     fields.remove("transport");
-    if target == TargetName::Antigravity {
+    if target.provider_kind() == ProviderKind::Antigravity {
         if let Some(url) = fields.remove("url") {
             fields.insert("serverUrl".into(), url);
         }
     }
-    if target == TargetName::Claude {
+    if target.provider_kind() == ProviderKind::Claude {
         fields.insert(
             "type".into(),
             json!(match recipe.transport {
@@ -177,7 +178,10 @@ pub fn native_definition(
         );
     }
     object.extend(fields);
-    if matches!(target, TargetName::Codex | TargetName::Grok) {
+    if matches!(
+        target.provider_kind(),
+        ProviderKind::Codex | ProviderKind::Grok
+    ) {
         object.insert("enabled".into(), json!(true));
     }
     Ok(server)
@@ -198,8 +202,8 @@ fn operation_lock(path: &Path) -> PathBuf {
     ))
 }
 
-fn servers(value: &Value, target: TargetName) -> anyhow::Result<Map<String, Value>> {
-    match value.get(server_block(target)) {
+fn servers(value: &Value, target: &TargetName) -> anyhow::Result<Map<String, Value>> {
+    match value.get(server_block(target.clone())) {
         Some(value) => value
             .as_object()
             .cloned()
@@ -209,7 +213,7 @@ fn servers(value: &Value, target: TargetName) -> anyhow::Result<Map<String, Valu
 }
 
 pub fn raw_servers(target: TargetName, path: &Path) -> anyhow::Result<Map<String, Value>> {
-    servers(&read_value(path)?, target)
+    servers(&read_value(path)?, &target)
 }
 
 pub fn resolve_key(servers: &Map<String, Value>, name: &str) -> String {
@@ -234,7 +238,11 @@ pub fn get_mcp_servers<P: AsRef<Path>>(
     config_path: P,
 ) -> anyhow::Result<HashMap<String, ServerInfo>> {
     let path = config_path.as_ref();
-    let configured = raw_servers(target, path)?;
+    let provider = target.provider_kind();
+    if provider == ProviderKind::Dsh {
+        return dsh::get_mcp_servers(path);
+    }
+    let configured = raw_servers(target.clone(), path)?;
     let mut result = HashMap::new();
     for (name, server) in &configured {
         result.insert(
@@ -248,7 +256,7 @@ pub fn get_mcp_servers<P: AsRef<Path>>(
             },
         );
     }
-    if matches!(target, TargetName::Claude | TargetName::Antigravity) {
+    if matches!(provider, ProviderKind::Claude | ProviderKind::Antigravity) {
         for (name, value) in read_value(&disabled_path(path))?.as_object().unwrap() {
             if !configured.contains_key(name) {
                 result.insert(
@@ -264,18 +272,21 @@ pub fn get_mcp_servers<P: AsRef<Path>>(
     Ok(result)
 }
 
-fn is_claude_user(target: TargetName, path: &Path) -> bool {
-    target == TargetName::Claude
-        && (path == home_dir().join(".claude.json")
-            || path
-                .canonicalize()
-                .ok()
-                .zip(home_dir().join(".claude.json").canonicalize().ok())
-                .is_some_and(|(a, b)| a == b))
+fn is_claude_user(target: &TargetName, path: &Path) -> bool {
+    if target.provider_kind() != ProviderKind::Claude {
+        return false;
+    }
+    let user_path = get_agent_mcp_config_path(home_dir(), target);
+    path == user_path
+        || path
+            .canonicalize()
+            .ok()
+            .zip(user_path.canonicalize().ok())
+            .is_some_and(|(a, b)| a == b)
 }
 
-fn claude_command(args: &[String]) -> anyhow::Result<()> {
-    crate::core::plugin::provider_command(TargetName::Claude, &home_dir(), args)
+fn claude_command(target: &TargetName, args: &[String]) -> anyhow::Result<()> {
+    crate::core::plugin::provider_command(target.clone(), &home_dir(), args)
         .map(|_| ())
         .map_err(|error| {
             anyhow::anyhow!(
@@ -285,38 +296,47 @@ fn claude_command(args: &[String]) -> anyhow::Result<()> {
         })
 }
 
-fn put_server(target: TargetName, path: &Path, key: &str, server: &Value) -> anyhow::Result<()> {
+fn put_server(target: &TargetName, path: &Path, key: &str, server: &Value) -> anyhow::Result<()> {
     if is_claude_user(target, path) {
-        let previous = raw_servers(target, path)?.get(key).cloned();
+        let previous = raw_servers(target.clone(), path)?.get(key).cloned();
         if previous.as_ref() == Some(server) {
             return Ok(());
         }
         if previous.is_some() {
-            claude_command(&[
-                "mcp".into(),
-                "remove".into(),
-                key.into(),
-                "-s".into(),
-                "user".into(),
-            ])?;
-        }
-        if let Err(error) = claude_command(&[
-            "mcp".into(),
-            "add-json".into(),
-            key.into(),
-            serde_json::to_string(server)?,
-            "-s".into(),
-            "user".into(),
-        ]) {
-            if let Some(previous) = previous {
-                if let Err(rollback) = claude_command(&[
+            claude_command(
+                target,
+                &[
                     "mcp".into(),
-                    "add-json".into(),
+                    "remove".into(),
                     key.into(),
-                    serde_json::to_string(&previous)?,
                     "-s".into(),
                     "user".into(),
-                ]) {
+                ],
+            )?;
+        }
+        if let Err(error) = claude_command(
+            target,
+            &[
+                "mcp".into(),
+                "add-json".into(),
+                key.into(),
+                serde_json::to_string(server)?,
+                "-s".into(),
+                "user".into(),
+            ],
+        ) {
+            if let Some(previous) = previous {
+                if let Err(rollback) = claude_command(
+                    target,
+                    &[
+                        "mcp".into(),
+                        "add-json".into(),
+                        key.into(),
+                        serde_json::to_string(&previous)?,
+                        "-s".into(),
+                        "user".into(),
+                    ],
+                ) {
                     return Err(error.context(format!(
                         "Restoring the previous server also failed: {rollback}"
                     )));
@@ -324,7 +344,7 @@ fn put_server(target: TargetName, path: &Path, key: &str, server: &Value) -> any
             }
             return Err(error);
         }
-        let actual = raw_servers(target, path)?;
+        let actual = raw_servers(target.clone(), path)?;
         if !actual.get(key).is_some_and(|actual| {
             server
                 .as_object()
@@ -336,30 +356,33 @@ fn put_server(target: TargetName, path: &Path, key: &str, server: &Value) -> any
         }
     } else {
         update_value(path, |value| {
-            object_at(value, server_block(target))?.insert(key.into(), server.clone());
+            object_at(value, server_block(target.clone()))?.insert(key.into(), server.clone());
             Ok(())
         })?;
     }
     Ok(())
 }
 
-fn delete_server(target: TargetName, path: &Path, key: &str) -> anyhow::Result<()> {
+fn delete_server(target: &TargetName, path: &Path, key: &str) -> anyhow::Result<()> {
     if is_claude_user(target, path) {
-        if raw_servers(target, path)?.contains_key(key) {
-            claude_command(&[
-                "mcp".into(),
-                "remove".into(),
-                key.into(),
-                "-s".into(),
-                "user".into(),
-            ])?;
-            if raw_servers(target, path)?.contains_key(key) {
+        if raw_servers(target.clone(), path)?.contains_key(key) {
+            claude_command(
+                target,
+                &[
+                    "mcp".into(),
+                    "remove".into(),
+                    key.into(),
+                    "-s".into(),
+                    "user".into(),
+                ],
+            )?;
+            if raw_servers(target.clone(), path)?.contains_key(key) {
                 bail!("Claude did not remove {key}");
             }
         }
     } else if path.exists() {
         update_value(path, |value| {
-            object_at(value, server_block(target))?.remove(key);
+            object_at(value, server_block(target.clone()))?.remove(key);
             Ok(())
         })?;
     }
@@ -373,8 +396,11 @@ pub fn preview_mcp_add(
     server_name: &str,
     recipe: &McpRecipe,
 ) -> anyhow::Result<String> {
+    if target.provider_kind() == ProviderKind::Dsh {
+        return dsh::preview_mcp_add(path, server_name, recipe);
+    }
     validate_recipe(recipe)?;
-    let configured = raw_servers(target, path)?;
+    let configured = raw_servers(target.clone(), path)?;
     let key = resolve_key(&configured, server_name);
     if key != server_name && configured.contains_key(&key) {
         let prior = recipe_from_native(&configured[&key])?;
@@ -401,17 +427,20 @@ pub fn add_mcp_to_config<P: AsRef<Path>>(
     recipe: &McpRecipe,
 ) -> anyhow::Result<String> {
     let path = config_path.as_ref();
+    if target.provider_kind() == ProviderKind::Dsh {
+        return dsh::add_mcp_to_config(path, server_name, recipe);
+    }
     let _operation = FileLock::acquire(&operation_lock(path))?;
-    let key = preview_mcp_add(target, path, server_name, recipe)?;
-    let configured = raw_servers(target, path)?;
+    let key = preview_mcp_add(target.clone(), path, server_name, recipe)?;
+    let configured = raw_servers(target.clone(), path)?;
     let saved_path = disabled_path(path);
     let saved = read_value(&saved_path)?;
     put_server(
-        target,
+        &target,
         path,
         &key,
         &native_definition(
-            target,
+            target.clone(),
             recipe,
             configured.get(&key).or_else(|| saved.get(&key)),
         )?,
@@ -430,12 +459,21 @@ pub fn edit_mcp_in_config(
     name: &str,
     patch: &McpRecipe,
 ) -> anyhow::Result<()> {
-    let configured = raw_servers(target, path)?;
-    let key = resolve_key(&configured, name);
-    let previous = configured
-        .get(&key)
-        .with_context(|| format!("MCP server not configured: {name}"))?;
-    let mut recipe = serde_json::to_value(recipe_from_native(previous)?)?;
+    let mut recipe = if target.provider_kind() == ProviderKind::Dsh {
+        let existing = dsh::get_mcp_servers(path)?;
+        let prior = existing
+            .get(name)
+            .and_then(|s| s.recipe.clone())
+            .with_context(|| format!("MCP server not configured: {name}"))?;
+        serde_json::to_value(prior)?
+    } else {
+        let configured = raw_servers(target.clone(), path)?;
+        let key = resolve_key(&configured, name);
+        let previous = configured
+            .get(&key)
+            .with_context(|| format!("MCP server not configured: {name}"))?;
+        serde_json::to_value(recipe_from_native(previous)?)?
+    };
     if patch.command.is_some() {
         recipe.as_object_mut().unwrap().remove("url");
     }
@@ -449,7 +487,7 @@ pub fn edit_mcp_in_config(
         .unwrap()
         .extend(serde_json::to_value(patch)?.as_object().unwrap().clone());
     let recipe: McpRecipe = serde_json::from_value(recipe)?;
-    add_mcp_to_config(target, path, &key, &recipe)?;
+    add_mcp_to_config(target, path, name, &recipe)?;
     Ok(())
 }
 
@@ -461,16 +499,22 @@ pub fn replace_mcp_recipe(
     expected: &ServerInfo,
     recipe: &McpRecipe,
 ) -> anyhow::Result<()> {
+    if target.provider_kind() == ProviderKind::Dsh {
+        return dsh::replace_mcp_recipe(path, key, expected, recipe);
+    }
     validate_recipe(recipe)?;
     let _operation = FileLock::acquire(&operation_lock(path))?;
-    let current = get_mcp_servers(target, path)?;
+    let current = get_mcp_servers(target.clone(), path)?;
     if current.get(key) != Some(expected) {
         bail!("MCP conflict: {key} changed since it was inspected; refresh before editing");
     }
-    let configured = raw_servers(target, path)?;
+    let configured = raw_servers(target.clone(), path)?;
     let saved_path = disabled_path(path);
     if !expected.enabled
-        && matches!(target, TargetName::Claude | TargetName::Antigravity)
+        && matches!(
+            target.provider_kind(),
+            ProviderKind::Claude | ProviderKind::Antigravity
+        )
         && !configured.contains_key(key)
     {
         let mut saved = read_value(&saved_path)?;
@@ -481,11 +525,11 @@ pub fn replace_mcp_recipe(
         return write_value(&saved_path, &saved);
     }
     let previous = configured.get(key).context("MCP definition disappeared")?;
-    let mut value = native_definition(target, recipe, Some(previous))?;
+    let mut value = native_definition(target.clone(), recipe, Some(previous))?;
     if !expected.enabled {
         value["enabled"] = json!(false);
     }
-    put_server(target, path, key, &value)
+    put_server(&target, path, key, &value)
 }
 
 pub fn remove_mcp_from_config<P: AsRef<Path>>(
@@ -494,12 +538,15 @@ pub fn remove_mcp_from_config<P: AsRef<Path>>(
     name: &str,
 ) -> anyhow::Result<()> {
     let path = config_path.as_ref();
+    if target.provider_kind() == ProviderKind::Dsh {
+        return dsh::remove_mcp_from_config(path, name);
+    }
     let saved_path = disabled_path(path);
     let _operation = FileLock::acquire(&operation_lock(path))?;
     let mut saved = read_value(&saved_path)?;
-    let configured = raw_servers(target, path)?;
+    let configured = raw_servers(target.clone(), path)?;
     let key = resolve_key(&configured, name);
-    delete_server(target, path, &key)?;
+    delete_server(&target, path, &key)?;
     if saved.as_object_mut().unwrap().remove(&key).is_some() {
         write_value(&saved_path, &saved)?;
     }
@@ -513,10 +560,14 @@ pub fn set_mcp_enabled<P: AsRef<Path>>(
     enabled: bool,
 ) -> anyhow::Result<()> {
     let path = config_path.as_ref();
-    if matches!(target, TargetName::Codex | TargetName::Grok) {
+    let provider = target.provider_kind();
+    if provider == ProviderKind::Dsh {
+        return dsh::set_mcp_enabled(path, name, enabled);
+    }
+    if matches!(provider, ProviderKind::Codex | ProviderKind::Grok) {
         let _operation = FileLock::acquire(&operation_lock(path))?;
         return update_value(path, |value| {
-            let servers = object_at(value, server_block(target))?;
+            let servers = object_at(value, server_block(target.clone()))?;
             let key = resolve_key(servers, name);
             let server = servers
                 .get_mut(&key)
@@ -527,7 +578,7 @@ pub fn set_mcp_enabled<P: AsRef<Path>>(
     }
     let saved_path = disabled_path(path);
     let _operation = FileLock::acquire(&operation_lock(path))?;
-    let configured = raw_servers(target, path)?;
+    let configured = raw_servers(target.clone(), path)?;
     let mut saved = read_value(&saved_path)?;
     let mut key = resolve_key(&configured, name);
     if !configured.contains_key(&key) {
@@ -543,13 +594,13 @@ pub fn set_mcp_enabled<P: AsRef<Path>>(
                 format!("No saved definition for {name}; add it from the catalog first")
             })?
             .clone();
-        put_server(target, path, &key, &server)?;
+        put_server(&target, path, &key, &server)?;
         saved.as_object_mut().unwrap().remove(&key);
         write_value(&saved_path, &saved)?;
     } else if let Some(server) = configured.get(&key) {
         saved[&key] = server.clone();
         write_value(&saved_path, &saved)?;
-        delete_server(target, path, &key)?;
+        delete_server(&target, path, &key)?;
     } else if saved.get(&key).is_none() {
         bail!("MCP server not configured: {name}");
     }

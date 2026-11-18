@@ -1,14 +1,10 @@
-use crate::adapters::get_mcp_servers;
 use crate::catalog::store::get_mcp;
 use crate::core::mcp::catalog_recipe;
 use crate::core::plugin::{
     catalog_plugin_ids, digest_plugin, parse_plugin_dir, plugin_import, plugin_metadata, MANIFESTS,
 };
 use crate::core::skill_source::import_skill;
-use crate::paths::{
-    get_agent_mcp_config_path, get_agent_skills_dir, get_catalog_dir, get_catalog_skill_dir,
-    home_dir,
-};
+use crate::paths::{get_agent_skills_dir, get_catalog_dir, get_catalog_skill_dir, home_dir};
 use crate::storage::{read_value, update_value};
 use crate::types::TargetName;
 use serde::{Deserialize, Serialize};
@@ -135,7 +131,7 @@ pub fn discover_plugins(
                         version: info.version,
                         description: info.description,
                         source_path: canonical,
-                        agent: *agent,
+                        agent: agent.clone(),
                         skills: info.skills,
                         mcps: info.mcp_servers.len(),
                         agents: fs::read_dir(path.join("agents"))
@@ -257,7 +253,7 @@ pub fn scan_import(root: &Path, targets: &[TargetName], dry_run: bool) -> anyhow
         scopes.push(home_dir());
     }
     for scope in scopes {
-        for &target in targets {
+        for target in targets {
             let dir = get_agent_skills_dir(&scope, target);
             if dir.is_dir() {
                 for entry in fs::read_dir(&dir)? {
@@ -275,8 +271,7 @@ pub fn scan_import(root: &Path, targets: &[TargetName], dry_run: bool) -> anyhow
                     imported.push(json!({"kind": "skill", "id": id, "target": target}));
                 }
             }
-            for (id, server) in get_mcp_servers(target, get_agent_mcp_config_path(&scope, target))?
-            {
+            for (id, server) in crate::core::mcp::get_target_mcp_servers(&scope, target)? {
                 if get_mcp(&id)?.is_some() {
                     continue;
                 }

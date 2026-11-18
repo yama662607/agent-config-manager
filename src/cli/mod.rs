@@ -75,20 +75,20 @@ impl ContextOptions {
     ) -> anyhow::Result<Vec<Value>> {
         let mut report = OperationReport::new(operation, resource);
         let mut values = Vec::new();
-        for &target in &self.targets {
-            let result = action(target).and_then(|value| Ok(serde_json::to_value(value)?));
+        for target in &self.targets {
+            let result = action(target.clone()).and_then(|value| Ok(serde_json::to_value(value)?));
             if let Ok(value) = &result {
                 values.push(value.clone());
             }
-            report.push(target, result);
+            report.push(target.clone(), result);
         }
         self.outcomes.borrow_mut().push(report.finish()?);
         Ok(values)
     }
     pub fn completed_targets(&self, operation: &str, resource: &str) -> anyhow::Result<()> {
         let mut report = OperationReport::new(operation, resource);
-        for &target in &self.targets {
-            report.push(target, Ok(json!({"completed":true})));
+        for target in &self.targets {
+            report.push(target.clone(), Ok(json!({"completed":true})));
         }
         self.outcomes.borrow_mut().push(report.finish()?);
         Ok(())
